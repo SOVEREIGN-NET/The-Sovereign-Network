@@ -378,50 +378,102 @@ impl Blockchain {
         }
 
         self.load_blocks_and_legacy_indexes_from_store(store, latest_height)?;
-        let expected_identity_count = self
+
+        // Count unique IDs (not raw tx hits). identity_data() returns Some
+        // for Registration, Update, AND Revocation, so the original check
+        // counted updated identities multiple times — any identity with
+        // an Update produced 2+ hits but 1 registry entry, falsely
+        // triggering fallback for every long-lived identity. Same for
+        // wallets. Counting unique wallet_id/did_hash gives the actual
+        // expected entity count regardless of how many tx versions exist.
+        use std::collections::HashSet;
+        let expected_identity_count: HashSet<Vec<u8>> = self
             .blocks
             .iter()
             .flat_map(|block| block.transactions.iter())
-            .filter(|tx| tx.identity_data().is_some())
-            .count();
-        let expected_wallet_count = self
+            .filter_map(|tx| tx.identity_data().map(|d| d.did.as_bytes().to_vec()))
+            .collect();
+        let expected_wallet_count: HashSet<[u8; 32]> = self
             .blocks
             .iter()
             .flat_map(|block| block.transactions.iter())
-            .filter(|tx| tx.wallet_data().is_some())
-            .count();
+            .filter_map(|tx| tx.wallet_data().map(|w| {
+                let mut id = [0u8; 32];
+                id.copy_from_slice(w.wallet_id.as_bytes());
+                id
+            }))
+            .collect();
 
         self.identity_registry.clear();
         self.identity_blocks.clear();
-        for (_did_hash, consensus, metadata) in store.iter_identities()? {
-            let Some(metadata) = metadata else {
-                return Ok(false);
+        // #2692 rename: `iter_identities` (consensus-only) already
+        // existed on development from the #2639 migration; the metadata-
+        // bearing variant is now `iter_identities_with_metadata` and
+        // yields `Result<...>` items lazily.
+        for entry in store.iter_identities_with_metadata()? {
+            let (_did_hash, consensus, metadata) = entry?;
+            // identity_consensus rows without metadata are a recoverable
+            // partial-write state; we still surface the consensus view
+            // so callers don't see missing identities. The did string
+            // falls back to the hex of did_hash and metadata-derived
+            // fields default to empty.
+            let (
+                did,
+                display_name,
+                public_key,
+                ownership_proof,
+                controlled_nodes,
+                owned_wallets,
+            ) = match metadata {
+                Some(m) => {
+                    let did = if m.did.is_empty() {
+                        hex::encode(consensus.did_hash)
+                    } else {
+                        m.did
+                    };
+                    (
+                        did,
+                        m.display_name,
+                        m.public_key,
+                        m.ownership_proof,
+                        m.controlled_nodes,
+                        m.owned_wallets,
+                    )
+                }
+                None => (
+                    hex::encode(consensus.did_hash),
+                    String::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
             };
-            if metadata.did.is_empty() {
-                return Ok(false);
-            }
             self.identity_blocks
-                .insert(metadata.did.clone(), consensus.registered_at_height);
+                .insert(did.clone(), consensus.registered_at_height);
             self.identity_registry.insert(
-                metadata.did.clone(),
+                did.clone(),
                 crate::transaction::IdentityTransactionData {
-                    did: metadata.did,
-                    display_name: metadata.display_name,
-                    public_key: metadata.public_key,
-                    ownership_proof: metadata.ownership_proof,
+                    did,
+                    display_name,
+                    public_key,
+                    ownership_proof,
                     identity_type: consensus.identity_type.as_str().to_string(),
                     did_document_hash: Hash::new(consensus.did_document_hash),
                     created_at: consensus.created_at,
                     registration_fee: consensus.registration_fee,
                     dao_fee: consensus.dao_fee,
-                    controlled_nodes: metadata.controlled_nodes,
-                    owned_wallets: metadata.owned_wallets,
+                    controlled_nodes,
+                    owned_wallets,
                     kyber_public_key: Vec::new(),
                 },
             );
         }
 
-        if self.identity_registry.len() != expected_identity_count {
+        if self.identity_registry.len() != expected_identity_count.len() {
+            // Projection store disagrees with block history — projections
+            // were wiped or never staged for this tip. Bail to replay so
+            // the next backfill re-syncs them.
             return Ok(false);
         }
 
@@ -434,7 +486,7 @@ impl Blockchain {
             self.wallet_registry
                 .insert(wallet_id_hex, record.wallet_data);
         }
-        if self.wallet_registry.len() != expected_wallet_count {
+        if self.wallet_registry.len() != expected_wallet_count.len() {
             return Ok(false);
         }
 
@@ -1161,5 +1213,192 @@ impl Blockchain {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::{Block, BlockHeader};
+    use crate::storage::{
+        IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType, SledStore,
+    };
+    use std::sync::Arc;
+
+    fn block_with(height: u64, txs: Vec<crate::transaction::Transaction>) -> Block {
+        let mut hash = [0u8; 32];
+        hash[..8].copy_from_slice(&height.to_be_bytes());
+        let header = BlockHeader {
+            version: 1,
+            previous_hash: Hash::zero().into(),
+            data_helix_root: Hash::zero().into(),
+            timestamp: 1_700_000_000 + height,
+            height,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: Hash::new(hash),
+        };
+        Block::new(header, txs)
+    }
+
+    fn identity_tx_register(did: &str) -> crate::transaction::Transaction {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        let data = crate::transaction::IdentityTransactionData {
+            did: did.to_string(),
+            display_name: "alice".to_string(),
+            public_key: vec![],
+            ownership_proof: vec![],
+            identity_type: "Human".to_string(),
+            did_document_hash: Hash::zero(),
+            created_at: 0,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: vec![],
+        };
+        let sig = Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: [0u8; 32],
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+        crate::transaction::Transaction::new_identity_registration(data, vec![], sig, vec![])
+    }
+
+    fn identity_tx_update(did: &str) -> crate::transaction::Transaction {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        let data = crate::transaction::IdentityTransactionData {
+            did: did.to_string(),
+            display_name: "alice-renamed".to_string(),
+            public_key: vec![],
+            ownership_proof: vec![],
+            identity_type: "Human".to_string(),
+            did_document_hash: Hash::zero(),
+            created_at: 0,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: vec![],
+        };
+        let sig = Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: [0u8; 32],
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+        crate::transaction::Transaction::new_identity_update(data, vec![], vec![], 0, sig, vec![])
+    }
+
+    fn consensus(did_hash: [u8; 32], registered_at_height: u64) -> IdentityConsensus {
+        IdentityConsensus {
+            did_hash,
+            owner: crate::storage::Address([0xAB; 32]),
+            public_key_hash: [0xCD; 32],
+            did_document_hash: [0xEF; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 1,
+            created_at: 0,
+            registered_at_height,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        }
+    }
+
+    fn metadata(did: &str, display: &str) -> IdentityMetadata {
+        IdentityMetadata {
+            did: did.to_string(),
+            display_name: display.to_string(),
+            public_key: vec![],
+            kyber_public_key: vec![],
+            ownership_proof: vec![],
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            attributes: vec![],
+        }
+    }
+
+    /// Reviewer fix: prove the fast path is taken even when an identity
+    /// has both a registration and an update on-chain. Pre-fix the count
+    /// check
+    ///     identity_registry.len() != tx.identity_data().count()
+    /// triggered the fallback to historical replay for any updated
+    /// identity, because identity_data() returns Some for Register +
+    /// Update + Revoke. Post-fix the projection meta block-hash gate is
+    /// the sole correctness check, so the fast path takes the load.
+    #[test]
+    fn hydrate_checkpointed_state_takes_fast_path_with_updated_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(tmp.path()).unwrap());
+
+        let did_hash = [0x11u8; 32];
+
+        // Block 0: real IdentityRegistration tx; block 1: real
+        // IdentityUpdate tx. Both blocks committed inside their own
+        // begin/commit. The identity sled trees mirror the final state
+        // so iter_identities sees one row (post-fix) while blocks have
+        // two identity_data() tx hits (the broken-count scenario).
+        store.begin_block(0).unwrap();
+        store
+            .append_block(&block_with(0, vec![identity_tx_register("did:zhtp:alice")]))
+            .unwrap();
+        store.put_identity(&did_hash, &consensus(did_hash, 0)).unwrap();
+        store
+            .put_identity_metadata(&did_hash, &metadata("did:zhtp:alice", "alice"))
+            .unwrap();
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        store
+            .append_block(&block_with(1, vec![identity_tx_update("did:zhtp:alice")]))
+            .unwrap();
+        // Update keeps the same did_hash; bumps version on consensus and
+        // changes the display_name in metadata.
+        let mut c = consensus(did_hash, 0);
+        c.version = 2;
+        store.put_identity(&did_hash, &c).unwrap();
+        store
+            .put_identity_metadata(&did_hash, &metadata("did:zhtp:alice", "alice-renamed"))
+            .unwrap();
+        store.commit_block().unwrap();
+
+        // Backfill projections so the meta records the current tip.
+        let bc = Blockchain::default();
+        bc.backfill_hot_state_projections_from_replay(store.as_ref())
+            .unwrap();
+
+        // Drive the fast path directly to assert its return value rather
+        // than just observing the end state.
+        let mut fresh = Blockchain::default();
+        let used_fast = fresh
+            .hydrate_checkpointed_state_from_store(store.as_ref(), 1)
+            .expect("hydrate must not error");
+        assert!(
+            used_fast,
+            "fast path must be taken — projection meta is current and updated-identity \
+             count mismatch must no longer fall through to replay"
+        );
+
+        // Sanity-check: the loaded state reflects the updated identity.
+        let entry = fresh
+            .identity_registry
+            .get("did:zhtp:alice")
+            .expect("identity must be present after fast-path load");
+        assert_eq!(entry.display_name, "alice-renamed");
     }
 }
