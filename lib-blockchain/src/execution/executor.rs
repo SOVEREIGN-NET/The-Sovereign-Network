@@ -3757,6 +3757,79 @@ mod tests {
     use crate::types::ContractCall;
     use crate::types::{Difficulty, Hash};
 
+    /// CONS-515: distinguish replay (nonce < expected) from gap (nonce > expected).
+    /// Replay must produce TxApplyError::ReplayDropped (soft drop in the apply
+    /// loop), gap must still produce TxApplyError::InvalidNonce (hard fail).
+    #[test]
+    fn test_validate_tx_stateful_distinguishes_replay_from_gap() {
+        use crate::integration::crypto_integration::{
+            PublicKey, Signature, SignatureAlgorithm,
+        };
+        use crate::transaction::TokenTransferData;
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let token_id = [0xAAu8; 32];
+        let sender = [0xBBu8; 32];
+        let recipient = [0xCCu8; 32];
+
+        // Prime sled: sender's stored nonce = 5.
+        store.begin_block(0).unwrap();
+        let token_key = crate::storage::TokenId::new(token_id);
+        let sender_addr = crate::storage::Address::new(sender);
+        store.set_token_nonce(&token_key, &sender_addr, 5).unwrap();
+        store.commit_block().unwrap();
+
+        let sig = Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: sender,
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+
+        let build_tx = |nonce: u64| {
+            Transaction::new_token_transfer(
+                TokenTransferData {
+                    token_id,
+                    from: sender,
+                    to: recipient,
+                    amount: 100,
+                    nonce,
+                },
+                sig.clone(),
+                vec![],
+            )
+        };
+
+        // Replay (nonce < expected) → ReplayDropped soft drop.
+        match executor.validate_tx_stateful(&build_tx(3)) {
+            Err(TxApplyError::ReplayDropped { expected, actual }) => {
+                assert_eq!(expected, 5);
+                assert_eq!(actual, 3);
+            }
+            other => panic!("nonce=3: expected ReplayDropped, got {:?}", other),
+        }
+
+        // Gap (nonce > expected) → InvalidNonce hard fail.
+        match executor.validate_tx_stateful(&build_tx(7)) {
+            Err(TxApplyError::InvalidNonce { expected, actual }) => {
+                assert_eq!(expected, 5);
+                assert_eq!(actual, 7);
+            }
+            other => panic!("nonce=7: expected InvalidNonce, got {:?}", other),
+        }
+
+        // Match (nonce == expected) → Ok.
+        assert!(
+            executor.validate_tx_stateful(&build_tx(5)).is_ok(),
+            "nonce=5 should validate cleanly"
+        );
+    }
+
     fn create_test_store() -> Arc<dyn BlockchainStore> {
         Arc::new(SledStore::open_temporary().unwrap())
     }
