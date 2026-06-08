@@ -18,14 +18,18 @@ pub struct HotStateProjectionMeta {
     pub height: u64,
     pub block_hash: [u8; 32],
     pub completed_at_unix: u64,
-    pub validators: usize,
-    pub gateways: usize,
-    pub domains: usize,
-    pub credentials: usize,
-    pub employment_contracts: usize,
-    pub dao_entries: usize,
-    pub pouw_mints: usize,
-    pub contract_blocks: usize,
+    // Reviewer #2692/L29: fixed-width counts so the bincode payload is
+    // architecture-independent. `usize` round-trips differently between
+    // 32-bit and 64-bit targets and can fail deserialization if a count
+    // ever exceeds the local `usize` width.
+    pub validators: u64,
+    pub gateways: u64,
+    pub domains: u64,
+    pub credentials: u64,
+    pub employment_contracts: u64,
+    pub dao_entries: u64,
+    pub pouw_mints: u64,
+    pub contract_blocks: u64,
 }
 
 impl HotStateProjectionMeta {
