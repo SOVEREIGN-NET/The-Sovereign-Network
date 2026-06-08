@@ -73,11 +73,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            target/debug
             target/release
+          # Key cache on Cargo.lock so refactors that don't touch deps
+          # hit the cache; dual-cache both target/debug (PR builds) and
+          # target/release (deploy artifact path on dev/main pushes).
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build
+      - name: Build (dev profile)
         run: cargo build --workspace --locked
 
       - name: Build Release Binary (zhtp node)
@@ -136,18 +140,21 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target/release
+            target/debug
+          # macOS only needs dev mode — the released CLI is built
+          # separately in release-cli.yml. No release artifact comes
+          # out of this job, so don't cache target/release here.
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build workspace
+      - name: Build workspace (dev profile)
         run: cargo build --workspace --locked
 
       - name: Test lib-network (BLE/GATT coverage)
         run: cargo test -p lib-network --locked --features ble-mock -- --nocapture
 
-      - name: Build zhtp-cli
-        run: cargo build --release -p zhtp-cli --locked
+      - name: Build zhtp-cli (dev profile, for tests below)
+        run: cargo build -p zhtp-cli --locked
 
       - name: Run zhtp-cli Integration Tests (macOS)
         run: cargo test -p zhtp-cli --test integration_tests --locked -- --nocapture
