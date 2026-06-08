@@ -310,7 +310,10 @@ pub fn build_dao_unstake_tx(
 ///
 /// # Returns
 /// Hex-encoded, bincode-serialized signed `Transaction` ready to broadcast
-/// via `POST /api/v1/blockchain/broadcast-raw` as `{"signed_tx_hex": "<hex>"}`.
+/// via `POST /api/v1/blockchain/transaction/broadcast` as
+/// `{"transaction_data": "<hex>"}` — the same endpoint used by every other
+/// canonical raw-tx broadcast path (`zhtp-cli blockchain broadcast-raw`,
+/// other DAO builders, etc).
 pub fn build_governance_parameter_update_proposal_tx(
     identity: &crate::identity::Identity,
     title: String,
@@ -329,6 +332,21 @@ pub fn build_governance_parameter_update_proposal_tx(
 
     if updates.is_empty() {
         return Err("updates must contain at least one parameter".to_string());
+    }
+    // Reviewer #2685/L333: validate field bounds client-side so an
+    // operator can't accidentally broadcast a proposal that the chain
+    // will reject or that the vote UI cannot render meaningfully.
+    if quorum_required > 100 {
+        return Err(format!(
+            "quorum_required must be 0..=100, got {}",
+            quorum_required
+        ));
+    }
+    if voting_period_blocks == 0 {
+        return Err("voting_period_blocks must be non-zero".to_string());
+    }
+    if title.trim().is_empty() {
+        return Err("title must be non-empty".to_string());
     }
 
     let sender_pk =
@@ -360,7 +378,12 @@ pub fn build_governance_parameter_update_proposal_tx(
         .concat(),
     ));
 
-    let proposer_did = format!("did:zhtp:{}", hex::encode(sender_pk.key_id));
+    // Reviewer #2685/L376: the node-created proposal path (and chain-side
+    // proposer-match filters) compare against `identity.did`. Deriving a
+    // DID from `sender_pk.key_id` here works today but is brittle — any
+    // future change to DID derivation would silently desync. Use the
+    // canonical DID from the identity itself.
+    let proposer_did = identity.did.clone();
 
     let proposal_data = DaoProposalData {
         proposal_id,
@@ -481,6 +504,80 @@ mod tests {
         )
         .expect_err("empty updates must be rejected");
         assert!(err.contains("at least one parameter"));
+    }
+
+    /// #2685/L333 review fix: invalid field bounds are caught client-side.
+    #[test]
+    fn test_build_governance_parameter_update_rejects_bad_bounds() {
+        use crate::identity::generate_identity;
+        use lib_governance::dao::dao_types::GovernanceParameterValue;
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let one_update = vec![GovernanceParameterValue::DomainRegistrationFeeAtoms(1)];
+
+        let q = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "x".to_string(),
+            "x".to_string(),
+            100,
+            101, // > 100
+            one_update.clone(),
+            0,
+            3,
+        )
+        .expect_err("quorum > 100 must be rejected");
+        assert!(q.contains("quorum_required"));
+
+        let v = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "x".to_string(),
+            "x".to_string(),
+            0, // zero voting period
+            51,
+            one_update.clone(),
+            0,
+            3,
+        )
+        .expect_err("zero voting_period_blocks must be rejected");
+        assert!(v.contains("voting_period_blocks"));
+
+        let t = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "   ".to_string(), // empty/whitespace title
+            "x".to_string(),
+            100,
+            51,
+            one_update,
+            0,
+            3,
+        )
+        .expect_err("empty title must be rejected");
+        assert!(t.contains("title"));
+    }
+
+    /// #2685/L376 review fix: proposer must equal `identity.did`, not a
+    /// did derived from sender_pk.key_id, so chain-side proposer-filter
+    /// comparisons stay correct under any future DID-derivation change.
+    #[test]
+    fn test_build_governance_parameter_update_proposer_matches_identity_did() {
+        use crate::identity::generate_identity;
+        use lib_governance::dao::dao_types::GovernanceParameterValue;
+        let identity = generate_identity("test-device".to_string()).unwrap();
+        let signed_tx = build_governance_parameter_update_proposal_tx(
+            &identity,
+            "t".to_string(),
+            "d".to_string(),
+            100,
+            51,
+            vec![GovernanceParameterValue::DomainRegistrationFeeAtoms(1)],
+            0,
+            3,
+        )
+        .expect("builder ok");
+        let tx_bytes = hex::decode(signed_tx).expect("hex");
+        let tx: lib_blockchain::Transaction =
+            bincode::deserialize(&tx_bytes).expect("tx");
+        let data = tx.dao_proposal_data().expect("payload");
+        assert_eq!(data.proposer, identity.did);
     }
 
     #[test]

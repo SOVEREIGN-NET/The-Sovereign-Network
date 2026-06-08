@@ -635,6 +635,41 @@ async fn handle_dao_command_impl(
                         .to_string(),
                 ));
             }
+            // Reviewer #2685/L622: validate proposal-level fields here so
+            // operators get clear CLI errors instead of a downstream
+            // chain-side rejection. Mirrors `dao propose`.
+            if title.trim().is_empty() {
+                return Err(CliError::ConfigError(
+                    "--title must be non-empty".to_string(),
+                ));
+            }
+            if quorum_required > 100 {
+                return Err(CliError::ConfigError(format!(
+                    "--quorum-required must be 0..=100, got {}",
+                    quorum_required
+                )));
+            }
+            if voting_period_blocks == 0 {
+                return Err(CliError::ConfigError(
+                    "--voting-period-blocks must be non-zero".to_string(),
+                ));
+            }
+            if let Some(v) = domain_fee_atoms {
+                if v == 0 {
+                    return Err(CliError::ConfigError(
+                        "--domain-fee-atoms must be non-zero (chain rejects zero fees)"
+                            .to_string(),
+                    ));
+                }
+            }
+            if let Some(v) = token_creation_fee {
+                if v == 0 {
+                    return Err(CliError::ConfigError(
+                        "--token-creation-fee must be non-zero (chain rejects zero fees)"
+                            .to_string(),
+                    ));
+                }
+            }
 
             // Load the proposer identity from keystore (default or override).
             let identity = if let Some(path) = keystore {
@@ -670,10 +705,21 @@ async fn handle_dao_command_impl(
                     status: 0,
                     reason: format!("Failed to parse tip response: {e}"),
                 })?;
+            // Reviewer #2685/L676: the proposal records `created_at_height`
+            // as audit metadata; a silent fallback to 0 means stale tips or
+            // misshaped responses produce misleading proposals. Surface as
+            // an explicit error so operators see and re-run.
             let current_height = tip_json
                 .get("height")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+                .ok_or_else(|| CliError::ApiCallFailed {
+                    endpoint: "/api/v1/blockchain/tip".to_string(),
+                    status: 0,
+                    reason: format!(
+                        "tip response missing numeric `height` field: {}",
+                        tip_json
+                    ),
+                })?;
 
             let signed_tx = zhtp_client::build_governance_parameter_update_proposal_tx(
                 &identity,
