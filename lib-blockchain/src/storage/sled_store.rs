@@ -1122,6 +1122,27 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn iter_utxos(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(OutPoint, Utxo)>> + '_>> {
+        // Wrap the sled iterator directly so rows yield one at a time —
+        // hydrate paths can stream into projection tables without ever
+        // holding the whole UTXO set in memory. Per-row decode errors
+        // bubble up as `StorageResult` items.
+        let iter = self.utxos.iter().map(|result| {
+            let (key, value) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            let outpoint = keys::parse_utxo_key(key.as_ref()).ok_or_else(|| {
+                StorageError::CorruptedData(format!(
+                    "Invalid UTXO key length: {}",
+                    key.len()
+                ))
+            })?;
+            let utxo: Utxo = Self::deserialize(&value)?;
+            Ok((outpoint, utxo))
+        });
+        Ok(Box::new(iter))
+    }
+
     // =========================================================================
     // UTXO Merkle Tree Operations
     // =========================================================================
@@ -1863,6 +1884,49 @@ impl BlockchainStore for SledStore {
         // sled::Tree::len is an O(n) walk but avoids deserializing every record,
         // so it is the cheapest authoritative count available.
         Ok(self.identities.len())
+    }
+
+    fn iter_identities_with_metadata(
+        &self,
+    ) -> StorageResult<
+        Box<
+            dyn Iterator<
+                    Item = StorageResult<(
+                        [u8; 32],
+                        IdentityConsensus,
+                        Option<IdentityMetadata>,
+                    )>,
+                > + '_,
+        >,
+    > {
+        // Streams rows lazily so the hydrate path can process the
+        // identity set (~thousands+ at mainnet scale) without
+        // materialising it. The metadata lookup is intentionally
+        // per-row: identity_metadata is a separate sled tree and there
+        // is no efficient co-iteration primitive — the cost is one
+        // point-lookup per identity. If this ever shows up in profiling
+        // we can switch to scanning both trees in lock-step using
+        // sled's sorted-key ordering.
+        let metadata_tree = self.identity_metadata.clone();
+        let iter = self.identities.iter().map(move |result| {
+            let (key, value) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            if key.len() != 32 {
+                return Err(StorageError::CorruptedData(format!(
+                    "Invalid identity key length: {}",
+                    key.len()
+                )));
+            }
+            let mut did_hash = [0u8; 32];
+            did_hash.copy_from_slice(&key);
+            let consensus: IdentityConsensus = Self::deserialize(&value)?;
+            let metadata = match metadata_tree.get(did_hash) {
+                Ok(Some(bytes)) => Some(Self::deserialize(&bytes)?),
+                Ok(None) => None,
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            };
+            Ok((did_hash, consensus, metadata))
+        });
+        Ok(Box::new(iter))
     }
 
     fn put_identity(&self, did_hash: &[u8; 32], identity: &IdentityConsensus) -> StorageResult<()> {
@@ -3860,5 +3924,176 @@ mod tests {
         // Durable across reopen.
         let store = SledStore::open(dir.path()).unwrap();
         assert!(store.get_receipt(&tx_hash.as_array()).unwrap().is_some());
+    }
+
+    // =========================================================================
+    // Hot-state iterator tests (added in PR #2692 — lazy + Result)
+    // =========================================================================
+
+    #[test]
+    fn test_iter_utxos_returns_committed_unspent_outputs() {
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+        let outpoint = OutPoint::new(TxHash([0x44; 32]), 7);
+        let utxo = Utxo::native(42u128, Address([0x55; 32]), 0);
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_utxo(&outpoint, &utxo).unwrap();
+        store.commit_block().unwrap();
+
+        let entries: Vec<_> = store
+            .iter_utxos()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, outpoint);
+        assert_eq!(entries[0].1.amount, 42);
+    }
+
+    #[test]
+    fn test_iter_utxos_empty_store_yields_nothing() {
+        let store = SledStore::open_temporary().unwrap();
+        let entries: Vec<_> = store
+            .iter_utxos()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_iter_utxos_returns_all_entries() {
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        for i in 0..5u8 {
+            let mut hash = [0u8; 32];
+            hash[0] = i;
+            let outpoint = OutPoint::new(TxHash(hash), i as u32);
+            let utxo = Utxo::native(100u128 + i as u128, Address([i; 32]), 0);
+            store.put_utxo(&outpoint, &utxo).unwrap();
+        }
+        store.commit_block().unwrap();
+
+        let entries: Vec<_> = store
+            .iter_utxos()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 5);
+    }
+
+    #[test]
+    fn test_iter_identities_with_metadata_returns_consensus_and_metadata() {
+        use super::super::{IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+        let did_hash = [0x88; 32];
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner: Address([0x99; 32]),
+            public_key_hash: [0xaa; 32],
+            did_document_hash: [0xbb; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 2,
+            created_at: 1,
+            registered_at_height: 0,
+            registration_fee: 1000,
+            dao_fee: 100,
+            controlled_node_count: 0,
+            owned_wallet_count: 1,
+            attribute_count: 0,
+        };
+        let metadata = IdentityMetadata {
+            did: "did:sovn:test-identity".to_string(),
+            display_name: "Test Identity".to_string(),
+            public_key: vec![1, 2, 3],
+            kyber_public_key: vec![],
+            ownership_proof: vec![4, 5, 6],
+            controlled_nodes: vec![],
+            owned_wallets: vec!["wallet-1".to_string()],
+            attributes: vec![],
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &consensus).unwrap();
+        store.put_identity_metadata(&did_hash, &metadata).unwrap();
+        store.commit_block().unwrap();
+
+        let entries: Vec<_> = store
+            .iter_identities_with_metadata()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, did_hash);
+        assert_eq!(entries[0].1.owner, consensus.owner);
+        assert_eq!(entries[0].2.as_ref().unwrap().did, metadata.did);
+    }
+
+    /// Edge case: an identity may exist in the consensus tree without
+    /// a corresponding metadata row (legacy / partial-write recovery
+    /// scenarios). Must yield `Option<_> = None` for metadata in that
+    /// case rather than erroring.
+    #[test]
+    fn test_iter_identities_with_metadata_handles_missing_metadata() {
+        use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
+
+        let store = SledStore::open_temporary().unwrap();
+        let block = create_test_block(0, Hash::default());
+        let did_hash = [0x77; 32];
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner: Address([0x66; 32]),
+            public_key_hash: [0x55; 32],
+            did_document_hash: [0x44; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 1,
+            created_at: 0,
+            registered_at_height: 0,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block).unwrap();
+        store.put_identity(&did_hash, &consensus).unwrap();
+        // Intentionally NO put_identity_metadata.
+        store.commit_block().unwrap();
+
+        let entries: Vec<_> = store
+            .iter_identities_with_metadata()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, did_hash);
+        assert!(
+            entries[0].2.is_none(),
+            "identity without metadata must yield Option::None, not error"
+        );
+    }
+
+    #[test]
+    fn test_iter_identities_with_metadata_empty_store_yields_nothing() {
+        let store = SledStore::open_temporary().unwrap();
+        let entries: Vec<_> = store
+            .iter_identities_with_metadata()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(entries.is_empty());
     }
 }

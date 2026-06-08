@@ -863,6 +863,20 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - Deleting non-existent UTXO is a no-op (idempotent)
     fn delete_utxo(&self, op: &OutPoint) -> StorageResult<()>;
 
+    /// Iterate all currently unspent UTXOs.
+    ///
+    /// Yields lazily so callers don't materialise the entire UTXO set in
+    /// RAM — at mainnet scale this set is unbounded. Each `Item` is a
+    /// `StorageResult` so per-row decode failures surface to the caller
+    /// without aborting the rest of the scan.
+    fn iter_utxos(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(OutPoint, Utxo)>> + '_>> {
+        Err(StorageError::Database(
+            "UTXO iteration not supported by this store".to_string(),
+        ))
+    }
+
     // =========================================================================
     // UTXO Merkle Tree (Mutable)
     // =========================================================================
@@ -1181,6 +1195,36 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// No default for the same reason as [`iter_identities`]: an empty/zero
     /// default would silently misreport the validator/citizen population.
     fn count_identities(&self) -> StorageResult<usize>;
+
+    /// Iterate identity consensus records joined with their optional
+    /// `IdentityMetadata`.
+    ///
+    /// Distinct from [`iter_identities`] which returns the bare consensus
+    /// row. This variant pairs each consensus record with its metadata
+    /// (display name, did string, controlled nodes, etc.) and is the
+    /// surface the startup hydrate path uses to rebuild
+    /// `identity_registry` from sled.
+    ///
+    /// Yields lazily so the entire identity set never lives in RAM at
+    /// once. Each `Item` is a `StorageResult` so per-row decode failures
+    /// surface to the caller without aborting the rest of the scan.
+    fn iter_identities_with_metadata(
+        &self,
+    ) -> StorageResult<
+        Box<
+            dyn Iterator<
+                    Item = StorageResult<(
+                        [u8; 32],
+                        IdentityConsensus,
+                        Option<IdentityMetadata>,
+                    )>,
+                > + '_,
+        >,
+    > {
+        Err(StorageError::Database(
+            "identity-with-metadata iteration not supported by this store".to_string(),
+        ))
+    }
 
     /// Store identity consensus state.
     ///

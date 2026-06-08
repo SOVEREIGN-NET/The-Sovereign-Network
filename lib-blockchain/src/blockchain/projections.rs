@@ -46,8 +46,13 @@ impl Blockchain {
             self.stage_dao_registry_for_tx(store, tx, height)?;
         }
 
-        self.stage_contract_blocks(store)?;
-        self.stage_hot_state_projection_meta(store, block)
+        self.stage_contract_blocks_for_block(store, height)?;
+        // Reviewer #2692/L1470 + L327: meta is committed in a separate
+        // batch (`commit_hot_state_projection_meta_only`) AFTER the data
+        // batch flushes. Staging it here would tie data-write durability
+        // to meta-write durability inside the same non-WAL batch and
+        // re-open the atomicity gap.
+        Ok(())
     }
 
     fn stage_validator_for_tx(
@@ -128,7 +133,7 @@ impl Blockchain {
                 Ok(())
             }
             TransactionType::CreateEmploymentContract => {
-                self.stage_employment_contracts(store)
+                self.stage_employment_contracts_for_block(store, height)
             }
             TransactionType::TokenMint => self.stage_pouw_mint_for_tx(store, tx, height),
             _ => Ok(()),
@@ -180,8 +185,24 @@ impl Blockchain {
         Ok(())
     }
 
-    fn stage_employment_contracts(&self, store: &dyn BlockchainStore) -> Result<()> {
+    /// Reviewer #2692/L103: stage only employment contracts that were
+    /// created in THIS block (`start_height == height`). The old
+    /// `stage_employment_contracts` looped the entire registry on every
+    /// CreateEmploymentContract tx, making batch size proportional to
+    /// the historical contract count. Older contracts are already in
+    /// the projection from when they originally committed.
+    ///
+    /// `backfill_employment` (replay-time rebuild) still iterates the
+    /// whole registry — that's a one-time operation.
+    fn stage_employment_contracts_for_block(
+        &self,
+        store: &dyn BlockchainStore,
+        height: u64,
+    ) -> Result<()> {
         for contract in &self.employment_registry.contracts {
+            if contract.start_height != height {
+                continue;
+            }
             store.stage::<EmploymentProjectionTable>(
                 &hex::encode(contract.contract_id),
                 &EmploymentProjectionRecord {
@@ -238,6 +259,37 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Reviewer #2692/L143: stage only contract_blocks entries that
+    /// landed in THIS block (`block_height == height`). The old
+    /// `stage_contract_blocks` re-staged every entry on every block —
+    /// O(total_contracts) per block, unbounded batch growth. Older
+    /// entries are already in the projection table from when they
+    /// originally committed.
+    ///
+    /// `backfill_contract_blocks` (replay-time rebuild) keeps the
+    /// whole-map iteration — it's a one-time operation.
+    fn stage_contract_blocks_for_block(
+        &self,
+        store: &dyn BlockchainStore,
+        height: u64,
+    ) -> Result<()> {
+        for (contract_id, block_height) in &self.contract_blocks {
+            if *block_height != height {
+                continue;
+            }
+            store.stage::<ContractBlockProjectionTable>(
+                contract_id,
+                &ContractBlockProjectionRecord {
+                    contract_id: *contract_id,
+                    block_height: *block_height,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Used by the replay-time backfill — iterates the entire
+    /// contract_blocks map (one-time cost).
     fn stage_contract_blocks(&self, store: &dyn BlockchainStore) -> Result<()> {
         for (contract_id, block_height) in &self.contract_blocks {
             store.stage::<ContractBlockProjectionTable>(
@@ -277,11 +329,21 @@ impl Blockchain {
         Ok(())
     }
 
-    fn stage_hot_state_projection_meta(
+    /// Stage the projection meta record. Used by:
+    /// - `commit_hot_state_projection_meta_only` (executor path; meta is
+    ///   committed in a separate batch after data tables are durable —
+    ///   atomicity gap #2692/L1470 / L327).
+    /// - The legacy non-executor block-apply path, where data and meta
+    ///   are committed together inside one WAL-protected `commit_block`
+    ///   batch (atomic — safe to bundle).
+    /// - The replay-time backfill data commit (caller commits the data
+    ///   batch first, then this meta in a second batch).
+    pub(crate) fn stage_hot_state_projection_meta(
         &self,
         store: &dyn BlockchainStore,
         block: &Block,
     ) -> Result<()> {
+        let pouw_total: usize = self.pouw_mint_index.values().map(Vec::len).sum();
         let meta = HotStateProjectionMeta {
             version: HOT_STATE_PROJECTION_VERSION,
             height: block.height(),
@@ -290,17 +352,52 @@ impl Blockchain {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
-            validators: self.validator_registry.len(),
-            gateways: self.gateway_registry.len(),
-            domains: self.domain_registry.len(),
-            credentials: self.credential_registry.len(),
-            employment_contracts: self.employment_registry.contracts.len(),
-            dao_entries: self.dao_registry_index.len(),
-            pouw_mints: self.pouw_mint_index.values().map(Vec::len).sum(),
-            contract_blocks: self.contract_blocks.len(),
+            validators: self.validator_registry.len() as u64,
+            gateways: self.gateway_registry.len() as u64,
+            domains: self.domain_registry.len() as u64,
+            credentials: self.credential_registry.len() as u64,
+            employment_contracts: self.employment_registry.contracts.len() as u64,
+            dao_entries: self.dao_registry_index.len() as u64,
+            pouw_mints: pouw_total as u64,
+            contract_blocks: self.contract_blocks.len() as u64,
         };
         store.stage::<HotStateProjectionMetaTable>(META_KEY, &meta)?;
         Ok(())
+    }
+
+    /// Reviewer #2692/L1470 + L327: write the projection meta in its own
+    /// metadata-write batch *after* the data tables have been committed
+    /// and flushed.
+    ///
+    /// `commit_metadata_write` applies per-tree batches without
+    /// cross-tree WAL atomicity (its doc-comment is explicit:
+    /// `"This path is not WAL-protected"`). A crash mid-commit could
+    /// leave `projection_hot_state_meta` durable while sibling
+    /// projection tables are stale, making
+    /// `hot_state_projection_is_current` return true at next startup
+    /// and hydrate inconsistent hot state.
+    ///
+    /// By committing meta in a second batch, the worst case becomes:
+    /// crash before meta commit → meta absent → fast path skipped at
+    /// next startup → fallback to historical replay → backfill
+    /// re-stages atomically. The hydrate path never observes meta-
+    /// current + data-stale.
+    pub(crate) fn commit_hot_state_projection_meta_only(
+        &self,
+        store: &dyn BlockchainStore,
+        block: &Block,
+    ) -> Result<()> {
+        store.begin_metadata_write()?;
+        let result = self.stage_hot_state_projection_meta(store, block);
+        match result {
+            Ok(()) => store.commit_metadata_write().map_err(Into::into),
+            Err(e) => {
+                if let Err(rb) = store.rollback_block() {
+                    warn!("failed to roll back projection-meta batch: {}", rb);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub(crate) fn hot_state_projection_is_current(
@@ -423,7 +520,16 @@ impl Blockchain {
         store.begin_metadata_write()?;
         let result = self.run_backfill_staging(store, &tip);
         match result {
-            Ok(()) => store.commit_metadata_write().map_err(Into::into),
+            Ok(()) => {
+                // Commit data first and flush.
+                store.commit_metadata_write()?;
+                // Only AFTER data is durable, write the meta marker in a
+                // separate batch (reviewer #2692/L327). If we crash
+                // between these two commits, meta is absent → next
+                // startup falls back to historical replay → backfill
+                // rebuilds atomically.
+                self.commit_hot_state_projection_meta_only(store, &tip)
+            }
             Err(e) => {
                 if let Err(rollback) = store.rollback_block() {
                     warn!(
@@ -462,7 +568,7 @@ impl Blockchain {
     fn run_backfill_staging(
         &self,
         store: &dyn BlockchainStore,
-        tip: &Block,
+        _tip: &Block,
     ) -> Result<()> {
         self.clear_projection_tables(store)?;
         self.backfill_validators(store)?;
@@ -474,7 +580,10 @@ impl Blockchain {
         self.backfill_dao_registry(store)?;
         self.backfill_pouw_mints(store)?;
         self.stage_contract_blocks(store)?;
-        self.stage_hot_state_projection_meta(store, tip)
+        // Reviewer #2692/L327: meta is committed in a second batch by
+        // the caller after the data batch flushes. Do NOT stage meta
+        // here — see `commit_hot_state_projection_meta_only`.
+        Ok(())
     }
 
     fn backfill_validators(&self, store: &dyn BlockchainStore) -> Result<()> {

@@ -1321,6 +1321,12 @@ impl Blockchain {
 
         if let Some(ref store) = self.store {
             self.stage_hot_state_projection_updates(store.as_ref(), &block)?;
+            // Pure-legacy path: data + meta commit together inside the
+            // same WAL-protected `commit_block` batch via
+            // `persist_to_sled_store` below, so bundling meta here is
+            // safe (atomicity #2692/L1470 only matters on the executor
+            // path's non-WAL `commit_metadata_write`).
+            self.stage_hot_state_projection_meta(store.as_ref(), &block)?;
         }
 
         // Create transaction receipts
@@ -1471,6 +1477,15 @@ impl Blockchain {
 
         if let Some(ref store) = self.store {
             self.stage_hot_state_projection_updates(store.as_ref(), &block)?;
+            // Mixed executor/legacy fn:
+            // - Executor path: meta is committed AFTER commit_metadata_write
+            //   in a separate WAL-bracketed batch (see #2692/L1470 fix below
+            //   at the `if using_executor` block); do NOT stage meta here.
+            // - Legacy path: data + meta commit together inside the same
+            //   WAL-protected `commit_block` batch, so bundling meta is safe.
+            if !using_executor {
+                self.stage_hot_state_projection_meta(store.as_ref(), &block)?;
+            }
         }
 
         // Create transaction receipts
@@ -1500,6 +1515,22 @@ impl Blockchain {
                         block.height(),
                         e
                     );
+                } else {
+                    // Reviewer #2692/L1470: commit_metadata_write is not
+                    // WAL-protected across trees. Stage + commit the
+                    // projection-meta marker ONLY AFTER the data tables
+                    // are durable. If we crash between the two commits,
+                    // the meta marker is absent → next startup falls
+                    // back to historical replay (which re-runs backfill).
+                    if let Err(e) = self
+                        .commit_hot_state_projection_meta_only(store.as_ref(), &block)
+                    {
+                        warn!(
+                            "Failed to commit projection meta for block {}: {}",
+                            block.height(),
+                            e
+                        );
+                    }
                 }
             }
             debug!(
