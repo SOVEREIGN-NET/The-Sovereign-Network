@@ -37,6 +37,7 @@ mod identity;
 mod init;
 mod oracle;
 mod persistence;
+mod projections;
 mod validators;
 mod gateways;
 mod wallets;
@@ -1318,6 +1319,10 @@ impl Blockchain {
             );
         }
 
+        if let Some(ref store) = self.store {
+            self.stage_hot_state_projection_updates(store.as_ref(), &block)?;
+        }
+
         // Create transaction receipts
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
@@ -1405,6 +1410,7 @@ impl Blockchain {
         self.process_entity_registry_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
+        self.process_credential_transactions(&block);
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {
@@ -1461,6 +1467,10 @@ impl Blockchain {
                 "Error processing profit declarations at height {}: {}",
                 self.height, e
             );
+        }
+
+        if let Some(ref store) = self.store {
+            self.stage_hot_state_projection_updates(store.as_ref(), &block)?;
         }
 
         // Create transaction receipts

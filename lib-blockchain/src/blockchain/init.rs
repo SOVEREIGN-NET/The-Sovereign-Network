@@ -711,6 +711,10 @@ impl Blockchain {
         // from the loaded blocks so /api/v1/pouw/rewards has the full history.
         blockchain.rebuild_pouw_mint_index();
 
+        if let Err(e) = blockchain.backfill_hot_state_projections_from_replay(store.as_ref()) {
+            warn!("⚠️ Failed to backfill hot-state projections during load_from_store: {}", e);
+        }
+
         // The store's wallet-projection index is non-authoritative and
         // rebuildable; it can be stale or empty after a wipe. We have just
         // re-derived the canonical wallet state (`wallet_registry` /

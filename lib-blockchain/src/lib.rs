@@ -32,6 +32,7 @@ pub mod onramp;
 pub mod opaque;
 pub mod oracle;
 pub mod pricing;
+pub mod projections;
 pub mod protocol;
 pub mod receipts;
 pub mod resources;

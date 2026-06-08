@@ -53,6 +53,16 @@ const TREE_META: &str = "meta";
 const TREE_WAL: &str = "wal_block_commit"; // Write-ahead log for crash-safe block commits
 const TREE_FORK_POINTS: &str = "fork_points"; // Fork audit log — direct durable writes
 const TREE_RECEIPTS: &str = "receipts"; // Transaction receipts — direct writes, tx_hash → receipt
+const TREE_PROJECTION_HOT_STATE_META: &str = "projection_hot_state_meta";
+const TREE_PROJECTION_VALIDATORS: &str = "projection_validators";
+const TREE_PROJECTION_GATEWAYS: &str = "projection_gateways";
+const TREE_PROJECTION_DOMAINS: &str = "projection_domains";
+const TREE_PROJECTION_CREDENTIALS: &str = "projection_credentials";
+const TREE_PROJECTION_DID_USERNAMES: &str = "projection_did_usernames";
+const TREE_PROJECTION_EMPLOYMENT: &str = "projection_employment";
+const TREE_PROJECTION_DAO_REGISTRY: &str = "projection_dao_registry";
+const TREE_PROJECTION_POUW_MINTS: &str = "projection_pouw_mints";
+const TREE_PROJECTION_CONTRACT_BLOCKS: &str = "projection_contract_blocks";
 
 /// The single key under which an in-progress block commit's post-image is
 /// staged in the `wal` tree. Only one block commits at a time, so one key
@@ -100,6 +110,16 @@ pub struct SledStore {
     wal: Tree,                   // Write-ahead log: durable block-commit post-image
     fork_points: Tree,           // Fork audit log: direct durable writes (non-batched)
     receipts: Tree,              // Transaction receipts: tx_hash → TransactionReceipt
+    projection_hot_state_meta: Tree,
+    projection_validators: Tree,
+    projection_gateways: Tree,
+    projection_domains: Tree,
+    projection_credentials: Tree,
+    projection_did_usernames: Tree,
+    projection_employment: Tree,
+    projection_dao_registry: Tree,
+    projection_pouw_mints: Tree,
+    projection_contract_blocks: Tree,
 
     // Transaction state
     tx_active: AtomicBool,
@@ -370,6 +390,36 @@ impl SledStore {
         let receipts = db
             .open_tree(TREE_RECEIPTS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_hot_state_meta = db
+            .open_tree(TREE_PROJECTION_HOT_STATE_META)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_validators = db
+            .open_tree(TREE_PROJECTION_VALIDATORS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_gateways = db
+            .open_tree(TREE_PROJECTION_GATEWAYS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_domains = db
+            .open_tree(TREE_PROJECTION_DOMAINS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_credentials = db
+            .open_tree(TREE_PROJECTION_CREDENTIALS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_did_usernames = db
+            .open_tree(TREE_PROJECTION_DID_USERNAMES)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_employment = db
+            .open_tree(TREE_PROJECTION_EMPLOYMENT)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_dao_registry = db
+            .open_tree(TREE_PROJECTION_DAO_REGISTRY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_pouw_mints = db
+            .open_tree(TREE_PROJECTION_POUW_MINTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let projection_contract_blocks = db
+            .open_tree(TREE_PROJECTION_CONTRACT_BLOCKS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         let store = Self {
             db,
@@ -402,6 +452,16 @@ impl SledStore {
             wal,
             fork_points,
             receipts,
+            projection_hot_state_meta,
+            projection_validators,
+            projection_gateways,
+            projection_domains,
+            projection_credentials,
+            projection_did_usernames,
+            projection_employment,
+            projection_dao_registry,
+            projection_pouw_mints,
+            projection_contract_blocks,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
             tx_utxo_merkle_next_index: AtomicU64::new(0),
@@ -773,6 +833,16 @@ impl SledStore {
             TREE_UTXO_MERKLE_META => &self.utxo_merkle_meta,
             TREE_UTXO_MERKLE_NODES => &self.utxo_merkle_nodes,
             TREE_META => &self.meta,
+            TREE_PROJECTION_HOT_STATE_META => &self.projection_hot_state_meta,
+            TREE_PROJECTION_VALIDATORS => &self.projection_validators,
+            TREE_PROJECTION_GATEWAYS => &self.projection_gateways,
+            TREE_PROJECTION_DOMAINS => &self.projection_domains,
+            TREE_PROJECTION_CREDENTIALS => &self.projection_credentials,
+            TREE_PROJECTION_DID_USERNAMES => &self.projection_did_usernames,
+            TREE_PROJECTION_EMPLOYMENT => &self.projection_employment,
+            TREE_PROJECTION_DAO_REGISTRY => &self.projection_dao_registry,
+            TREE_PROJECTION_POUW_MINTS => &self.projection_pouw_mints,
+            TREE_PROJECTION_CONTRACT_BLOCKS => &self.projection_contract_blocks,
             _ => return None,
         })
     }
@@ -2677,6 +2747,11 @@ mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::projections::{
+        HotStateProjectionMeta, HotStateProjectionMetaTable, ValidatorProjectionRecord,
+        ValidatorProjectionTable, HOT_STATE_PROJECTION_VERSION,
+    };
+    use crate::storage::table::TableAccess;
     use crate::transaction::WalletTransactionData;
     use crate::types::{Difficulty, Hash};
 
@@ -2817,6 +2892,73 @@ mod tests {
         // Non-existent balance should be 0
         let other_addr = Address([0x33; 32]);
         assert_eq!(store.get_token_balance(&token, &other_addr).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_hot_state_projection_tables_commit_atomically() {
+        let store = SledStore::open_temporary().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+        let validator = crate::blockchain::ValidatorInfo {
+            identity_id: "did:sovn:test-validator".to_string(),
+            stake: 100,
+            storage_provided: 64,
+            consensus_key: [7u8; 2592],
+            networking_key: vec![1, 2, 3],
+            rewards_key: vec![4, 5, 6],
+            network_address: "127.0.0.1:7000".to_string(),
+            commission_rate: 50,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: crate::blockchain::ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        };
+        let meta = HotStateProjectionMeta {
+            version: HOT_STATE_PROJECTION_VERSION,
+            height: 0,
+            block_hash: block0.hash().as_array(),
+            completed_at_unix: 1,
+            validators: 1,
+            gateways: 0,
+            domains: 0,
+            credentials: 0,
+            employment_contracts: 0,
+            dao_entries: 0,
+            pouw_mints: 0,
+            contract_blocks: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block0).unwrap();
+        store
+            .stage::<ValidatorProjectionTable>(
+                validator.identity_id.as_str(),
+                &ValidatorProjectionRecord {
+                    info: validator.clone(),
+                    committed_at_height: 0,
+                },
+            )
+            .unwrap();
+        store
+            .stage::<HotStateProjectionMetaTable>("hot_state", &meta)
+            .unwrap();
+        store.commit_block().unwrap();
+
+        let loaded = store
+            .get::<ValidatorProjectionTable>(validator.identity_id.as_str())
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.info.identity_id, validator.identity_id);
+        assert_eq!(loaded.committed_at_height, 0);
+
+        let loaded_meta = store
+            .get::<HotStateProjectionMetaTable>("hot_state")
+            .unwrap()
+            .unwrap();
+        assert!(loaded_meta.is_current_for(0, block0.hash().as_array()));
     }
 
     #[test]
