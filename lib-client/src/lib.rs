@@ -1735,6 +1735,172 @@ pub extern "C" fn zhtp_client_build_domain_update(
     }
 }
 
+// =============================================================================
+// CONS-516: domain-registration fee payment + request builders
+// =============================================================================
+//
+// The web4 server now requires every new-domain registration to carry a
+// `fee_payment_tx` field: a hex-encoded, user-signed TokenTransfer paying the
+// 10 SOV registration fee from the owner's Primary wallet to the DAO
+// treasury wallet. The two FFI exports below give the mobile SDK the same
+// surface the Rust CLI already uses (`build_domain_fee_payment_tx` +
+// `build_domain_register_request_with_fee_payment`).
+//
+// Mobile flow:
+//   1. Fetch owner's Primary `wallet_id` (32 bytes) via the existing
+//      `GET /api/v1/blockchain/wallets?owner_identity=<hex>` endpoint.
+//   2. Fetch the SOV token nonce for that wallet via
+//      `GET /api/v1/token/nonce/<sov_token_id_hex>/<wallet_id_hex>`.
+//   3. Call `zhtp_client_build_domain_fee_payment_tx` to get the hex tx.
+//   4. Call `zhtp_client_build_domain_register_request_with_fee_payment`
+//      with the hex from step 3 to get the JSON body to POST.
+//
+// The DAO treasury wallet id is deterministic and may be hard-coded or
+// computed by the caller — see Blockchain::deterministic_treasury_wallet_id
+// (= blake3("SOV_DAO_TREASURY_V1")). To keep this FFI self-contained the
+// fee builder accepts the treasury_wallet_id as an explicit 32-byte input;
+// passing a null pointer means "use the deterministic constant".
+
+/// Build a signed SOV TokenTransfer paying the domain-registration fee.
+///
+/// Returns a hex-encoded, bincode-serialized signed Transaction that the
+/// mobile app must attach as the `fee_payment_tx` JSON field on the
+/// `POST /api/v1/web4/domains/register` body. Caller must free the
+/// returned string with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - `handle`: Identity handle (signs the TokenTransfer).
+/// - `sender_wallet_id`: 32-byte raw Primary wallet id of the owner.
+/// - `treasury_wallet_id`: 32-byte raw DAO treasury wallet id. If NULL,
+///   the deterministic `blake3("SOV_DAO_TREASURY_V1")` value is used.
+/// - `amount_atoms`: Fee amount in atomic SOV units (18-decimals;
+///   10 SOV = `10_000_000_000_000_000_000`). The server enforces a
+///   minimum of 10 SOV.
+/// - `nonce`: Sender's current SOV nonce (fetch from
+///   `GET /api/v1/token/nonce/<sov_token_id_hex>/<sender_wallet_id_hex>`).
+/// - `chain_id`: Network chain id (3 for the current testnet).
+///
+/// Returns NULL on input-validation, key-derivation, or serialization errors.
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_domain_fee_payment_tx(
+    handle: *const IdentityHandle,
+    sender_wallet_id: *const u8,
+    treasury_wallet_id: *const u8,
+    amount_atoms_lo: u64,
+    amount_atoms_hi: u64,
+    nonce: u64,
+    chain_id: u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || sender_wallet_id.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+    let mut sender = [0u8; 32];
+    unsafe { std::ptr::copy_nonoverlapping(sender_wallet_id, sender.as_mut_ptr(), 32) };
+    let mut treasury = [0u8; 32];
+    if treasury_wallet_id.is_null() {
+        // Deterministic constant: blake3("SOV_DAO_TREASURY_V1"). Mirrors
+        // Blockchain::deterministic_treasury_wallet_id() so callers don't
+        // need to ship the hash function or pull the canonical bytes
+        // through a separate API call.
+        let h = blake3::hash(b"SOV_DAO_TREASURY_V1");
+        treasury.copy_from_slice(h.as_bytes());
+    } else {
+        unsafe { std::ptr::copy_nonoverlapping(treasury_wallet_id, treasury.as_mut_ptr(), 32) };
+    }
+    // u128 is reconstructed from two u64 halves so mobile bindings that
+    // can't represent u128 directly (Swift, Kotlin) still produce the
+    // exact value the server validates.
+    let amount: u128 = (amount_atoms_hi as u128) << 64 | (amount_atoms_lo as u128);
+
+    match token_tx::build_sov_wallet_transfer_tx(
+        identity,
+        &sender,
+        &treasury,
+        amount,
+        chain_id,
+        nonce,
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Build the JSON body for `POST /api/v1/web4/domains/register` with
+/// `fee_payment_tx` attached.
+///
+/// Caller must free the returned string with `zhtp_client_string_free`.
+///
+/// # Parameters
+/// - `handle`: Identity handle (becomes the domain owner; signs the
+///   request-canonicalisation message `domain|timestamp|fee`).
+/// - `domain`: Null-terminated C string, e.g. `"example.sov"`.
+/// - `content_mappings_json`: Optional null-terminated JSON object
+///   `{"<path>": {"content": "<base64>", "content_type": "<mime>"}, ...}`.
+///   Pass NULL for no inline content (server will register a metadata-only
+///   record). Invalid JSON returns NULL.
+/// - `fee_payment_tx_hex`: Null-terminated hex string produced by
+///   `zhtp_client_build_domain_fee_payment_tx`. REQUIRED.
+///
+/// Returns NULL on missing inputs, JSON parse failure, or signing failure.
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
+    handle: *const IdentityHandle,
+    domain: *const std::ffi::c_char,
+    content_mappings_json: *const std::ffi::c_char,
+    fee_payment_tx_hex: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || domain.is_null() || fee_payment_tx_hex.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &(*handle).inner };
+    let domain_str = unsafe {
+        match std::ffi::CStr::from_ptr(domain).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let fee_tx_str = unsafe {
+        match std::ffi::CStr::from_ptr(fee_payment_tx_hex).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let content_mappings_opt = if content_mappings_json.is_null() {
+        None
+    } else {
+        let raw = unsafe {
+            match std::ffi::CStr::from_ptr(content_mappings_json).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+        match serde_json::from_str::<
+            std::collections::HashMap<String, token_tx::ContentMapping>,
+        >(raw)
+        {
+            Ok(m) => Some(m),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    match token_tx::build_domain_register_request_with_fee_payment(
+        identity,
+        domain_str,
+        content_mappings_opt,
+        Some(fee_tx_str),
+    ) {
+        Ok(json) => match std::ffi::CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Build a signed domain transfer transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/web4/domains/transfer
 /// Caller must free with `zhtp_client_string_free`.
