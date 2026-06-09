@@ -1204,15 +1204,26 @@ impl BlockchainStore for SledStore {
     }
 
     fn backfill_nullifiers(&self, nullifiers: &[Hash]) -> StorageResult<()> {
-        for nullifier in nullifiers {
-            self.nullifiers
-                .insert(nullifier.as_bytes(), &[1u8][..])
-                .map_err(|e| StorageError::Database(e.to_string()))?;
+        // Must only be called during startup migrations, before block processing begins.
+        if self.tx_active.load(Ordering::SeqCst) {
+            return Err(StorageError::TransactionAlreadyActive);
         }
+        if nullifiers.is_empty() {
+            return Ok(());
+        }
+
+        let mut batch = Batch::default();
+        for nullifier in nullifiers {
+            batch.insert(nullifier.as_bytes(), &[1u8][..]);
+        }
+        self.nullifiers
+            .apply_batch(batch)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         self.nullifiers
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
+    }
     }
 
     // =========================================================================
