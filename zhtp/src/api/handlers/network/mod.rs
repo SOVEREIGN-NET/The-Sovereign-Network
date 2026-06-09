@@ -1150,6 +1150,23 @@ impl NetworkHandler {
             ("57.128.30.74",    "e47388182acf6c4548675e66ccfc2405872b6deb9f4129ce88916476e7edb57f"), // gateway-2 (LE)
         ].into_iter().collect();
 
+        // Gateway DID overrides by IP. The on-chain `gateway_registry` was
+        // populated with placeholder DIDs from earlier dev work — the real
+        // identity each gateway uses in the UHP handshake is the keystore
+        // identity loaded from `/opt/zhtp/.zhtp/keystore/node_identity.json`.
+        // Mobile fetches the directory, expects DID X (registry placeholder),
+        // connects, receives DID Y (keystore) in ServerHello → mismatch →
+        // mobile aborts the handshake → server times out 30s later with
+        // "UHP+Kyber handshake failed". Override here so the directory
+        // returns the keystore DID, matching what the gateway actually
+        // presents on the wire. Permanent fix is a re-registration tx for
+        // each gateway (the lib-blockchain `new_gateway_update` path);
+        // until then this hardcoded map is load-bearing.
+        let known_gateway_dids: std::collections::HashMap<&str, &str> = [
+            ("91.98.113.188", "3d0b7093c241a4f3621233c6445f7dfb82f242dc47b350ca426ca26cc1271863"), // gateway-1 keystore
+            ("57.128.30.74",  "ff7d98a460c3f828ab38cc67a1623c9609826307394b40a4500cd11900641b2c"), // gateway-2 keystore
+        ].into_iter().collect();
+
         // Build validator entries from on-chain registry, with IP overlay
         let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
         let validators: Vec<serde_json::Value> = blockchain
@@ -1186,8 +1203,16 @@ impl NetworkHandler {
             .map(|g| {
                 let ip = Self::extract_host(&g.endpoints);
                 let spki_pin = known_spki_pins.get(ip.as_str()).copied();
+                // Use the keystore DID when we have an override for this IP,
+                // otherwise fall back to whatever the registry holds. Mobile
+                // verifies handshake peer_did against this field, so a stale
+                // registry value breaks every authenticated connection.
+                let did: &str = known_gateway_dids
+                    .get(ip.as_str())
+                    .copied()
+                    .unwrap_or(g.identity_id.as_str());
                 serde_json::json!({
-                    "did": g.identity_id,
+                    "did": did,
                     "role": "gateway",
                     "endpoint": g.endpoints,
                     "ip": ip,
