@@ -1136,13 +1136,23 @@ impl NetworkHandler {
         // Known validator/gateway SPKI pins (SHA-256 of SubjectPublicKeyInfo DER).
         // Keyed by IP. These are stable unless a node regenerates its TLS cert.
         // TODO: move to on-chain validator registry so nodes publish their own pins.
+        //
+        // Re-collected from each node 2026-06-09 after the CONS-516 / #2687
+        // restart cycle — every prior entry was stale (cert was regenerated
+        // at some point and never re-pinned) which was rejecting every
+        // mobile-app QUIC handshake with error 42. Plus gateway-2 was
+        // missing entirely, which is why the app's NetworkDirectory fell
+        // back to the wrong IPs for it. Source-of-truth command:
+        //   sudo openssl x509 -in /opt/zhtp/.zhtp/data/tls/server.crt \
+        //     -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum
         let known_spki_pins: std::collections::HashMap<&str, &str> = [
-            ("77.42.37.161",   "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // g1
-            ("77.42.74.80",    "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // g2
-            ("178.105.9.247",  "eb71239b161a8ea0cdc94f3853298f3e063523c9860a9630cc57504b024a3f54"), // g3
-            ("148.113.140.176","939828e5fc146d3b2efb3255d53ba12b48f9da9c0a823bae145f6720eab3937c"), // g4
-            ("51.75.62.133",   "154afc2efe9d834f5264fd21033d49362599e358233d1c0d67ad487bab366d09"), // g5
-            ("91.98.113.188",  "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
+            ("77.42.37.161",    "337a604faf1158d15ba6343e9172c6dda630e2f7e4d22c3e51f2407774e6c561"), // g1
+            ("77.42.74.80",     "11f79e9e5c1ec46a7497f5f4e507b4d5e4e72c48cd768235bd369f3bad7eba5b"), // g2
+            ("178.105.9.247",   "980db3f22c09e490d35e362c15a2c1596a1d090edc451bb213dd15ed932886f3"), // g3
+            ("148.113.140.176", "5160edb424763874411ee4cb86a2a4dfeb28d88f16f3ae4aa3f18dadb5123037"), // g4
+            ("51.75.62.133",    "8ed8775b1c5010c3fc69b44bbe5ab69a1e2f075a031c12c26abef5abd4c16e4b"), // g5
+            ("91.98.113.188",   "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
+            ("57.128.30.74",    "4c2957607b4c0f1fe774973310fc53cd006ae6534a92a6bb509048a671024ee7"), // gateway-2
         ].into_iter().collect();
 
         // Build validator entries from on-chain registry, with IP overlay
