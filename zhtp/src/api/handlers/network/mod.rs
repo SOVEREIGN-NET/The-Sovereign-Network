@@ -1133,27 +1133,33 @@ impl NetworkHandler {
             .unwrap_or_default();
         let node_role = format!("{:?}", self.runtime.get_node_role().await).to_ascii_lowercase();
 
-        // Known validator/gateway SPKI pins (SHA-256 of SubjectPublicKeyInfo DER).
-        // Keyed by IP. These are stable unless a node regenerates its TLS cert.
-        // TODO: move to on-chain validator registry so nodes publish their own pins.
+        // ─────────────────────────────────────────────────────────────────
+        // Identity verification model (post-#2697-followup):
         //
-        // Re-collected from each node 2026-06-09 after the CONS-516 / #2687
-        // restart cycle — every prior entry was stale (cert was regenerated
-        // at some point and never re-pinned) which was rejecting every
-        // mobile-app QUIC handshake with error 42. Plus gateway-2 was
-        // missing entirely, which is why the app's NetworkDirectory fell
-        // back to the wrong IPs for it. Source-of-truth command:
-        //   sudo openssl x509 -in /opt/zhtp/.zhtp/data/tls/server.crt \
-        //     -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum
-        let known_spki_pins: std::collections::HashMap<&str, &str> = [
-            ("77.42.37.161",    "337a604faf1158d15ba6343e9172c6dda630e2f7e4d22c3e51f2407774e6c561"), // g1
-            ("77.42.74.80",     "11f79e9e5c1ec46a7497f5f4e507b4d5e4e72c48cd768235bd369f3bad7eba5b"), // g2
-            ("178.105.9.247",   "980db3f22c09e490d35e362c15a2c1596a1d090edc451bb213dd15ed932886f3"), // g3
-            ("148.113.140.176", "5160edb424763874411ee4cb86a2a4dfeb28d88f16f3ae4aa3f18dadb5123037"), // g4
-            ("51.75.62.133",    "8ed8775b1c5010c3fc69b44bbe5ab69a1e2f075a031c12c26abef5abd4c16e4b"), // g5
-            ("91.98.113.188",   "611bd1197ee799c17ac46f3f27df45ec4580d924f0dc3597ba79bcad3d0fa970"), // gateway
-            ("57.128.30.74",    "4c2957607b4c0f1fe774973310fc53cd006ae6534a92a6bb509048a671024ee7"), // gateway-2
-        ].into_iter().collect();
+        // TLS-layer SPKI pinning is GONE. The hardcoded `known_spki_pins`
+        // HashMap was a hot-mess: every entry rotted whenever any node
+        // regenerated its cert, and the table had to be re-hand-edited
+        // and re-deployed across every node every time. We had two
+        // production incidents from this in one week.
+        //
+        // The authoritative identity check now lives where it always
+        // should have: the UHP-v2 PQC handshake. Each peer publishes
+        // its Dilithium5 public key on-chain via its validator/gateway
+        // registration tx; the handshake performs a fresh signature
+        // exchange and returns `peer_did`. The client compares
+        // `peer_did` to the `did` field in this directory response —
+        // mismatch = MITM or wrong host, reject the connection.
+        //
+        // The TLS cert can be self-signed or rotated freely; it's just
+        // transport. SPKI verification at TLS layer was belt-and-
+        // suspenders on top of a stronger cryptographic identity proof.
+        //
+        // Field migration: `spki_pin` is set to `""` for every entry.
+        // Old clients that still gate on a non-empty value will fail
+        // their TLS pinning step and surface a clean error. New clients
+        // ignore the field and trust the UHP-v2 handshake. See the
+        // frontend spec dated 2026-06-09 for the app-side rollout.
+        // ─────────────────────────────────────────────────────────────────
 
         // Build validator entries from on-chain registry, with IP overlay
         let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
@@ -1164,7 +1170,6 @@ impl NetworkHandler {
             .map(|(did, v)| {
                 let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
                 let ip = endpoint.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
@@ -1178,7 +1183,12 @@ impl NetworkHandler {
                     "last_activity": v.last_activity,
                     "commission_rate": v.commission_rate,
                     "admission": v.admission_source,
-                    "spki_pin": spki_pin,
+                    // Deprecated — authentication is via UHP-v2 DID
+                    // handshake, not TLS-layer cert pinning. Always
+                    // empty; field retained only so old clients still
+                    // get a stable JSON shape and surface a clean
+                    // failure mode when they require a non-empty pin.
+                    "spki_pin": "",
                 })
             })
             .collect();
@@ -1190,7 +1200,6 @@ impl NetworkHandler {
             .filter(|g| g.status == "active")
             .map(|g| {
                 let ip = g.endpoints.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
                 serde_json::json!({
                     "did": g.identity_id,
                     "role": "gateway",
@@ -1201,7 +1210,8 @@ impl NetworkHandler {
                     "status": g.status,
                     "stake": g.stake,
                     "commission_rate": g.commission_rate,
-                    "spki_pin": spki_pin,
+                    // Same deprecation as the validator entry above.
+                    "spki_pin": "",
                 })
             })
             .collect();
