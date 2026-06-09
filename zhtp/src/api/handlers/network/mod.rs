@@ -1137,7 +1137,9 @@ impl NetworkHandler {
         // path for SPKI today. Recompute and update whenever a node rotates
         // its TLS cert. Gateway entries are the Let's Encrypt certs deployed
         // 2026-06-09; validator entries are the long-lived self-signed
-        // certs. Empty string for unknown IPs — clients fall back to TOFU.
+        // certs. Unknown IPs emit JSON `null` so the client falls through to
+        // TOFU/bootstrap instead of `pin_spki: Some("")` which rejects every
+        // real cert (see lib-network/src/web4/trust.rs:547-565).
         let known_spki_pins: std::collections::HashMap<&str, &str> = [
             ("77.42.37.161",    "337a604faf1158d15ba6343e9172c6dda630e2f7e4d22c3e51f2407774e6c561"), // g1
             ("77.42.74.80",     "11f79e9e5c1ec46a7497f5f4e507b4d5e4e72c48cd768235bd369f3bad7eba5b"), // g2
@@ -1157,7 +1159,7 @@ impl NetworkHandler {
             .map(|(did, v)| {
                 let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
                 let ip = endpoint.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
+                let spki_pin = known_spki_pins.get(ip).copied();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
@@ -1183,7 +1185,7 @@ impl NetworkHandler {
             .filter(|g| g.status == "active")
             .map(|g| {
                 let ip = g.endpoints.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
+                let spki_pin = known_spki_pins.get(ip).copied();
                 serde_json::json!({
                     "did": g.identity_id,
                     "role": "gateway",
@@ -1238,20 +1240,25 @@ impl NetworkHandler {
         Ok(ZhtpResponse::html(TOPOLOGY_HTML.to_string(), None))
     }
 
-    fn compute_local_spki() -> String {
+    fn compute_local_spki() -> Option<String> {
         // Canonical location only — anchored at node_data_dir so it
         // matches `Environment::data_directory()`. If the cert lives
         // elsewhere the deployment is misconfigured; we don't want to
         // silently swallow a stale cert by trying multiple legacy paths.
+        //
+        // Returns `None` on any failure (missing cert, malformed PEM,
+        // hash compute error). Callers must propagate the absence as
+        // JSON `null`, never as `""` — an empty pin string is treated
+        // as an explicit-and-mismatched pin by the trust verifier and
+        // causes every cert verification to fail.
         let cert_path = crate::node_data_path("data/tls/server.crt");
-        if let Ok(pem) = std::fs::read(&cert_path) {
-            if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
-                if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
-                    return hex::encode(hash);
-                }
-            }
-        }
-        String::new()
+        let pem = std::fs::read(&cert_path).ok()?;
+        let cert_der = rustls_pemfile::certs(&mut pem.as_slice()).next()?.ok()?;
+        let hash = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(
+            cert_der.as_ref(),
+        )
+        .ok()?;
+        Some(hex::encode(hash))
     }
 
     async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
