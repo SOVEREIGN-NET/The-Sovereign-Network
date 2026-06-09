@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, info, warn};
@@ -300,7 +300,16 @@ impl ZhtpClient {
 
     /// Internal: establish an authenticated connection to a specific address.
     async fn connect_internal(&mut self, addr: &str) -> Result<AuthenticatedConnection> {
-        let socket_addr: SocketAddr = addr.parse().context("Invalid server address")?;
+        // Accept both "ip:port" and "hostname:port". `SocketAddr::parse` only
+        // handles literal IPs, so a hostname like
+        // "zhtp-gateway.thesovereignnetwork.org:9334" used to fail here and
+        // the FFI surfaced it as "QuicSession.open failed: openFailed".
+        // `to_socket_addrs` performs DNS lookup and returns the first result.
+        let socket_addr: SocketAddr = addr
+            .to_socket_addrs()
+            .with_context(|| format!("Failed to resolve address: {}", addr))?
+            .next()
+            .ok_or_else(|| anyhow!("Address '{}' resolved to no socket addresses", addr))?;
 
         if self.trust_config.bootstrap_mode && !self.config.allow_bootstrap {
             return Err(anyhow!(
