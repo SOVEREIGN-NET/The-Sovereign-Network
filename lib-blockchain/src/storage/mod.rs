@@ -55,6 +55,7 @@ pub use table::{Table, TableAccess};
 pub use lib_types::primitives::{
     Address, Amount, BlockHash, BlockHeight, Bps, OutPoint, TokenId, TxHash, Utxo, UtxoMerkleProof,
 };
+use crate::types::Hash;
 
 // =============================================================================
 // EXTENSION TRAITS FOR CANONICAL TYPES
@@ -874,6 +875,73 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(OutPoint, Utxo)>> + '_>> {
         Err(StorageError::Database(
             "UTXO iteration not supported by this store".to_string(),
+        ))
+    }
+
+    // =========================================================================
+    // Nullifier State (Mutable)
+    // =========================================================================
+    // Nullifiers are replay-protection markers for spent inputs. They are
+    // consensus-critical and must be committed atomically with the block that
+    // consumes them.
+    // =========================================================================
+
+    /// Return true if a nullifier has already been committed.
+    fn is_nullifier_used(&self, nullifier: &Hash) -> StorageResult<bool> {
+        let _ = nullifier;
+        Err(StorageError::Database(
+            "Nullifier lookups are not supported by this store".to_string(),
+        ))
+    }
+
+    /// Mark a nullifier as spent.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_nullifier(&self, nullifier: &Hash) -> StorageResult<()> {
+        let _ = nullifier;
+        Err(StorageError::Database(
+            "Nullifier writes are not supported by this store".to_string(),
+        ))
+    }
+
+    /// Iterate all committed nullifiers.
+    fn iter_nullifiers(&self) -> StorageResult<Box<dyn Iterator<Item = StorageResult<Hash>> + '_>> {
+        Err(StorageError::Database(
+            "Nullifier iteration is not supported by this store".to_string(),
+        ))
+    }
+
+    /// Idempotently backfill nullifiers outside a block transaction.
+    ///
+    /// Used only during startup migrations from historical blocks. Normal block
+    /// execution must use `put_nullifier` inside begin_block/commit_block.
+    fn backfill_nullifiers(&self, nullifiers: &[Hash]) -> StorageResult<()> {
+        let _ = nullifiers;
+        Err(StorageError::Database(
+            "Nullifier backfill is not supported by this store".to_string(),
+        ))
+    }
+
+    /// Return true when the durable nullifier index is complete for this tip.
+    fn nullifier_index_is_current(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<bool> {
+        let _ = (height, block_hash);
+        Ok(false)
+    }
+
+    /// Mark the durable nullifier index complete for this tip.
+    fn mark_nullifier_index_current(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<()> {
+        let _ = (height, block_hash);
+        Err(StorageError::Database(
+            "Nullifier checkpoint writes are not supported by this store".to_string(),
         ))
     }
 
