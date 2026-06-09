@@ -19,7 +19,8 @@ use quinn::{ClientConfig, Connection, Endpoint};
 
 /// Singleton QUIC client `Endpoint` plus a dedicated long-lived runtime that
 /// owns its I/O driver task. Sharing the endpoint across all `ZhtpClient`
-/// instances is necessary for two distinct reasons; both bit us on iOS.
+/// instances is necessary for three distinct reasons, all of which bit us
+/// on iOS in the lib-client FFI path.
 ///
 /// 1. **Socket budget (Bug 1, also bites macOS/Linux at scale).** Without
 ///    sharing, every call to `new_with_config` binds a brand-new UDP socket
