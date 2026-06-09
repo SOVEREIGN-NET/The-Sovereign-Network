@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, info, warn};
@@ -304,11 +304,27 @@ impl ZhtpClient {
         // handles literal IPs, so a hostname like
         // "zhtp-gateway.thesovereignnetwork.org:9334" used to fail here and
         // the FFI surfaced it as "QuicSession.open failed: openFailed".
-        // `to_socket_addrs` performs DNS lookup and returns the first result.
-        let socket_addr: SocketAddr = addr
-            .to_socket_addrs()
+        //
+        // Use tokio's async DNS (`tokio::net::lookup_host`) — std's
+        // `to_socket_addrs` is a blocking syscall and stalling it inside
+        // an async fn parked on a single-thread runtime (which is exactly
+        // how `spawn_session_worker` runs us) blocks the whole session.
+        //
+        // On dual-stack hosts a hostname can resolve to both AAAA and A
+        // records; pick A first because IPv6 routing isn't universal
+        // (mobile carriers, captive nets, container egress) and a v6
+        // attempt that times out adds a full RTT of latency to the
+        // first request. Fall back to whatever resolves if no A record
+        // is returned.
+        let candidates: Vec<SocketAddr> = tokio::net::lookup_host(addr)
+            .await
             .with_context(|| format!("Failed to resolve address: {}", addr))?
-            .next()
+            .collect();
+        let socket_addr: SocketAddr = candidates
+            .iter()
+            .find(|s| s.is_ipv4())
+            .or_else(|| candidates.first())
+            .copied()
             .ok_or_else(|| anyhow!("Address '{}' resolved to no socket addresses", addr))?;
 
         if self.trust_config.bootstrap_mode && !self.config.allow_bootstrap {
