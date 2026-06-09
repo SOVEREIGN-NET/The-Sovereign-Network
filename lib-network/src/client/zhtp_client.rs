@@ -17,6 +17,35 @@ static BOOTSTRAP_NONCE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 use quinn::{ClientConfig, Connection, Endpoint};
 
+/// Singleton QUIC client `Endpoint`. Quinn's Endpoint is Arc-backed and Clone,
+/// so cloning shares the same UDP socket and I/O driver task across all
+/// `ZhtpClient` instances. Without this, every call to `new_with_config`
+/// binds a fresh UDP socket. On iOS the per-process socket limit is small
+/// (~256) and the lib-client FFI spawns a session per authenticated request,
+/// so a busy app exhausts the budget and `Endpoint::client` starts returning
+/// EPERM ("Operation not permitted") — which then bubbles up as
+/// `QuicSession.open failed: openFailed`. Sharing one endpoint fixes that
+/// and is the standard quinn pattern; the per-connection config is
+/// supplied at `connect_with()` time.
+static CLIENT_ENDPOINT: OnceLock<Endpoint> = OnceLock::new();
+static CLIENT_ENDPOINT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn shared_client_endpoint() -> Result<Endpoint> {
+    if let Some(ep) = CLIENT_ENDPOINT.get() {
+        return Ok(ep.clone());
+    }
+    let _guard = CLIENT_ENDPOINT_MUTEX
+        .lock()
+        .map_err(|_| anyhow!("client endpoint init mutex poisoned"))?;
+    if let Some(ep) = CLIENT_ENDPOINT.get() {
+        return Ok(ep.clone());
+    }
+    let ep =
+        Endpoint::client("0.0.0.0:0".parse()?).context("Failed to create shared QUIC endpoint")?;
+    let _ = CLIENT_ENDPOINT.set(ep.clone());
+    Ok(ep)
+}
+
 use lib_identity::ZhtpIdentity;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
@@ -115,9 +144,9 @@ impl ZhtpClient {
         // Install rustls crypto provider
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        // Create QUIC endpoint
-        let endpoint =
-            Endpoint::client("0.0.0.0:0".parse()?).context("Failed to create QUIC endpoint")?;
+        // Reuse the process-wide singleton endpoint (UDP socket + Quinn driver).
+        // See `CLIENT_ENDPOINT` docs above for why this is load-bearing on iOS.
+        let endpoint = shared_client_endpoint()?;
 
         // Create nonce cache.
         // Bootstrap clients share a single NonceCache instance (opened once via OnceLock).
@@ -346,14 +375,14 @@ impl ZhtpClient {
             }
         };
 
-        // Configure QUIC client
+        // Per-connection client config: the endpoint is shared across all
+        // ZhtpClients, so we mustn't mutate its default config (that would
+        // race against concurrent connects from other ZhtpClient instances).
+        // `connect_with` applies the config to just this connection.
         let client_config = Self::configure_client(verifier)?;
-        self.endpoint.set_default_client_config(client_config);
-
-        // Establish QUIC connection
         let connection = self
             .endpoint
-            .connect(socket_addr, "zhtp-node")?
+            .connect_with(client_config, socket_addr, "zhtp-node")?
             .await
             .context("QUIC connection failed")?;
 
