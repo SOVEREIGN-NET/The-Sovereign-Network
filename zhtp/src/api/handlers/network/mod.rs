@@ -1158,8 +1158,8 @@ impl NetworkHandler {
             .filter(|(_, v)| v.status == "active")
             .map(|(did, v)| {
                 let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
-                let ip = endpoint.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).copied();
+                let ip = Self::extract_host(endpoint);
+                let spki_pin = known_spki_pins.get(ip.as_str()).copied();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
@@ -1184,8 +1184,8 @@ impl NetworkHandler {
             .values()
             .filter(|g| g.status == "active")
             .map(|g| {
-                let ip = g.endpoints.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).copied();
+                let ip = Self::extract_host(&g.endpoints);
+                let spki_pin = known_spki_pins.get(ip.as_str()).copied();
                 serde_json::json!({
                     "did": g.identity_id,
                     "role": "gateway",
@@ -1238,6 +1238,37 @@ impl NetworkHandler {
     async fn handle_topology_ui(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         const TOPOLOGY_HTML: &str = include_str!("../../../ui/topology.html");
         Ok(ZhtpResponse::html(TOPOLOGY_HTML.to_string(), None))
+    }
+
+    /// Pull the host (IPv4 / IPv6 / hostname) out of an `endpoint` string.
+    ///
+    /// Handles the shapes that show up in the validator/gateway registry:
+    ///   - "1.2.3.4:9333"               → "1.2.3.4"
+    ///   - "[2001:db8::1]:9334"         → "2001:db8::1"
+    ///   - "host.example.com:9333"      → "host.example.com"
+    ///   - "host1:9333,host2:9333"      → "host1"        (take first comma entry)
+    ///
+    /// Naive `endpoint.split(':').next()` returns `"["` for bracketed IPv6
+    /// and the wrong slice for comma-separated lists, which then misses
+    /// the SPKI HashMap lookup and silently downgrades to TOFU on hosts
+    /// where pinning was actually expected.
+    fn extract_host(endpoint: &str) -> String {
+        let first = endpoint.split(',').next().unwrap_or(endpoint).trim();
+        if let Some(rest) = first.strip_prefix('[') {
+            // Bracketed IPv6 — host is everything before the closing bracket
+            if let Some(end) = rest.find(']') {
+                return rest[..end].to_string();
+            }
+        }
+        // For unbracketed: split at the LAST ':' so an unbracketed IPv6
+        // (technically malformed but seen in the wild) doesn't get
+        // truncated at the first colon. If the value contains exactly
+        // one colon it's "host:port" and rsplit_once works the same as
+        // split_once.
+        first
+            .rsplit_once(':')
+            .map(|(host, _port)| host.to_string())
+            .unwrap_or_else(|| first.to_string())
     }
 
     fn compute_local_spki() -> Option<String> {
