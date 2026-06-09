@@ -940,6 +940,20 @@ impl Blockchain {
             blockchain.token_contracts.len()
         );
 
+        let nullifiers: Vec<_> = blockchain.nullifier_set.iter().copied().collect();
+        if !nullifiers.is_empty() {
+            match store.backfill_nullifiers(&nullifiers) {
+                Ok(()) => debug!(
+                    "🔁 Backfilled durable nullifier index from loaded state ({} entries)",
+                    nullifiers.len()
+                ),
+                Err(e) => warn!(
+                    "⚠️ Failed to backfill durable nullifier index during load_from_store: {}",
+                    e
+                ),
+            }
+        }
+
         // load_from_store deliberately skips token-tx processing, so the
         // PoUW mint index is not built incrementally on this path. Rebuild it
         // from the loaded blocks so /api/v1/pouw/rewards has the full history.
