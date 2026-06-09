@@ -17,17 +17,35 @@ static BOOTSTRAP_NONCE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 use quinn::{ClientConfig, Connection, Endpoint};
 
-/// Singleton QUIC client `Endpoint`. Quinn's Endpoint is Arc-backed and Clone,
-/// so cloning shares the same UDP socket and I/O driver task across all
-/// `ZhtpClient` instances. Without this, every call to `new_with_config`
-/// binds a fresh UDP socket. On iOS the per-process socket limit is small
-/// (~256) and the lib-client FFI spawns a session per authenticated request,
-/// so a busy app exhausts the budget and `Endpoint::client` starts returning
-/// EPERM ("Operation not permitted") — which then bubbles up as
-/// `QuicSession.open failed: openFailed`. Sharing one endpoint fixes that
-/// and is the standard quinn pattern; the per-connection config is
-/// supplied at `connect_with()` time.
+/// Singleton QUIC client `Endpoint` plus a dedicated long-lived runtime that
+/// owns its I/O driver task. Sharing the endpoint across all `ZhtpClient`
+/// instances is necessary for two distinct reasons; both bit us on iOS.
+///
+/// 1. **Socket budget (Bug 1, also bites macOS/Linux at scale).** Without
+///    sharing, every call to `new_with_config` binds a brand-new UDP socket
+///    via `Endpoint::client`. The lib-client FFI spawns a session per
+///    authenticated request, so a busy app racks up file descriptors at
+///    one per request. iOS clamps at ~256 fds per process and starts
+///    returning EPERM ("Operation not permitted") from the bind.
+///
+/// 2. **Driver lifetime (Bug 2, iOS-specific in the FFI path).**
+///    `Endpoint::client` spawns its async I/O driver task on the **current**
+///    tokio runtime. The lib-client FFI builds a fresh single-threaded
+///    runtime per session in `spawn_session_worker`; whichever session
+///    happened to be the first caller would parent the driver onto its
+///    transient runtime, and the moment that worker exited the driver got
+///    dropped and every later clone of the singleton started failing with
+///    "endpoint stopping". Park the singleton on a process-lived runtime
+///    we build here under `runtime.enter()` so the driver outlives every
+///    individual session worker.
+///
+/// 3. **iOS bind permission.** `0.0.0.0:0` (IPv4-only wildcard) is rejected
+///    by iOS in many app sandboxes with EPERM even before any socket-budget
+///    pressure. `[::]:0` produces a dual-stack socket that accepts and
+///    sends IPv4 traffic too — matches the pattern the working `quinn-ffi`
+///    code path on the mobile side has used since day one.
 static CLIENT_ENDPOINT: OnceLock<Endpoint> = OnceLock::new();
+static CLIENT_ENDPOINT_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static CLIENT_ENDPOINT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn shared_client_endpoint() -> Result<Endpoint> {
@@ -40,8 +58,35 @@ fn shared_client_endpoint() -> Result<Endpoint> {
     if let Some(ep) = CLIENT_ENDPOINT.get() {
         return Ok(ep.clone());
     }
+
+    // Build (or get) the dedicated runtime that will own the endpoint's
+    // I/O driver task. Single worker thread is plenty — the driver is the
+    // only work that runs here; per-session client/handshake/RPC tasks
+    // still run on their own per-session runtimes.
+    let runtime = match CLIENT_ENDPOINT_RUNTIME.get() {
+        Some(rt) => rt,
+        None => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .thread_name("zhtp-client-endpoint")
+                .build()
+                .context("Failed to build shared client endpoint runtime")?;
+            let _ = CLIENT_ENDPOINT_RUNTIME.set(rt);
+            CLIENT_ENDPOINT_RUNTIME
+                .get()
+                .expect("CLIENT_ENDPOINT_RUNTIME just initialized")
+        }
+    };
+    let _enter = runtime.enter();
+
+    // Dual-stack bind. `[::]:0` accepts/sends IPv4 too; `0.0.0.0:0` is
+    // rejected by iOS with EPERM in many contexts.
+    let bind_addr: SocketAddr = "[::]:0"
+        .parse()
+        .context("Failed to parse default bind address")?;
     let ep =
-        Endpoint::client("0.0.0.0:0".parse()?).context("Failed to create shared QUIC endpoint")?;
+        Endpoint::client(bind_addr).context("Failed to create shared QUIC endpoint")?;
     let _ = CLIENT_ENDPOINT.set(ep.clone());
     Ok(ep)
 }
