@@ -253,6 +253,9 @@ pub mod meta {
     /// Key for canonical observer admission policy (single global record).
     pub const OBSERVER_POLICY: &[u8] = b"observer_policy";
 
+    /// Key for the durable nullifier index checkpoint: height (u64 BE) || tip hash (32 bytes).
+    pub const NULLIFIER_INDEX_CHECKPOINT: &[u8] = b"nullifier_index_checkpoint";
+
     /// Key for the persisted `identity_metadata` schema version (u32, big-endian).
     /// Drives the version-gated regenerate-from-blocks migration (#58). Absent
     /// key is treated as version 1 (pre-kyber records).

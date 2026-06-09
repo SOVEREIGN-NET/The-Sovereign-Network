@@ -923,6 +923,28 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         ))
     }
 
+    /// Return true when the durable nullifier index is complete for this tip.
+    fn nullifier_index_is_current(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<bool> {
+        let _ = (height, block_hash);
+        Ok(false)
+    }
+
+    /// Mark the durable nullifier index complete for this tip.
+    fn mark_nullifier_index_current(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<()> {
+        let _ = (height, block_hash);
+        Err(StorageError::Database(
+            "Nullifier checkpoint writes are not supported by this store".to_string(),
+        ))
+    }
+
     // =========================================================================
     // UTXO Merkle Tree (Mutable)
     // =========================================================================

@@ -940,17 +940,24 @@ impl Blockchain {
             blockchain.token_contracts.len()
         );
 
-        let nullifiers: Vec<_> = blockchain.nullifier_set.iter().copied().collect();
-        if !nullifiers.is_empty() {
-            match store.backfill_nullifiers(&nullifiers) {
-                Ok(()) => debug!(
-                    "🔁 Backfilled durable nullifier index from loaded state ({} entries)",
-                    nullifiers.len()
-                ),
-                Err(e) => warn!(
-                    "⚠️ Failed to backfill durable nullifier index during load_from_store: {}",
-                    e
-                ),
+        if let Some(tip_hash) = store.get_block_hash_by_height(blockchain.height)? {
+            if !store.nullifier_index_is_current(blockchain.height, &tip_hash)? {
+                let nullifiers: Vec<_> = blockchain.nullifier_set.iter().copied().collect();
+                if !nullifiers.is_empty() {
+                    match store
+                        .backfill_nullifiers(&nullifiers)
+                        .and_then(|_| store.mark_nullifier_index_current(blockchain.height, &tip_hash))
+                    {
+                        Ok(()) => debug!(
+                            "🔁 Backfilled durable nullifier index from loaded state ({} entries)",
+                            nullifiers.len()
+                        ),
+                        Err(e) => warn!(
+                            "⚠️ Failed to backfill durable nullifier index during load_from_store: {}",
+                            e
+                        ),
+                    }
+                }
             }
         }
 

@@ -810,6 +810,26 @@ impl SledStore {
         }
     }
 
+    fn nullifier_checkpoint_value(height: BlockHeight, block_hash: &BlockHash) -> [u8; 40] {
+        let mut value = [0u8; 40];
+        value[..8].copy_from_slice(&height.to_be_bytes());
+        value[8..].copy_from_slice(block_hash.as_bytes());
+        value
+    }
+
+    fn nullifier_index_is_current_internal(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<bool> {
+        let expected = Self::nullifier_checkpoint_value(height, block_hash);
+        match self.meta.get(keys::meta::NULLIFIER_INDEX_CHECKPOINT) {
+            Ok(Some(bytes)) => Ok(bytes.as_ref() == expected),
+            Ok(None) => Ok(false),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
     /// Map a canonical `TREE_*` name back to its live tree handle.
     ///
     /// Used to replay a WAL post-image onto the correct trees. Only the trees
@@ -1047,6 +1067,18 @@ impl BlockchainStore for SledStore {
                         .insert(input.nullifier.as_bytes(), &[1u8][..]);
                 }
             }
+            let nullifier_index_was_current = if height == 0 {
+                true
+            } else {
+                let previous_hash = BlockHash::new(block.header.previous_hash);
+                self.nullifier_index_is_current_internal(height - 1, &previous_hash)?
+            };
+            if nullifier_index_was_current {
+                let checkpoint = Self::nullifier_checkpoint_value(height, &block_hash);
+                batch
+                    .tree(TREE_META)
+                    .insert(keys::meta::NULLIFIER_INDEX_CHECKPOINT, checkpoint.as_ref());
+            }
             // Record the block hash for the write-ahead commit record.
             batch.block_hash = Some(hash_bytes);
         }
@@ -1224,6 +1256,32 @@ impl BlockchainStore for SledStore {
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
+
+    fn nullifier_index_is_current(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<bool> {
+        self.nullifier_index_is_current_internal(height, block_hash)
+    }
+
+    fn mark_nullifier_index_current(
+        &self,
+        height: BlockHeight,
+        block_hash: &BlockHash,
+    ) -> StorageResult<()> {
+        if self.tx_active.load(Ordering::SeqCst) {
+            return Err(StorageError::TransactionAlreadyActive);
+        }
+
+        let checkpoint = Self::nullifier_checkpoint_value(height, block_hash);
+        self.meta
+            .insert(keys::meta::NULLIFIER_INDEX_CHECKPOINT, checkpoint.as_ref())
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.meta
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
     }
 
     // =========================================================================
@@ -4170,6 +4228,46 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(entries, vec![nullifier]);
+    }
+
+    #[test]
+    fn test_nullifier_backfill_rejects_active_block_transaction() {
+        let store = SledStore::open_temporary().unwrap();
+        store.begin_block(0).unwrap();
+
+        assert!(matches!(
+            store.backfill_nullifiers(&[Hash::new([0x94; 32])]),
+            Err(StorageError::TransactionAlreadyActive)
+        ));
+
+        store.rollback_block().unwrap();
+    }
+
+    #[test]
+    fn test_nullifier_checkpoint_tracks_only_complete_contiguous_index() {
+        let store = SledStore::open_temporary().unwrap();
+        let genesis = create_test_block_with_transactions(
+            0,
+            Hash::default(),
+            vec![transaction_with_nullifier(Hash::new([0x95; 32]))],
+        );
+        let genesis_hash = BlockHash::new(genesis.header.block_hash.as_array());
+
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.commit_block().unwrap();
+        assert!(store.nullifier_index_is_current(0, &genesis_hash).unwrap());
+
+        let block1 = create_test_block_with_transactions(
+            1,
+            genesis.header.block_hash,
+            vec![transaction_with_nullifier(Hash::new([0x96; 32]))],
+        );
+        let block1_hash = BlockHash::new(block1.header.block_hash.as_array());
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.commit_block().unwrap();
+        assert!(store.nullifier_index_is_current(1, &block1_hash).unwrap());
     }
 
     #[test]
