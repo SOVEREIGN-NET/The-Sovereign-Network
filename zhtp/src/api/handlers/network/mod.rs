@@ -1137,7 +1137,9 @@ impl NetworkHandler {
         // path for SPKI today. Recompute and update whenever a node rotates
         // its TLS cert. Gateway entries are the Let's Encrypt certs deployed
         // 2026-06-09; validator entries are the long-lived self-signed
-        // certs. Empty string for unknown IPs — clients fall back to TOFU.
+        // certs. Unknown IPs emit JSON `null` so the client falls through to
+        // TOFU/bootstrap instead of `pin_spki: Some("")` which rejects every
+        // real cert (see lib-network/src/web4/trust.rs:547-565).
         let known_spki_pins: std::collections::HashMap<&str, &str> = [
             ("77.42.37.161",    "337a604faf1158d15ba6343e9172c6dda630e2f7e4d22c3e51f2407774e6c561"), // g1
             ("77.42.74.80",     "11f79e9e5c1ec46a7497f5f4e507b4d5e4e72c48cd768235bd369f3bad7eba5b"), // g2
@@ -1148,6 +1150,23 @@ impl NetworkHandler {
             ("57.128.30.74",    "e47388182acf6c4548675e66ccfc2405872b6deb9f4129ce88916476e7edb57f"), // gateway-2 (LE)
         ].into_iter().collect();
 
+        // Gateway DID overrides by IP. The on-chain `gateway_registry` was
+        // populated with placeholder DIDs from earlier dev work — the real
+        // identity each gateway uses in the UHP handshake is the keystore
+        // identity loaded from `/opt/zhtp/.zhtp/keystore/node_identity.json`.
+        // Mobile fetches the directory, expects DID X (registry placeholder),
+        // connects, receives DID Y (keystore) in ServerHello → mismatch →
+        // mobile aborts the handshake → server times out 30s later with
+        // "UHP+Kyber handshake failed". Override here so the directory
+        // returns the keystore DID, matching what the gateway actually
+        // presents on the wire. Permanent fix is a re-registration tx for
+        // each gateway (the lib-blockchain `new_gateway_update` path);
+        // until then this hardcoded map is load-bearing.
+        let known_gateway_dids: std::collections::HashMap<&str, &str> = [
+            ("91.98.113.188", "3d0b7093c241a4f3621233c6445f7dfb82f242dc47b350ca426ca26cc1271863"), // gateway-1 keystore
+            ("57.128.30.74",  "ff7d98a460c3f828ab38cc67a1623c9609826307394b40a4500cd11900641b2c"), // gateway-2 keystore
+        ].into_iter().collect();
+
         // Build validator entries from on-chain registry, with IP overlay
         let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
         let validators: Vec<serde_json::Value> = blockchain
@@ -1156,8 +1175,8 @@ impl NetworkHandler {
             .filter(|(_, v)| v.status == "active")
             .map(|(did, v)| {
                 let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
-                let ip = endpoint.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
+                let ip = Self::extract_host(endpoint);
+                let spki_pin = known_spki_pins.get(ip.as_str()).copied();
                 serde_json::json!({
                     "did": v.identity_id,
                     "role": "validator",
@@ -1182,10 +1201,18 @@ impl NetworkHandler {
             .values()
             .filter(|g| g.status == "active")
             .map(|g| {
-                let ip = g.endpoints.split(':').next().unwrap_or("");
-                let spki_pin = known_spki_pins.get(ip).unwrap_or(&"").to_string();
+                let ip = Self::extract_host(&g.endpoints);
+                let spki_pin = known_spki_pins.get(ip.as_str()).copied();
+                // Use the keystore DID when we have an override for this IP,
+                // otherwise fall back to whatever the registry holds. Mobile
+                // verifies handshake peer_did against this field, so a stale
+                // registry value breaks every authenticated connection.
+                let did: &str = known_gateway_dids
+                    .get(ip.as_str())
+                    .copied()
+                    .unwrap_or(g.identity_id.as_str());
                 serde_json::json!({
-                    "did": g.identity_id,
+                    "did": did,
                     "role": "gateway",
                     "endpoint": g.endpoints,
                     "ip": ip,
@@ -1238,20 +1265,56 @@ impl NetworkHandler {
         Ok(ZhtpResponse::html(TOPOLOGY_HTML.to_string(), None))
     }
 
-    fn compute_local_spki() -> String {
+    /// Pull the host (IPv4 / IPv6 / hostname) out of an `endpoint` string.
+    ///
+    /// Handles the shapes that show up in the validator/gateway registry:
+    ///   - "1.2.3.4:9333"               → "1.2.3.4"
+    ///   - "[2001:db8::1]:9334"         → "2001:db8::1"
+    ///   - "host.example.com:9333"      → "host.example.com"
+    ///   - "host1:9333,host2:9333"      → "host1"        (take first comma entry)
+    ///
+    /// Naive `endpoint.split(':').next()` returns `"["` for bracketed IPv6
+    /// and the wrong slice for comma-separated lists, which then misses
+    /// the SPKI HashMap lookup and silently downgrades to TOFU on hosts
+    /// where pinning was actually expected.
+    fn extract_host(endpoint: &str) -> String {
+        let first = endpoint.split(',').next().unwrap_or(endpoint).trim();
+        if let Some(rest) = first.strip_prefix('[') {
+            // Bracketed IPv6 — host is everything before the closing bracket
+            if let Some(end) = rest.find(']') {
+                return rest[..end].to_string();
+            }
+        }
+        // For unbracketed: split at the LAST ':' so an unbracketed IPv6
+        // (technically malformed but seen in the wild) doesn't get
+        // truncated at the first colon. If the value contains exactly
+        // one colon it's "host:port" and rsplit_once works the same as
+        // split_once.
+        first
+            .rsplit_once(':')
+            .map(|(host, _port)| host.to_string())
+            .unwrap_or_else(|| first.to_string())
+    }
+
+    fn compute_local_spki() -> Option<String> {
         // Canonical location only — anchored at node_data_dir so it
         // matches `Environment::data_directory()`. If the cert lives
         // elsewhere the deployment is misconfigured; we don't want to
         // silently swallow a stale cert by trying multiple legacy paths.
+        //
+        // Returns `None` on any failure (missing cert, malformed PEM,
+        // hash compute error). Callers must propagate the absence as
+        // JSON `null`, never as `""` — an empty pin string is treated
+        // as an explicit-and-mismatched pin by the trust verifier and
+        // causes every cert verification to fail.
         let cert_path = crate::node_data_path("data/tls/server.crt");
-        if let Ok(pem) = std::fs::read(&cert_path) {
-            if let Some(Ok(cert_der)) = rustls_pemfile::certs(&mut pem.as_slice()).next() {
-                if let Ok(hash) = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(cert_der.as_ref()) {
-                    return hex::encode(hash);
-                }
-            }
-        }
-        String::new()
+        let pem = std::fs::read(&cert_path).ok()?;
+        let cert_der = rustls_pemfile::certs(&mut pem.as_slice()).next()?.ok()?;
+        let hash = lib_network::protocols::quic_mesh::QuicMeshProtocol::compute_spki_sha256(
+            cert_der.as_ref(),
+        )
+        .ok()?;
+        Some(hex::encode(hash))
     }
 
     async fn handle_get_network_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
