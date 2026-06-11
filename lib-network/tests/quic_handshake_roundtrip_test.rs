@@ -18,7 +18,8 @@
 //! If this test fails locally, the bug is reproducible in lib-network's CI
 //! without any mobile build round-trip.
 
-use lib_network::handshake::{HandshakeCapabilities, HandshakeContext, NonceCache};
+use lib_network::constants::ALPN_CONTROL_PLANE_V2;
+use lib_network::handshake::{HandshakeContext, NonceCache};
 use lib_network::protocols::quic_handshake::{handshake_as_initiator, handshake_as_responder};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::rustls;
@@ -95,7 +96,7 @@ fn build_server_endpoint() -> (Endpoint, SocketAddr) {
         .with_no_client_auth()
         .with_single_cert(vec![cert_der], key_der)
         .expect("server tls config");
-    crypto.alpn_protocols = vec![b"zhtp-uhp/2".to_vec()];
+    crypto.alpn_protocols = vec![ALPN_CONTROL_PLANE_V2.to_vec()];
     let server_config = ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(crypto).expect("server quic config"),
     ));
@@ -111,7 +112,7 @@ fn build_client_endpoint() -> Endpoint {
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
         .with_no_client_auth();
-    crypto.alpn_protocols = vec![b"zhtp-uhp/2".to_vec()];
+    crypto.alpn_protocols = vec![ALPN_CONTROL_PLANE_V2.to_vec()];
     let client_config = ClientConfig::new(Arc::new(
         QuicClientConfig::try_from(crypto).expect("client quic config"),
     ));
@@ -132,13 +133,16 @@ fn make_identity(device: &str) -> lib_identity::ZhtpIdentity {
     .expect("identity")
 }
 
-fn make_context() -> HandshakeContext {
+/// Build a fresh `HandshakeContext` backed by a temp nonce cache. The
+/// `TempDir` is returned so the caller can keep it alive in a binding for
+/// the duration of the test, and the directory is cleaned up on Drop —
+/// no leaked files on disk between runs.
+fn make_context() -> (HandshakeContext, tempfile::TempDir) {
     let tmp = tempdir().expect("tempdir");
     let path = tmp.path().join("nonce_cache");
-    std::mem::forget(tmp); // keep dir alive for the test lifetime
     let epoch = lib_network::handshake::NetworkEpoch::from_chain_id(0);
     let cache = NonceCache::open(&path, 3600, 10_000, epoch).expect("nonce cache");
-    HandshakeContext::new(cache)
+    (HandshakeContext::new(cache), tmp)
 }
 
 /// End-to-end: initiator ↔ responder over a real QUIC bidi stream.
@@ -150,7 +154,9 @@ async fn quic_handshake_roundtrip_succeeds() {
     let server_identity = make_identity("test-server");
     let client_did = client_identity.did.clone();
     let server_did = server_identity.did.clone();
-    let ctx = make_context();
+    // Keep the TempDir bound for the whole test so its Drop runs at the
+    // end and the nonce-cache files get cleaned up between runs.
+    let (ctx, _nonce_dir) = make_context();
 
     let (server_endpoint, server_addr) = build_server_endpoint();
     let client_endpoint = build_client_endpoint();
@@ -209,19 +215,9 @@ async fn quic_handshake_roundtrip_succeeds() {
         server_result.verified_peer.identity.did, client_did,
         "responder must see client's DID"
     );
-
-    let _ = conn;
 }
 
-/// Same flow but with `capabilities` left default on both sides. The
-/// production failure was reported on stock-capabilities connections; this
-/// keeps the variable explicit so a future change to
-/// `create_quic_capabilities` doesn't silently mask a regression here.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn quic_handshake_default_capabilities_roundtrip() {
-    install_rustls_provider_once();
-    let _ = HandshakeCapabilities::default();
-    // Real check is delegated to the function above — this variant exists
-    // only to guarantee the default-caps shape compiles and doesn't drift
-    // out of sync with what `create_quic_capabilities` emits.
-}
+// (Earlier draft had a second test asserting `HandshakeCapabilities::default()`
+// shape — removed per review: the QUIC adapters use `create_quic_capabilities()`
+// internally, not the bare `Default` impl, so the assertion didn't actually
+// guard against capability drift on the QUIC path.)
