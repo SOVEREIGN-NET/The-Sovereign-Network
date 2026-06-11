@@ -867,9 +867,14 @@ impl RewardsHandler {
     }
 
     async fn handle_balance(&self, did: &str) -> ZhtpResponse {
-        if self.treasury.is_none() {
-            return Self::unavailable();
-        }
+        // READS don't need the treasury keystore — only mints/claims do.
+        // The 503 here was wrong: it told every non-treasury node "rewards
+        // endpoint not configured", even though local sled has whatever
+        // counters this node has accumulated. Returning the local state
+        // (zeros for nodes that haven't processed claims) is at least
+        // an honest answer; the proper architectural fix is to read the
+        // canonical BUBL balance from the on-chain token contract and
+        // move reward-event state on-chain too.
         if let Err(msg) = Self::validate_did(did) {
             return Self::bad(msg);
         }
@@ -890,9 +895,7 @@ impl RewardsHandler {
     }
 
     async fn handle_status(&self, did: &str) -> ZhtpResponse {
-        if self.treasury.is_none() {
-            return Self::unavailable();
-        }
+        // READS don't need the treasury keystore — see `handle_balance`.
         if let Err(msg) = Self::validate_did(did) {
             return Self::bad(msg);
         }
@@ -976,9 +979,7 @@ impl RewardsHandler {
         limit: usize,
         cursor: Option<(u64, u64)>,
     ) -> ZhtpResponse {
-        if self.treasury.is_none() {
-            return Self::unavailable();
-        }
+        // READS don't need the treasury keystore — see `handle_balance`.
         if let Err(msg) = Self::validate_did(did) {
             return Self::bad(msg);
         }
