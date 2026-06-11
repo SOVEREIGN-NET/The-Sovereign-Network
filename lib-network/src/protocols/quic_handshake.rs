@@ -382,6 +382,19 @@ pub async fn handshake_as_responder(
     .map_err(|_| anyhow!("QUIC handshake timeout (30s)"))?
 }
 
+/// Capabilities envelope the canonical UHP-v2 QUIC initiator advertises.
+///
+/// **Any alternative initiator implementation (e.g. the hand-rolled
+/// `handshake_with_transcript` in mobile-side `quinn-ffi`) MUST emit
+/// a byte-identical envelope. Divergence here changes the signed
+/// transcript, which the canonical `handshake_as_responder` will reject
+/// with `InvalidSignature` mid-flight — surfacing on the client as
+/// `"Failed to read length prefix byte 0: connection lost"`.**
+///
+/// The on-the-wire shape is pinned by
+/// `lib-network/tests/handshake_wire_bytes_test.rs::capture_client_hello_bytes_for_diff`.
+/// Run that test with `--nocapture` to get the canonical hex dump and
+/// compare against an equivalent capture from any reimplementation.
 fn create_quic_capabilities() -> HandshakeCapabilities {
     HandshakeCapabilities {
         protocols: vec!["quic".to_string()],
