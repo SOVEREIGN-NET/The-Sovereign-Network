@@ -1166,12 +1166,21 @@ impl RuntimeOrchestrator {
                     bc.store.clone()
                 };
                 if let Some(store) = store {
-                    if let Some(replayed) = lib_blockchain::Blockchain::replay_from_store(store)? {
+                    // `load_from_store` calls `hydrate_checkpointed_state_from_store`
+                    // first (lib-blockchain/src/blockchain/init.rs:585) and only
+                    // falls back to full historical replay when the projection
+                    // meta isn't current for the sled tip. Previously this site
+                    // called `replay_from_store` directly, which unconditionally
+                    // walks `for height in 0..=latest_height { apply_block }`
+                    // and ignores PR #2687's fast-hydrate path entirely — so
+                    // every restart was a full ~141k-block replay even though
+                    // the projection tables were durable and current.
+                    if let Some(reloaded) = lib_blockchain::Blockchain::load_from_store(store)? {
                         let mut bc = blockchain_arc.write().await;
-                        // Preserve the store and executor from replayed blockchain
-                        let store = replayed.store.clone();
-                        let executor = replayed.executor.clone();
-                        *bc = replayed;
+                        // Preserve the store and executor from the reloaded blockchain
+                        let store = reloaded.store.clone();
+                        let executor = reloaded.executor.clone();
+                        *bc = reloaded;
                         bc.store = store;
                         bc.executor = executor;
                         // Seed validators from bootstrap config (not stored in blocks)
@@ -1180,7 +1189,7 @@ impl RuntimeOrchestrator {
                             &self.config.network_config.bootstrap_validators,
                         );
                         info!(
-                            "Block replay complete: height={}, identities={}, validators={}, domains={}, credentials={}",
+                            "Blockchain load complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
                             bc.identity_count(), // #2639: sled-authoritative
                             bc.validator_registry.len(),
