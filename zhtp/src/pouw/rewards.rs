@@ -750,6 +750,35 @@ impl RewardCalculator {
         count
     }
 
+    /// Reset rewards stuck in `Processing` back to `Pending`.
+    ///
+    /// `Processing` is the locked-for-mint state. A reward enters it when
+    /// `mark_processing` succeeds and leaves it when either `mark_paid` or
+    /// `mark_failed` is called. If the node crashes / restarts between
+    /// those two ends — or if the mint future is dropped for any other
+    /// reason — the reward is left in `Processing` permanently. The
+    /// payout loop then skips it forever (the `if !mark_processing { … }`
+    /// guard in `zhtp/src/pouw/mod.rs`), and the SOV the user is owed is
+    /// never minted.
+    ///
+    /// Call this at task startup. The payout task is the only producer of
+    /// `Processing` state and we know no payout is in-flight at that
+    /// moment, so blanket-resetting every `Processing` row is safe and
+    /// recovers stuck rewards. Within a single running cycle, there's
+    /// no need to call this (concurrent payouts in the same epoch are
+    /// already prevented by `mark_processing`'s CAS-like semantics).
+    pub async fn reset_processing_rewards(&self) -> usize {
+        let mut rewards = self.rewards.write().await;
+        let mut count = 0;
+        for reward in rewards.iter_mut() {
+            if reward.payout_status == PayoutStatus::Processing {
+                reward.payout_status = PayoutStatus::Pending;
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Get rewards for a specific client
     pub async fn get_client_rewards(&self, client_did: &str) -> Vec<Reward> {
         self.rewards

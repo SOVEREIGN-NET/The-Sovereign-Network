@@ -53,6 +53,23 @@ pub fn spawn_pouw_payout_task(
         interval.tick().await;
         tracing::info!(interval_secs = interval_secs, "POUW payout task started");
 
+        // Recover rewards left in `Processing` by an earlier run that
+        // crashed / restarted between `mark_processing` and
+        // `mark_paid` / `mark_failed`. Without this, every such reward
+        // is permanently skipped by the `mark_processing` guard below
+        // and the SOV the user is owed is never minted. Safe to do
+        // unconditionally at task startup: this task is the only
+        // producer of `Processing` state, and at this point no payout
+        // is in flight.
+        let stale_processing = calculator.reset_processing_rewards().await;
+        if stale_processing > 0 {
+            tracing::warn!(
+                count = stale_processing,
+                "Reset stale POUW rewards from Processing to Pending on startup \
+                 (likely from a prior crash mid-mint)"
+            );
+        }
+
         loop {
             interval.tick().await;
 
