@@ -1132,13 +1132,23 @@ impl IdentityHandler {
         // Extract DID from path: /api/v1/identity/get/{did}
         // DID format: did:zhtp:xxx or just the hash part
         let path_parts: Vec<&str> = request.uri.split('/').collect();
-        let did_str = path_parts
+        let did_str_raw = path_parts
             .get(5)
             .ok_or_else(|| anyhow::anyhow!("DID required"))?;
+        // Mobile sends the DID percent-encoded (the colons in `did:zhtp:`
+        // come through as `%3A`). Without decoding here, the
+        // `starts_with("did:zhtp:")` check below misses, the handler
+        // prepends `did:zhtp:` to the already-encoded form, and the chain
+        // lookup against `did_to_username` / `identity_registry` never
+        // hits — the profile renders without a username even though the
+        // binding exists on chain.
+        let did_str = urlencoding::decode(did_str_raw)
+            .map(|s| s.into_owned())
+            .unwrap_or_else(|_| did_str_raw.to_string());
 
         // Handle both full DID and short form
         let did = if did_str.starts_with("did:zhtp:") {
-            did_str.to_string()
+            did_str.clone()
         } else {
             format!("did:zhtp:{}", did_str)
         };
@@ -1203,9 +1213,15 @@ impl IdentityHandler {
 
         // Extract DID from path: /api/v1/identity/verify/{did}
         let path_parts: Vec<&str> = request.uri.split('/').collect();
-        let did_str = path_parts
+        let did_str_raw = path_parts
             .get(5)
             .ok_or_else(|| anyhow::anyhow!("DID required"))?;
+        // Same percent-decode as `handle_get_identity_by_did`: mobile
+        // sends `did%3Azhtp%3A<hex>` and the lookup-key comparison below
+        // needs the literal `did:zhtp:` form.
+        let did_str = urlencoding::decode(did_str_raw)
+            .map(|s| s.into_owned())
+            .unwrap_or_else(|_| did_str_raw.to_string());
 
         // Parse optional verification requirements from body
         #[derive(Deserialize, Default)]
