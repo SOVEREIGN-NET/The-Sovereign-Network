@@ -304,21 +304,23 @@ impl WalletHandler {
                 if !owned {
                     continue;
                 }
+                // Mirror the main path at line 393: read SOV balance sled-first
+                // via blockchain.token_balance() rather than the in-memory
+                // TokenContract.balances HashMap. The executor writes SOV
+                // debits/credits to the sled `token_balances` tree, and the
+                // post-apply sync to in-memory can miss entries when the
+                // identity_manager has no live entry for this DID (the path
+                // this fallback exists for in the first place). Reading sled
+                // here guarantees the mobile wallet displays the post-debit
+                // balance immediately after a domain registration fee_payment_tx
+                // commits.
                 let effective_balance = hex::decode(wallet_id_hex)
                     .ok()
                     .filter(|b| b.len() == 32)
-                    .and_then(|bytes| {
-                        blockchain.query_token_contract(&sov_token_id).and_then(|token| {
-                            let mut key_id = [0u8; 32];
-                            key_id.copy_from_slice(&bytes);
-                            let wallet_key =
-                                lib_blockchain::integration::crypto_integration::PublicKey {
-                                    dilithium_pk: [0u8; 2592],
-                                    kyber_pk: [0u8; 1568],
-                                    key_id,
-                                };
-                            Some(token.balance_of(&wallet_key))
-                        })
+                    .map(|bytes| {
+                        let mut key_id = [0u8; 32];
+                        key_id.copy_from_slice(&bytes);
+                        blockchain.token_balance(&sov_token_id, &key_id).unwrap_or(0)
                     })
                     .unwrap_or(0);
                 let wallet_info = WalletInfo {
