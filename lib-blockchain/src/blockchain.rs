@@ -1378,6 +1378,11 @@ impl Blockchain {
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
         self.process_credential_transactions(&block);
+        // #56: validator sled writes use the metadata batch (executor path) or the
+        // legacy begin_block window — same atomicity class as identity metadata.
+        // A crash between executor commit_block and commit_metadata_write can leave
+        // validators tree briefly behind height; migrate_validator_records_schema on
+        // load_from_store / replay_from_store repairs that gap from blocks.
         if let Some(ref store) = self.store {
             self.persist_validator_records_for_block(store.as_ref(), &block)?;
         }

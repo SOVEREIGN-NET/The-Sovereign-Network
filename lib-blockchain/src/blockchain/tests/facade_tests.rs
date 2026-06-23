@@ -701,3 +701,73 @@ fn validator_exists_union_inmem_or_sled() {
     let got = bc2.validator_info_by_did(did).expect("sled read");
     assert_eq!(got.stake, 200_000);
 }
+
+/// In-memory non-active overlay must evict a sled-active record before persist (#56).
+#[test]
+fn active_validator_infos_inmem_unregister_evicts_sled_active() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val-overlay")).unwrap());
+    let did = "did:zhtp:val-deact";
+    let did_hash = crate::storage::did_to_hash(did);
+    store
+        .put_validator_record_direct(
+            &did_hash,
+            &crate::storage::StoredValidatorRecord {
+                consensus: crate::storage::ValidatorConsensusRecord {
+                    identity_id: did.to_string(),
+                    consensus_key: [5u8; 2592],
+                    stake: 100_000,
+                    storage_provided: 1 << 40,
+                    status: "active".to_string(),
+                    oracle_key_id: None,
+                },
+                metadata: crate::storage::ValidatorMetadata {
+                    networking_key: vec![],
+                    rewards_key: vec![],
+                    network_address: "h:1".to_string(),
+                    commission_rate: 0,
+                    registered_at: 1,
+                    last_activity: 1,
+                    blocks_validated: 0,
+                    slash_count: 0,
+                    admission_source: "test".to_string(),
+                    governance_proposal_id: None,
+                },
+            },
+        )
+        .unwrap();
+
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    bc.validator_registry.insert(
+        did.to_string(),
+        ValidatorInfo {
+            identity_id: did.to_string(),
+            stake: 100_000,
+            storage_provided: 1 << 40,
+            consensus_key: [5u8; 2592],
+            networking_key: vec![],
+            rewards_key: vec![],
+            network_address: "h:1".to_string(),
+            commission_rate: 0,
+            status: "inactive".to_string(),
+            registered_at: 1,
+            last_activity: 2,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        },
+    );
+
+    let active: Vec<_> = bc
+        .active_validator_infos()
+        .into_iter()
+        .map(|v| v.identity_id)
+        .collect();
+    assert!(
+        !active.contains(&did.to_string()),
+        "inactive in-mem overlay must not leave sled-active in consensus set"
+    );
+}

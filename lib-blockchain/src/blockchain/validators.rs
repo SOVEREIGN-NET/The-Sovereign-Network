@@ -69,7 +69,17 @@ impl Blockchain {
     pub fn validator_record_by_did(&self, did: &str) -> Option<StoredValidatorRecord> {
         let store = self.get_store()?;
         let did_hash = did_to_hash(did);
-        store.get_validator_record(&did_hash).ok().flatten()
+        match store.get_validator_record(&did_hash) {
+            Ok(found) => found,
+            Err(e) => {
+                warn!(
+                    did = %did,
+                    error = %e,
+                    "validator_record_by_did: sled read failed; treating as absent"
+                );
+                None
+            }
+        }
     }
 
     /// Union existence: in-memory shadow first (same-block / mempool), then sled (#56).
@@ -112,6 +122,10 @@ impl Blockchain {
     }
 
     /// Active validators, sled-first with in-memory overlay (#56).
+    ///
+    /// The in-memory overlay is authoritative for same-block changes before sled
+    /// persist: active entries replace sled, and non-active entries remove a sled
+    /// active record (e.g. Unregister in the current block).
     pub fn active_validator_infos(&self) -> Vec<ValidatorInfo> {
         let mut by_id: HashMap<String, ValidatorInfo> = HashMap::new();
         if let Some(store) = self.get_store() {
@@ -137,6 +151,9 @@ impl Blockchain {
         for (did, info) in &self.validator_registry {
             if info.status == "active" {
                 by_id.insert(did.clone(), info.clone());
+            } else {
+                // Same-block deactivation before metadata-batch sled write.
+                by_id.remove(did);
             }
         }
         by_id.into_values().collect()
