@@ -374,6 +374,7 @@ impl Blockchain {
                             .token_contracts
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        // Writes path: in-memory transfer below; balance_of is correct here (#2637).
                         let from_bal = token.balance_of(&from_wallet_addr);
                         if from_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
@@ -417,6 +418,7 @@ impl Blockchain {
                             .token_contracts
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        // Writes path: in-memory transfer below; balance_of is correct here (#2637).
                         let sender_bal = token.balance_of(&sender_pk);
                         if sender_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
@@ -1122,6 +1124,44 @@ impl Blockchain {
         contract_id: &[u8; 32],
     ) -> Option<&mut crate::contracts::TokenContract> {
         self.token_contracts.get_mut(contract_id)
+    }
+
+    /// Sled-first holder count for a token (#2637).
+    ///
+    /// Balances live in the `token_balances` tree, not in deserialized contract
+    /// metadata — `TokenContract::balances_len()` is always 0 on sled-backed nodes.
+    ///
+    /// # Handler-only — not tx_batch-aware (CR #2658)
+    ///
+    /// Scans **committed** sled state only. Staged writes in the current block's
+    /// `tx_batch` are NOT visible. **Do NOT call from executor / mid-apply paths**
+    /// until `SledStore::count_token_holders` is made tx_batch-aware (Phase 3).
+    ///
+    /// # Performance
+    ///
+    /// O(N) prefix scan per call. Fine for contract-details API at current scale;
+    /// add caching before 10k+ holders per token.
+    pub fn count_token_holders(&self, token_id: &[u8; 32]) -> usize {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            match store.count_token_holders(&token) {
+                Ok(count) => return count,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        token = %hex::encode(&token_id[..8]),
+                        "count_token_holders: sled scan failed — returning 0"
+                    );
+                    return 0;
+                }
+            }
+        }
+        // Store-less mode only: in-memory `TokenContract.balances` is authoritative.
+        // On sled-loaded contracts this map is empty, so this path returns 0 in practice.
+        self.token_contracts
+            .get(token_id)
+            .map(|c| c.balances_len())
+            .unwrap_or(0)
     }
 
     /// Sled-first balance facade (state-unification #2635 / #2637).

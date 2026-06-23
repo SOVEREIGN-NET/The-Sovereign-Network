@@ -4003,6 +4003,24 @@ impl Blockchain {
     // Voting Power Calculation
     // ============================================================================
 
+    /// SOV balance for voting-power aggregation (#2637).
+    ///
+    /// Logs and treats sled read failures as 0 so one bad wallet does not
+    /// abort the whole power calculation.
+    fn sov_wallet_balance_for_voting(&self, sov_id: &[u8; 32], wallet_id: &[u8; 32]) -> u128 {
+        match self.token_balance(sov_id, wallet_id) {
+            Ok(balance) => balance,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    wallet = %hex::encode(&wallet_id[..8]),
+                    "calculate_user_voting_power: token_balance read failed — treating as 0"
+                );
+                0
+            }
+        }
+    }
+
     /// Calculate comprehensive voting power for a user in DAO governance
     /// Calculate effective voting power for a user, applying `self.voting_power_mode`.
     ///
@@ -4026,15 +4044,11 @@ impl Blockchain {
         // &crate::types::hash::Hash.  Bridge via the raw 32-byte array.
         let user_local_id = crate::types::hash::Hash::new(user_id.0);
 
-        // Sum SOV balances across all wallets owned by this identity.
+        // Sum SOV balances across all wallets owned by this identity (#2637).
         let sov_balance: u128 = self
             .get_wallets_for_owner(&user_local_id)
             .iter()
-            .filter_map(|w| {
-                // wallet_id: crate::types::hash::Hash — as_array() gives [u8; 32] directly.
-                let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
-                self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
-            })
+            .map(|w| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
             .sum();
 
         // 1 SOV (1e18 atomic units) = 1 base vote unit
@@ -4054,10 +4068,7 @@ impl Blockchain {
                 let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
                 let bal: u128 = delegator_wallets
                     .iter()
-                    .filter_map(|w| {
-                        let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
-                        self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
-                    })
+                    .map(|w| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
                     .sum();
                 Some((bal / lib_types::sov::SCALE) as u64)
             })

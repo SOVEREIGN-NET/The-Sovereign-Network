@@ -123,6 +123,131 @@ fn token_balance_reads_sled_when_store_attached() {
 }
 
 #[test]
+fn count_token_holders_reads_sled_when_store_attached() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_holders_store")).unwrap());
+    let token = TokenId::new([9u8; 32]);
+    store.begin_block(0).unwrap();
+    store
+        .set_token_balance(&token, &Address::new([1u8; 32]), 100)
+        .unwrap();
+    store
+        .set_token_balance(&token, &Address::new([2u8; 32]), 0)
+        .unwrap();
+    store
+        .set_token_balance(&token, &Address::new([3u8; 32]), 50)
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    assert_eq!(bc.count_token_holders(&[9u8; 32]), 2);
+}
+
+#[test]
+fn count_token_holders_uses_in_memory_in_storeless_mode() {
+    use crate::contracts::TokenContract;
+    use crate::integration::crypto_integration::PublicKey;
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    assert!(bc.get_store().is_none());
+
+    let token_id = [0xAAu8; 32];
+    let mut token = TokenContract::new_sov_native();
+    let holder = PublicKey {
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
+        key_id: [0x11; 32],
+    };
+    token.mint(&holder, 1_000).unwrap();
+    bc.token_contracts.insert(token_id, token);
+
+    assert_eq!(bc.count_token_holders(&token_id), 1);
+}
+
+#[test]
+fn count_token_holders_ignores_mid_block_staged_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_holders_midblock")).unwrap());
+    let token = TokenId::new([0xBB; 32]);
+    store.begin_block(0).unwrap();
+    store
+        .set_token_balance(&token, &Address::new([1u8; 32]), 10)
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store.clone());
+    assert_eq!(bc.count_token_holders(&[0xBB; 32]), 1);
+
+    store.begin_block(1).unwrap();
+    store
+        .set_token_balance(&token, &Address::new([2u8; 32]), 20)
+        .unwrap();
+    assert_eq!(
+        bc.count_token_holders(&[0xBB; 32]),
+        1,
+        "mid-block staged holder must not be counted until commit"
+    );
+    store.commit_block().unwrap();
+    assert_eq!(bc.count_token_holders(&[0xBB; 32]), 2);
+}
+
+#[test]
+fn calculate_user_voting_power_reads_sled_not_in_memory() {
+    use crate::transaction::WalletTransactionData;
+    use crate::types::hash::Hash;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_voting_power")).unwrap());
+    let sov_id = crate::contracts::utils::generate_lib_token_id();
+    let wallet_id = [0x44u8; 32];
+    let identity_bytes = [0x55u8; 32];
+    let identity_id = lib_identity::IdentityId::from_bytes(&identity_bytes);
+    let amount = lib_types::sov::atoms(100);
+
+    store.begin_block(0).unwrap();
+    store
+        .set_token_balance(
+            &TokenId::new(sov_id),
+            &Address::new(wallet_id),
+            amount,
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    bc.voting_power_mode = crate::dao::VotingPowerMode::Linear;
+    bc.token_contracts
+        .insert(sov_id, crate::contracts::TokenContract::new_sov_native());
+
+    let wallet_id_hash = Hash::new(wallet_id);
+    bc.wallet_registry.insert(
+        hex::encode(wallet_id),
+        WalletTransactionData {
+            wallet_id: wallet_id_hash,
+            wallet_type: "Primary".to_string(),
+            wallet_name: "Test".to_string(),
+            alias: None,
+            public_key: vec![0u8; 2592],
+            owner_identity_id: Some(Hash::new(identity_id.0)),
+            seed_commitment: Hash::default(),
+            created_at: 0,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        },
+    );
+
+    assert_eq!(
+        bc.calculate_user_voting_power(&identity_id),
+        100,
+        "voting power must use sled token_balance, not empty in-memory map"
+    );
+}
+
+#[test]
 fn identity_consensus_by_did_none_without_store() {
     let bc = Blockchain::new().expect("blockchain construct");
     assert!(bc.get_store().is_none(), "test assumes no store attached");
