@@ -402,16 +402,25 @@ impl Blockchain {
         if infos.is_empty() {
             return Ok(0);
         }
-        for info in &infos {
-            self.validator_registry
-                .insert(info.identity_id.clone(), info.clone());
-            self.validator_blocks
-                .entry(info.identity_id.clone())
-                .or_insert(info.registered_at);
-        }
         let Some(ref store) = self.store else {
+            for info in &infos {
+                self.validator_registry
+                    .insert(info.identity_id.clone(), info.clone());
+                self.validator_blocks
+                    .entry(info.identity_id.clone())
+                    .or_insert(info.registered_at);
+            }
             return Ok(infos.len());
         };
+        // Bump schema version before the sled write. Bootstrap records are not
+        // replay-derivable; if we wrote sled at v0 and crashed before this bump,
+        // migrate_validator_records_schema would clear the tree on next boot.
+        let current = crate::storage::VALIDATOR_RECORD_SCHEMA_VERSION;
+        if store.validator_record_schema_version()? < current {
+            store
+                .set_validator_record_schema_version(current)
+                .map_err(|e| anyhow::anyhow!("Failed to set validator schema version: {e}"))?;
+        }
         let records: Vec<([u8; 32], StoredValidatorRecord)> = infos
             .iter()
             .map(|info| (did_to_hash(&info.identity_id), StoredValidatorRecord::from(info)))
@@ -425,11 +434,12 @@ impl Blockchain {
                 "bootstrap validator persist: only {written}/{expected} records written"
             ));
         }
-        let current = crate::storage::VALIDATOR_RECORD_SCHEMA_VERSION;
-        if store.validator_record_schema_version()? < current {
-            store
-                .set_validator_record_schema_version(current)
-                .map_err(|e| anyhow::anyhow!("Failed to set validator schema version: {e}"))?;
+        for info in &infos {
+            self.validator_registry
+                .insert(info.identity_id.clone(), info.clone());
+            self.validator_blocks
+                .entry(info.identity_id.clone())
+                .or_insert(info.registered_at);
         }
         self.invalidate_active_validator_cache();
         Ok(written)
