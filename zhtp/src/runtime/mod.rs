@@ -1255,15 +1255,19 @@ impl RuntimeOrchestrator {
                         bc.store = store;
                         bc.executor = executor;
                         // Seed validators from bootstrap config (not stored in blocks)
-                        seed_validators_from_bootstrap_config(
+                        if let Err(e) = seed_validators_from_bootstrap_config(
                             &mut bc,
                             &self.config.network_config.bootstrap_validators,
-                        );
+                        ) {
+                            warn!(
+                                "Failed to seed bootstrap validators after load_from_store: {e}"
+                            );
+                        }
                         info!(
                             "Blockchain load complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
                             bc.identity_count(), // #2639: sled-authoritative
-                            bc.validator_registry.len(),
+                            bc.active_validators_for_consensus().len(),
                             bc.domain_registry.len(),
                             bc.credential_registry.len(),
                         );
@@ -2286,7 +2290,7 @@ impl RuntimeOrchestrator {
                     );
                 }
 
-                if bc.get_active_validators().is_empty() {
+                if bc.active_validators_for_consensus().is_empty() {
                     let restored = if emergency_restore_enabled {
                         try_restore_validators_from_dat(
                             &mut bc,
@@ -2300,7 +2304,7 @@ impl RuntimeOrchestrator {
                         seed_validators_from_bootstrap_config(
                             &mut bc,
                             &self.config.network_config.bootstrap_validators,
-                        );
+                        )?;
                     }
                 }
 
@@ -2568,13 +2572,13 @@ impl RuntimeOrchestrator {
                         info!("💾 Genesis block (height 0) persisted to SledStore");
                     }
 
-                    // Seed bootstrap validators into the validator registry so
-                    // consensus can find them. Genesis allocations carry identities
-                    // and wallets but NOT validator registrations.
+                    // Seed bootstrap validators into overlay + sled so consensus can
+                    // find them. Genesis allocations carry identities and wallets
+                    // but NOT validator registrations.
                     seed_validators_from_bootstrap_config(
                         &mut bc,
                         &self.config.network_config.bootstrap_validators,
-                    );
+                    )?;
 
                     (bc, false)
                 } else {
@@ -5598,8 +5602,11 @@ pub(super) fn try_restore_oracle_from_dat(
     }
 }
 
-/// Seed validator_registry from bootstrap config when neither sled nor blockchain.dat
-/// contains any validators (i.e. validators were never committed as on-chain transactions).
+/// Seed validators from bootstrap config when the authoritative active set is empty.
+///
+/// Bootstrap validators are not committed as on-chain transactions on testnet; this path
+/// installs them into the in-memory overlay **and** durable sled so consensus reads agree
+/// with the fleet (#2639).
 ///
 /// Uses blake3 domain separation to derive distinct placeholder keys for the networking and
 /// rewards roles from the identity ID — these only need to be non-empty and mutually distinct
@@ -5607,11 +5614,14 @@ pub(super) fn try_restore_oracle_from_dat(
 pub(super) fn seed_validators_from_bootstrap_config(
     bc: &mut lib_blockchain::Blockchain,
     bootstrap_validators: &[crate::config::aggregation::BootstrapValidator],
-) {
+) -> Result<()> {
     if bootstrap_validators.is_empty() {
-        return;
+        return Ok(());
     }
-    let mut count = 0usize;
+    if !bc.active_validators_for_consensus().is_empty() {
+        return Ok(());
+    }
+    let mut seeded = Vec::new();
     for bv in bootstrap_validators {
         // Decode bootstrap consensus key (must be 2592 bytes for Dilithium5)
         // If not provided, generate a deterministic key from identity hash
@@ -5655,13 +5665,14 @@ pub(super) fn seed_validators_from_bootstrap_config(
             governance_proposal_id: None,
             oracle_key_id: None,
         };
-        bc.validator_registry.insert(bv.identity_id.clone(), vi);
-        count += 1;
+        seeded.push(vi);
     }
+    let count = bc.install_bootstrap_validator_records(seeded)?;
     info!(
-        "validator_registry empty — seeded {} validator(s) from bootstrap config (in-memory only)",
+        "validator set empty — seeded {} validator(s) from bootstrap config (overlay + sled)",
         count
     );
+    Ok(())
 }
 
 fn bootstrap_commission_percent(commission_rate_bps: u16) -> u8 {
@@ -5674,10 +5685,16 @@ pub(super) fn try_restore_validators_from_dat(
 ) -> Result<bool> {
     match load_validated_blockchain_dat(dat_path, allow_genesis_mismatch)? {
         Some(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
-            let count = dat_bc.get_active_validators().len();
-            bc.validator_registry = dat_bc.validator_registry;
+            let restored: Vec<_> = dat_bc
+                .validator_registry
+                .values()
+                .cloned()
+                .collect();
+            let count = restored.len();
+            bc.validator_blocks = dat_bc.validator_blocks;
+            bc.install_bootstrap_validator_records(restored)?;
             warn!(
-                "⚠️  Emergency restore loaded validator_registry from blockchain.dat ({} validators)",
+                "⚠️  Emergency restore loaded validator_registry from blockchain.dat ({} validators, persisted to sled)",
                 count
             );
             Ok(true)
@@ -6558,8 +6575,14 @@ mod oracle_startup_tests {
 
 #[cfg(test)]
 mod validator_startup_tests {
-    use super::{bootstrap_commission_percent, try_restore_validators_from_dat};
+    use super::{
+        bootstrap_commission_percent, seed_validators_from_bootstrap_config,
+        try_restore_validators_from_dat,
+    };
+    use crate::config::aggregation::BootstrapValidator;
+    use lib_blockchain::storage::{BlockchainStore, SledStore};
     use lib_blockchain::{Blockchain, ValidatorInfo};
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn make_validator(id: &str) -> ValidatorInfo {
@@ -6587,6 +6610,7 @@ mod validator_startup_tests {
     fn restore_succeeds_when_dat_has_validators() {
         let dir = tempdir().unwrap();
         let dat_path = dir.path().join("blockchain.dat");
+        let sled_path = dir.path().join("sled");
 
         let mut src = Blockchain::new().expect("Blockchain::new");
         src.validator_registry
@@ -6596,18 +6620,49 @@ mod validator_startup_tests {
         #[allow(deprecated)]
         src.save_to_file(&dat_path).expect("save_to_file");
 
+        let store = Arc::new(SledStore::open(&sled_path).expect("open sled"));
         let mut target = Blockchain::new().expect("Blockchain::new");
-        assert!(target.get_active_validators().is_empty());
+        target.store = Some(store.clone());
+        assert!(target.active_validators_for_consensus().is_empty());
 
         let restored = try_restore_validators_from_dat(&mut target, &dat_path, false)
             .expect("try_restore_validators_from_dat");
 
         assert!(restored, "expected restoration to succeed");
         assert_eq!(
-            target.get_active_validators().len(),
+            target.active_validators_for_consensus().len(),
             2,
             "validator_registry should have been restored from dat"
         );
+        assert_eq!(
+            store.as_ref().count_validator_records().expect("count"),
+            2,
+            "emergency restore must persist validators to sled"
+        );
+    }
+
+    #[test]
+    fn bootstrap_seed_persists_to_sled_when_active_set_empty() {
+        let dir = tempdir().unwrap();
+        let store = Arc::new(SledStore::open(dir.path().join("sled")).expect("open sled"));
+        let mut bc = Blockchain::new().expect("Blockchain::new");
+        bc.store = Some(store.clone());
+
+        seed_validators_from_bootstrap_config(
+            &mut bc,
+            &[BootstrapValidator {
+                identity_id: "did:zhtp:seed-test".to_string(),
+                consensus_key: String::new(),
+                stake: 50_000,
+                storage_provided: 1 << 30,
+                commission_rate: 500,
+                endpoints: vec!["10.0.0.9:9334".to_string()],
+            }],
+        )
+        .expect("seed");
+
+        assert_eq!(bc.active_validators_for_consensus().len(), 1);
+        assert_eq!(store.as_ref().count_validator_records().expect("count"), 1);
     }
 
     #[test]
@@ -6627,7 +6682,7 @@ mod validator_startup_tests {
             !restored,
             "should not restore when dat also has empty registry"
         );
-        assert!(target.get_active_validators().is_empty());
+        assert!(target.active_validators_for_consensus().is_empty());
     }
 
     #[test]
@@ -6649,7 +6704,7 @@ mod validator_startup_tests {
             .expect("try_restore_validators_from_dat");
 
         assert!(!restored, "should not restore when dat file does not exist");
-        assert!(target.get_active_validators().is_empty());
+        assert!(target.active_validators_for_consensus().is_empty());
     }
 }
 

@@ -702,6 +702,40 @@ fn validator_exists_union_inmem_or_sled() {
     assert_eq!(got.stake, 200_000);
 }
 
+/// Bootstrap install writes overlay + sled in one batch (#2639).
+#[test]
+fn install_bootstrap_validator_records_persists_to_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val-bootstrap")).unwrap());
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store.clone());
+
+    let written = bc
+        .install_bootstrap_validator_records(vec![ValidatorInfo {
+            identity_id: "did:zhtp:bootstrap-1".to_string(),
+            stake: 100_000,
+            storage_provided: 1 << 40,
+            consensus_key: [9u8; 2592],
+            networking_key: vec![1],
+            rewards_key: vec![2],
+            network_address: "10.0.0.1:9334".to_string(),
+            commission_rate: 5,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "bootstrap_genesis".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        }])
+        .expect("install");
+    assert_eq!(written, 1);
+    assert_eq!(store.count_validator_records().unwrap(), 1);
+    assert_eq!(bc.active_validators_for_consensus().len(), 1);
+    assert_eq!(store.validator_record_schema_version().unwrap(), 1);
+}
+
 /// Repeated reads hit the generation/fingerprint cache; sled-only writes invalidate gen (#56).
 #[test]
 fn active_validator_infos_cache_invalidates_on_sled_write() {

@@ -390,6 +390,51 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Install bootstrap/emergency validators into overlay + durable sled (#2639).
+    ///
+    /// Used when validators are seeded from bootstrap config or restored from
+    /// `blockchain.dat` — outside the block-apply metadata batch path.
+    pub fn install_bootstrap_validator_records(
+        &mut self,
+        validators: impl IntoIterator<Item = ValidatorInfo>,
+    ) -> Result<usize> {
+        let infos: Vec<ValidatorInfo> = validators.into_iter().collect();
+        if infos.is_empty() {
+            return Ok(0);
+        }
+        for info in &infos {
+            self.validator_registry
+                .insert(info.identity_id.clone(), info.clone());
+            self.validator_blocks
+                .entry(info.identity_id.clone())
+                .or_insert(info.registered_at);
+        }
+        let Some(ref store) = self.store else {
+            return Ok(infos.len());
+        };
+        let records: Vec<([u8; 32], StoredValidatorRecord)> = infos
+            .iter()
+            .map(|info| (did_to_hash(&info.identity_id), StoredValidatorRecord::from(info)))
+            .collect();
+        let expected = records.len();
+        let written = store
+            .put_validator_record_batch(&records)
+            .map_err(|e| anyhow::anyhow!("Failed to batch-persist bootstrap validators: {e}"))?;
+        if written != expected {
+            return Err(anyhow::anyhow!(
+                "bootstrap validator persist: only {written}/{expected} records written"
+            ));
+        }
+        let current = crate::storage::VALIDATOR_RECORD_SCHEMA_VERSION;
+        if store.validator_record_schema_version()? < current {
+            store
+                .set_validator_record_schema_version(current)
+                .map_err(|e| anyhow::anyhow!("Failed to set validator schema version: {e}"))?;
+        }
+        self.invalidate_active_validator_cache();
+        Ok(written)
+    }
+
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
         if self.validator_exists(&validator_info.identity_id) {
             return Err(anyhow::anyhow!(
