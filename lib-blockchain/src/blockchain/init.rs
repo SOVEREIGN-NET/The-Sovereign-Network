@@ -25,6 +25,7 @@ impl Blockchain {
             dao_registry_index: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
+            active_validator_cache: validators::default_active_validator_cache(),
             gateway_registry: HashMap::new(),
             gateway_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,

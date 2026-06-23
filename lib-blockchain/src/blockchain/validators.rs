@@ -2,7 +2,67 @@ use super::*;
 use crate::block::Block;
 use crate::storage::{did_to_hash, BlockchainStore, StoredValidatorRecord, ValidatorConsensusRecord, ValidatorMetadata};
 use crate::transaction::ValidatorTransactionData;
-use tracing::{debug, warn};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash as StdHash, Hasher};
+use tracing::{debug, error, warn};
+
+/// Cached active-validator snapshot for [`Blockchain::active_validator_infos`].
+#[derive(Debug, Clone)]
+struct ActiveValidatorCacheEntry {
+    sled_gen: u64,
+    registry_fp: (usize, u64),
+    snapshot: Vec<ValidatorInfo>,
+}
+
+#[derive(Debug, Default)]
+struct ActiveValidatorCacheState {
+    sled_gen: u64,
+    entry: Option<ActiveValidatorCacheEntry>,
+}
+
+/// Thread-safe cache handle; fresh on [`Blockchain`] clone (not shared).
+#[derive(Debug, Default)]
+pub(super) struct ActiveValidatorCacheHandle(
+    std::sync::Arc<std::sync::Mutex<ActiveValidatorCacheState>>,
+);
+
+impl Clone for ActiveValidatorCacheHandle {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl ActiveValidatorCacheHandle {
+    pub(super) fn read_hit(&self, registry_fp: (usize, u64)) -> Option<Vec<ValidatorInfo>> {
+        let state = self.0.lock().ok()?;
+        let entry = state.entry.as_ref()?;
+        if entry.sled_gen == state.sled_gen && entry.registry_fp == registry_fp {
+            Some(entry.snapshot.clone())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn store(&self, registry_fp: (usize, u64), snapshot: Vec<ValidatorInfo>) {
+        if let Ok(mut state) = self.0.lock() {
+            state.entry = Some(ActiveValidatorCacheEntry {
+                sled_gen: state.sled_gen,
+                registry_fp,
+                snapshot,
+            });
+        }
+    }
+
+    pub(super) fn invalidate_sled_snapshot(&self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.sled_gen = state.sled_gen.wrapping_add(1);
+        }
+    }
+}
+
+pub(super) fn default_active_validator_cache() -> ActiveValidatorCacheHandle {
+    ActiveValidatorCacheHandle::default()
+}
 
 // =============================================================================
 // Validator storage boundary (#56)
@@ -126,7 +186,36 @@ impl Blockchain {
     /// The in-memory overlay is authoritative for same-block changes before sled
     /// persist: active entries replace sled, and non-active entries remove a sled
     /// active record (e.g. Unregister in the current block).
+    ///
+    /// Results are cached until sled writes bump [`active_validator_cache_gen`] or the
+    /// in-memory overlay fingerprint changes (status/stake per registry entry).
     pub fn active_validator_infos(&self) -> Vec<ValidatorInfo> {
+        let registry_fp = self.validator_registry_overlay_fingerprint();
+        if let Some(snapshot) = self.active_validator_cache.read_hit(registry_fp) {
+            return snapshot;
+        }
+        let snapshot = self.build_active_validator_infos_uncached();
+        self.active_validator_cache
+            .store(registry_fp, snapshot.clone());
+        snapshot
+    }
+
+    /// Invalidate sled-portion of the active-validator cache after durable writes.
+    pub(super) fn invalidate_active_validator_cache(&self) {
+        self.active_validator_cache.invalidate_sled_snapshot();
+    }
+
+    fn validator_registry_overlay_fingerprint(&self) -> (usize, u64) {
+        let mut hasher = DefaultHasher::new();
+        for (did, info) in &self.validator_registry {
+            did.hash(&mut hasher);
+            info.status.hash(&mut hasher);
+            info.stake.hash(&mut hasher);
+        }
+        (self.validator_registry.len(), hasher.finish())
+    }
+
+    fn build_active_validator_infos_uncached(&self) -> Vec<ValidatorInfo> {
         let mut by_id: HashMap<String, ValidatorInfo> = HashMap::new();
         if let Some(store) = self.get_store() {
             match store.iter_validator_records() {
@@ -141,9 +230,13 @@ impl Blockchain {
                     }
                 }
                 Err(e) => {
-                    warn!(
+                    // Warn-and-continue: a single broken sled node can diverge from the
+                    // fleet until quorum fails; operators should treat this as restart-worthy.
+                    // Cryptographic validator-set divergence detection awaits #57 state_root.
+                    error!(
                         error = %e,
-                        "active_validator_infos: sled iter failed; using in-memory shadow only"
+                        "active_validator_infos: sled iter failed; falling back to in-memory \
+                         shadow only — node may disagree with fleet on validator set until restart"
                     );
                 }
             }
@@ -261,6 +354,7 @@ impl Blockchain {
         store
             .put_validator_record(&did_hash, &record)
             .map_err(|e| anyhow::anyhow!("Failed to store validator {} in sled: {}", info.identity_id, e))?;
+        self.invalidate_active_validator_cache();
         debug!("Persisted validator {} to sled storage", info.identity_id);
         Ok(())
     }
@@ -292,6 +386,7 @@ impl Blockchain {
         store
             .put_validator_record_direct(&did_hash, &record)
             .map_err(|e| anyhow::anyhow!("Failed to direct-persist validator {}: {}", info.identity_id, e))?;
+        self.invalidate_active_validator_cache();
         Ok(())
     }
 

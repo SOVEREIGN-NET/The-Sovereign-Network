@@ -190,6 +190,9 @@ pub struct Blockchain {
     /// Validator registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
+    /// Cached sled-first active set; invalidated by generation token or overlay fingerprint.
+    #[serde(skip, default = "validators::default_active_validator_cache")]
+    pub(super) active_validator_cache: validators::ActiveValidatorCacheHandle,
     /// On-chain gateway registry (identity_id -> Gateway info)
     #[serde(default)]
     pub gateway_registry: HashMap<String, GatewayInfo>,
@@ -4784,6 +4787,7 @@ impl Blockchain {
                             self.wallet_registry = self
                                 .convert_wallet_references_to_full_data(&import.wallet_references);
                             self.validator_registry = import.validator_registry;
+                            self.invalidate_active_validator_cache();
                             self.token_contracts = import.token_contracts;
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
@@ -4807,6 +4811,7 @@ impl Blockchain {
                     self.wallet_registry =
                         self.convert_wallet_references_to_full_data(&import.wallet_references);
                     self.validator_registry = import.validator_registry;
+                    self.invalidate_active_validator_cache();
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
@@ -5289,6 +5294,7 @@ impl Blockchain {
         self.wallet_registry =
             self.convert_wallet_references_to_full_data(&import.wallet_references);
         self.validator_registry = import.validator_registry.clone();
+        self.invalidate_active_validator_cache();
         self.utxo_set = import.utxo_set.clone();
         self.token_contracts = import.token_contracts.clone();
         self.web4_contracts = import.web4_contracts.clone();

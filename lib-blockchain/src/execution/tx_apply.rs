@@ -21,6 +21,7 @@ use crate::transaction::{Transaction, TransactionOutput};
 use crate::types::Hash;
 
 use super::errors::{TxApplyError, TxApplyResult};
+use tracing::warn;
 
 /// State mutator - wraps store and provides controlled mutation primitives
 ///
@@ -499,12 +500,18 @@ impl<'a> StateMutator<'a> {
     /// validator transactions as `LegacySystem` no-ops by design.
     ///
     /// Calling this method is a programming error. It always returns
-    /// [`TxApplyError::NotPersisted`]; in debug builds it also `debug_assert`s.
+    /// [`TxApplyError::NotPersisted`]; dev-release builds do not enable
+    /// `debug_assertions`, so callers must not ignore the error (e.g. `let _ = ...`).
     pub fn register_validator(
         &self,
         _did_hash: &[u8; 32],
         _record: &crate::storage::StoredValidatorRecord,
     ) -> TxApplyResult<()> {
+        warn!(
+            "StateMutator::register_validator called but is inert; live path is \
+             Blockchain::finish_block_processing metadata batch \
+             (persist_validator_records_for_block) — returning NotPersisted"
+        );
         if cfg!(debug_assertions) && !cfg!(test) {
             debug_assert!(
                 false,

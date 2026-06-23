@@ -330,6 +330,7 @@ impl Blockchain {
             return;
         }
 
+        self.invalidate_active_validator_cache();
         info!("validator_records schema migration complete: {written} records at v{current}");
     }
 

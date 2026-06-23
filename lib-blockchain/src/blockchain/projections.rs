@@ -430,6 +430,7 @@ impl Blockchain {
             self.validator_registry
                 .insert(record.info.identity_id.clone(), record.info);
         }
+        self.invalidate_active_validator_cache();
 
         self.gateway_registry.clear();
         self.gateway_blocks.clear();
