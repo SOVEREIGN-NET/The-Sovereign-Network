@@ -1144,6 +1144,28 @@ impl Blockchain {
     /// mid-`apply_block` caller uses this facade (Phase 3), a `tx_batch`-aware
     /// read must be added to `SledStore::get_token_balance`** or that caller
     /// will see the pre-block value and could authorize a double-spend.
+    /// Sled-first nonce facade (state-unification #2638).
+    ///
+    /// When a `BlockchainStore` is attached it is the authoritative source and a
+    /// sled failure is **propagated as an error** — we do NOT silently fall back
+    /// to a possibly-stale in-memory nonce (the class that caused CONS-513).
+    pub fn token_nonce(
+        &self,
+        token_id: &[u8; 32],
+        address: &[u8; 32],
+    ) -> crate::storage::StorageResult<u64> {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            let addr = crate::storage::Address::new(*address);
+            return store.get_token_nonce(&token, &addr);
+        }
+        Ok(self
+            .token_nonces
+            .get(&(*token_id, *address))
+            .copied()
+            .unwrap_or(0))
+    }
+
     pub fn token_balance(
         &self,
         token_id: &[u8; 32],

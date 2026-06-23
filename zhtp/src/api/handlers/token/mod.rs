@@ -618,7 +618,7 @@ impl TokenHandler {
         address.copy_from_slice(&address_bytes);
 
         let blockchain = self.blockchain.read().await;
-        let nonce = blockchain.get_token_nonce(&token_id, &address);
+        let nonce = blockchain.token_nonce(&token_id, &address).unwrap_or(0);
 
         create_json_response(json!({
             "token_id": token_id_hex,

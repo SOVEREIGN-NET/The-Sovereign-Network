@@ -464,7 +464,8 @@ impl RewardsHandler {
         // concurrent claims so this read-then-use is safe.
         let nonce = {
             let bc = self.blockchain.read().await;
-            bc.get_token_nonce(&treasury.bubl_token_id, &treasury.signer_key_id)
+            bc.token_nonce(&treasury.bubl_token_id, &treasury.signer_key_id)
+                .unwrap_or(0)
         };
 
         let data = TokenTransferData {

@@ -100,6 +100,27 @@ fn token_balance_mid_block_reads_staged_write() {
 }
 
 #[test]
+fn token_nonce_reads_sled_when_store_attached() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_nonce_store")).unwrap());
+    let token = TokenId::new([5u8; 32]);
+    let addr = Address::new([0xCC; 32]);
+    store.begin_block(0).unwrap();
+    store.set_token_nonce(&token, &addr, 42).unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    bc.token_nonces.insert(([5u8; 32], [0xCC; 32]), 7);
+
+    assert_eq!(
+        bc.token_nonce(&[5u8; 32], &[0xCC; 32]).unwrap(),
+        42,
+        "facade must return sled nonce, not stale in-memory value"
+    );
+}
+
+#[test]
 fn token_balance_reads_sled_when_store_attached() {
     let temp = tempfile::tempdir().unwrap();
     let store = Arc::new(SledStore::open(&temp.path().join("facade_bal_store")).unwrap());
