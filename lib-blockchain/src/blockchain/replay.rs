@@ -263,7 +263,9 @@ impl Blockchain {
     /// Version-gated regeneration of the sled `validators` tree (#56).
     ///
     /// Fully derivable from replayed blocks — never decodes legacy blobs.
-    fn migrate_validator_records_schema(&self) {
+    /// Called from `replay_from_store` and `load_from_store` so existing chains
+    /// backfill the durable validators tree on normal startup, not replay-only.
+    pub(crate) fn migrate_validator_records_schema(&self) {
         let Some(ref store) = self.store else {
             return;
         };
