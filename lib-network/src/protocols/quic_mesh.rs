@@ -959,11 +959,36 @@ impl QuicMeshProtocol {
     }
 
     /// List all connected peer node IDs.
+    ///
+    /// Self-prunes stale entries whose underlying quinn::Connection is closed.
+    /// A receive-loop teardown race (see `Receive loop ended (removed only if
+    /// still owner)` log line) can leave dead entries in the DashMap — and
+    /// `send_to_peer` would then attempt to write to a closed connection,
+    /// silently dropping votes/heartbeats. The Jun-19 2026 cluster wedge
+    /// (5/5 validators in-quorum but no commits after several hours) was
+    /// caused by accumulating stale entries here.
     pub fn connected_peer_ids(&self) -> Vec<Vec<u8>> {
-        self.connections
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
+        let mut alive: Vec<Vec<u8>> = Vec::new();
+        let mut to_prune: Vec<Vec<u8>> = Vec::new();
+        for entry in self.connections.iter() {
+            if entry.value().quic_conn.close_reason().is_none() {
+                alive.push(entry.key().clone());
+            } else {
+                to_prune.push(entry.key().clone());
+            }
+        }
+        for k in to_prune {
+            // Only remove if the stale connection is still the one we saw —
+            // a newer connection may have raced in under the same node_id
+            // between our scan and this remove.
+            self.connections
+                .remove_if(&k, |_, entry| entry.quic_conn.close_reason().is_some());
+            tracing::warn!(
+                node_id = %hex::encode(&k),
+                "Pruned stale (closed) connection entry from canonical mesh store"
+            );
+        }
+        alive
     }
 
     /// Return the socket address of every currently-connected peer.
@@ -1199,9 +1224,13 @@ impl QuicMeshProtocol {
                         }
                     }
                     Err(e) => {
-                        debug!(peer = %node_id_hex,
-                               error = %e,
-                               "UNI stream accept ended - peer disconnected");
+                        // Logged at INFO so we can correlate teardown with cause
+                        // (idle timeout / app close / transport error) without
+                        // raising RUST_LOG. Receive-loop teardowns are the
+                        // event we're chasing.
+                        info!(peer = %node_id_hex,
+                              error = %e,
+                              "UNI stream accept ended - peer disconnected");
                         break;
                     }
                 }
@@ -1225,6 +1254,20 @@ impl QuicMeshProtocol {
                 .connections
                 .get(peer_pubkey)
                 .ok_or_else(|| anyhow!("No connection to peer"))?;
+            // Reject sends through a closed connection. Pair with the prune
+            // in `connected_peer_ids`. Without this, the consensus broadcaster
+            // would write to a dead stream, the send "succeeds" at the API
+            // layer, but votes never reach the peer — silently breaking
+            // quorum after a connection teardown race.
+            if entry.quic_conn.close_reason().is_some() {
+                let key = peer_pubkey.to_vec();
+                drop(entry);
+                self.connections
+                    .remove_if(&key, |_, e| e.quic_conn.close_reason().is_some());
+                return Err(anyhow!(
+                    "send_to_peer: underlying QUIC connection is closed (stale entry purged)"
+                ));
+            }
             (entry.quic_conn.clone(), entry.session_key)
         };
 
