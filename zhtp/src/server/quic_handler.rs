@@ -355,10 +355,17 @@ impl QuicHandler {
         loop {
             match endpoint.accept().await {
                 Some(incoming) => {
-                    self.handle_connection_incoming(incoming).await?;
+                    // Errors from handle_connection_incoming must NOT terminate the
+                    // accept loop. The Jun-17 2026 gateway outage was caused by a
+                    // `?` here that killed the loop on the first transient quinn
+                    // error — gateways went 60+ hours with zero inbound while the
+                    // process otherwise looked healthy.
+                    if let Err(e) = self.handle_connection_incoming(incoming).await {
+                        warn!("⚠️ QUIC accept: handle_connection_incoming failed: {} (loop continues)", e);
+                    }
                 }
                 None => {
-                    warn!("QUIC endpoint closed");
+                    error!("QUIC endpoint closed — accept loop exiting");
                     break;
                 }
             }
@@ -472,6 +479,24 @@ impl QuicHandler {
         // Auto-register the authenticated peer identity
         self.auto_register_peer_identity(&handshake_result.verified_peer.identity)
             .await;
+
+        // DO NOT register this control-plane connection in the mesh store.
+        // Control-plane connections (ALPN zhtp-uhp/1, zhtp-uhp/2) are created
+        // by ZhtpClient for short-lived RPC: catch-up sync, observer sync,
+        // CLI calls. ZhtpClient::Drop closes the underlying QUIC connection
+        // (lib-network/src/client/zhtp_client.rs:865) — so any entry added
+        // here is killed within hundreds of milliseconds when the RPC finishes
+        // and the client is dropped. Persistent mesh peers come in via
+        // handle_mesh_connection (ALPN zhtp-mesh/1), which is the correct
+        // path and is unaffected by ZhtpClient::Drop.
+        //
+        // History: a previous attempt registered control-plane peers here as
+        // a workaround for "No validator targets resolved" warnings. It
+        // appeared to populate the mesh store but actually polluted it with
+        // churning short-lived entries (observed: 15:1 control-plane:true-
+        // mesh registration ratio over 2 minutes). The real solution is to
+        // ensure validators establish true ALPN zhtp-mesh/1 connections via
+        // the periodic try_reconnect_to_bootstrap task.
 
         // Record session in POUW session log for proof-of-presence verification
         if let Some(session_log) = &self.pouw_session_log {
