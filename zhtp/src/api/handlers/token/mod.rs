@@ -700,10 +700,9 @@ impl TokenHandler {
             };
 
             debug!(
-                "token/balances: token={} ({}) balance_count={} found_balance={}",
+                "token/balances: token={} ({}) found_balance={}",
                 token.name,
                 token.symbol,
-                token.balances_len(),
                 balance
             );
 

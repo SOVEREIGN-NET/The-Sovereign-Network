@@ -627,6 +627,7 @@ async fn migrate_wallets_for_identity(
         };
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+        let token_id_storage = lib_blockchain::storage::TokenId::new(sov_token_id);
 
         let owned: Vec<_> = blockchain
             .wallet_registry
@@ -644,9 +645,14 @@ async fn migrate_wallets_for_identity(
         let to_migrate: Vec<_> = owned
             .into_iter()
             .filter(|w| {
-                blockchain
-                    .token_balance(&sov_token_id, &w.wallet_id.as_array())
-                    .unwrap_or(0) == 0
+                let Some(store) = blockchain.store.as_ref() else {
+                    return false;
+                };
+                let addr = lib_blockchain::storage::Address::new(w.wallet_id.as_array());
+                store
+                    .get_token_balance(&token_id_storage, &addr)
+                    .map(|b| b == 0)
+                    .unwrap_or(false)
             })
             .collect();
 

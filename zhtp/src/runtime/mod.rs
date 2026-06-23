@@ -1255,14 +1255,10 @@ impl RuntimeOrchestrator {
                         bc.store = store;
                         bc.executor = executor;
                         // Seed validators from bootstrap config (not stored in blocks)
-                        if let Err(e) = seed_validators_from_bootstrap_config(
+                        seed_validators_from_bootstrap_config(
                             &mut bc,
                             &self.config.network_config.bootstrap_validators,
-                        ) {
-                            warn!(
-                                "Failed to seed bootstrap validators after load_from_store: {e}"
-                            );
-                        }
+                        )?;
                         info!(
                             "Blockchain load complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
