@@ -1219,8 +1219,13 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn get_token_balance(&self, t: &TokenId, a: &Address) -> StorageResult<Amount>;
 
     /// Count non-zero balance holders for a token (sled `token_balances` tree).
+    ///
+    /// SledStore implements via prefix scan. Other backends must override or
+    /// callers receive an explicit error — never a silent `Ok(0)`.
     fn count_token_holders(&self, _token_id: &TokenId) -> StorageResult<usize> {
-        Ok(0)
+        Err(StorageError::Database(
+            "count_token_holders not implemented for this BlockchainStore backend".to_string(),
+        ))
     }
 
     /// Set token balance for an address.

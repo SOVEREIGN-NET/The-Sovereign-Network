@@ -4003,6 +4003,24 @@ impl Blockchain {
     // Voting Power Calculation
     // ============================================================================
 
+    /// SOV balance for voting-power aggregation (#2637).
+    ///
+    /// Logs and treats sled read failures as 0 so one bad wallet does not
+    /// abort the whole power calculation.
+    fn sov_wallet_balance_for_voting(&self, sov_id: &[u8; 32], wallet_id: &[u8; 32]) -> u128 {
+        match self.token_balance(sov_id, wallet_id) {
+            Ok(balance) => balance,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    wallet = %hex::encode(&wallet_id[..8]),
+                    "calculate_user_voting_power: token_balance read failed — treating as 0"
+                );
+                0
+            }
+        }
+    }
+
     /// Calculate comprehensive voting power for a user in DAO governance
     /// Calculate effective voting power for a user, applying `self.voting_power_mode`.
     ///
@@ -4030,7 +4048,7 @@ impl Blockchain {
         let sov_balance: u128 = self
             .get_wallets_for_owner(&user_local_id)
             .iter()
-            .filter_map(|w| self.token_balance(&sov_id, &w.wallet_id.as_array()).ok())
+            .map(|w| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
             .sum();
 
         // 1 SOV (1e18 atomic units) = 1 base vote unit
@@ -4050,7 +4068,7 @@ impl Blockchain {
                 let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
                 let bal: u128 = delegator_wallets
                     .iter()
-                    .filter_map(|w| self.token_balance(&sov_id, &w.wallet_id.as_array()).ok())
+                    .map(|w| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
                     .sum();
                 Some((bal / lib_types::sov::SCALE) as u64)
             })

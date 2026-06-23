@@ -1126,6 +1126,44 @@ impl Blockchain {
         self.token_contracts.get_mut(contract_id)
     }
 
+    /// Sled-first holder count for a token (#2637).
+    ///
+    /// Balances live in the `token_balances` tree, not in deserialized contract
+    /// metadata — `TokenContract::balances_len()` is always 0 on sled-backed nodes.
+    ///
+    /// # Handler-only — not tx_batch-aware (CR #2658)
+    ///
+    /// Scans **committed** sled state only. Staged writes in the current block's
+    /// `tx_batch` are NOT visible. **Do NOT call from executor / mid-apply paths**
+    /// until `SledStore::count_token_holders` is made tx_batch-aware (Phase 3).
+    ///
+    /// # Performance
+    ///
+    /// O(N) prefix scan per call. Fine for contract-details API at current scale;
+    /// add caching before 10k+ holders per token.
+    pub fn count_token_holders(&self, token_id: &[u8; 32]) -> usize {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            match store.count_token_holders(&token) {
+                Ok(count) => return count,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        token = %hex::encode(&token_id[..8]),
+                        "count_token_holders: sled scan failed — returning 0"
+                    );
+                    return 0;
+                }
+            }
+        }
+        // Store-less mode only: in-memory `TokenContract.balances` is authoritative.
+        // On sled-loaded contracts this map is empty, so this path returns 0 in practice.
+        self.token_contracts
+            .get(token_id)
+            .map(|c| c.balances_len())
+            .unwrap_or(0)
+    }
+
     /// Sled-first balance facade (state-unification #2635 / #2637).
     ///
     /// `token_id` and `address` are 32-byte ids (the address is a `key_id`, the
@@ -1146,23 +1184,6 @@ impl Blockchain {
     /// mid-`apply_block` caller uses this facade (Phase 3), a `tx_batch`-aware
     /// read must be added to `SledStore::get_token_balance`** or that caller
     /// will see the pre-block value and could authorize a double-spend.
-    /// Sled-first holder count for a token (#2637).
-    ///
-    /// Balances live in the `token_balances` tree, not in deserialized contract
-    /// metadata — `TokenContract::balances_len()` is always 0 on sled-backed nodes.
-    pub fn count_token_holders(&self, token_id: &[u8; 32]) -> usize {
-        if let Some(store) = self.get_store() {
-            let token = crate::storage::TokenId::new(*token_id);
-            if let Ok(count) = store.count_token_holders(&token) {
-                return count;
-            }
-        }
-        self.token_contracts
-            .get(token_id)
-            .map(|c| c.balances_len())
-            .unwrap_or(0)
-    }
-
     pub fn token_balance(
         &self,
         token_id: &[u8; 32],
