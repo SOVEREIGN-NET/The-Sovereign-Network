@@ -1831,6 +1831,21 @@ impl BlockchainStore for SledStore {
         }
     }
 
+    fn count_token_holders(&self, token_id: &TokenId) -> StorageResult<usize> {
+        let prefix = keys::token_balances_prefix(token_id);
+        let mut count = 0usize;
+        for result in self.token_balances.scan_prefix(&prefix) {
+            let (_, value) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            if value.len() == 16 {
+                let balance = u128::from_be_bytes(value.as_ref().try_into().unwrap());
+                if balance > 0 {
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
     fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()> {
         self.require_transaction()?;
 

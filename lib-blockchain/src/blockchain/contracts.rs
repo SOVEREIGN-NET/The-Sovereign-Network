@@ -374,6 +374,7 @@ impl Blockchain {
                             .token_contracts
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        // Writes path: in-memory transfer below; balance_of is correct here (#2637).
                         let from_bal = token.balance_of(&from_wallet_addr);
                         if from_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
@@ -417,6 +418,7 @@ impl Blockchain {
                             .token_contracts
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                        // Writes path: in-memory transfer below; balance_of is correct here (#2637).
                         let sender_bal = token.balance_of(&sender_pk);
                         if sender_bal < amount_u64 as u128 {
                             return Err(anyhow::anyhow!(
@@ -1144,6 +1146,23 @@ impl Blockchain {
     /// mid-`apply_block` caller uses this facade (Phase 3), a `tx_batch`-aware
     /// read must be added to `SledStore::get_token_balance`** or that caller
     /// will see the pre-block value and could authorize a double-spend.
+    /// Sled-first holder count for a token (#2637).
+    ///
+    /// Balances live in the `token_balances` tree, not in deserialized contract
+    /// metadata — `TokenContract::balances_len()` is always 0 on sled-backed nodes.
+    pub fn count_token_holders(&self, token_id: &[u8; 32]) -> usize {
+        if let Some(store) = self.get_store() {
+            let token = crate::storage::TokenId::new(*token_id);
+            if let Ok(count) = store.count_token_holders(&token) {
+                return count;
+            }
+        }
+        self.token_contracts
+            .get(token_id)
+            .map(|c| c.balances_len())
+            .unwrap_or(0)
+    }
+
     pub fn token_balance(
         &self,
         token_id: &[u8; 32],

@@ -2537,7 +2537,7 @@ impl BlockchainHandler {
                         "decimals": token.decimals,
                         "total_supply": token.total_supply,
                         "max_supply": token.max_supply,
-                        "holder_count": token.balances_len(),
+                        "holder_count": blockchain.count_token_holders(&contract_id),
                         "raw_state_hex": raw_state,
                     }),
                 )

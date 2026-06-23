@@ -4026,15 +4026,11 @@ impl Blockchain {
         // &crate::types::hash::Hash.  Bridge via the raw 32-byte array.
         let user_local_id = crate::types::hash::Hash::new(user_id.0);
 
-        // Sum SOV balances across all wallets owned by this identity.
+        // Sum SOV balances across all wallets owned by this identity (#2637).
         let sov_balance: u128 = self
             .get_wallets_for_owner(&user_local_id)
             .iter()
-            .filter_map(|w| {
-                // wallet_id: crate::types::hash::Hash — as_array() gives [u8; 32] directly.
-                let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
-                self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
-            })
+            .filter_map(|w| self.token_balance(&sov_id, &w.wallet_id.as_array()).ok())
             .sum();
 
         // 1 SOV (1e18 atomic units) = 1 base vote unit
@@ -4054,10 +4050,7 @@ impl Blockchain {
                 let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
                 let bal: u128 = delegator_wallets
                     .iter()
-                    .filter_map(|w| {
-                        let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
-                        self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
-                    })
+                    .filter_map(|w| self.token_balance(&sov_id, &w.wallet_id.as_array()).ok())
                     .sum();
                 Some((bal / lib_types::sov::SCALE) as u64)
             })

@@ -123,6 +123,28 @@ fn token_balance_reads_sled_when_store_attached() {
 }
 
 #[test]
+fn count_token_holders_reads_sled_when_store_attached() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("facade_holders_store")).unwrap());
+    let token = TokenId::new([9u8; 32]);
+    store.begin_block(0).unwrap();
+    store
+        .set_token_balance(&token, &Address::new([1u8; 32]), 100)
+        .unwrap();
+    store
+        .set_token_balance(&token, &Address::new([2u8; 32]), 0)
+        .unwrap();
+    store
+        .set_token_balance(&token, &Address::new([3u8; 32]), 50)
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    assert_eq!(bc.count_token_holders(&[9u8; 32]), 2);
+}
+
+#[test]
 fn identity_consensus_by_did_none_without_store() {
     let bc = Blockchain::new().expect("blockchain construct");
     assert!(bc.get_store().is_none(), "test assumes no store attached");
