@@ -1034,6 +1034,7 @@ impl Blockchain {
                             if mem_balance > 0 {
                                 let addr = crate::storage::Address::new(data.from);
                                 let storage_token = crate::storage::TokenId(data.token_id);
+                                // Writes path: compares in-mem vs sled to seed missing entries.
                                 let sled_bal =
                                     store.get_token_balance(&storage_token, &addr).unwrap_or(0);
                                 if sled_bal == 0 {
@@ -1071,10 +1072,8 @@ impl Blockchain {
             match executor.apply_block(&block) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor.
-                    // Sync in-memory token_contracts from SledStore for all addresses
-                    // touched by this block (transfers debit/credit, mints credit).
-                    // This keeps the in-memory HashMap authoritative for balance queries
-                    // without a second source of truth.
+                    // Writes path: sync in-memory token_contracts from sled after apply.
+                    // Public reads must use token_balance() — not this HashMap (#2637).
                     if let Some(store) = &self.store {
                         let sov_id = crate::contracts::utils::generate_lib_token_id();
                         let storage_sov_id = crate::storage::TokenId(sov_id);
@@ -1916,7 +1915,8 @@ impl Blockchain {
             let tx = &block.transactions[*i];
             let sender = &tx.signature.public_key;
 
-            // Check sender's balance before deduction
+            // Check sender's balance before deduction.
+            // Writes path: legacy in-memory fee debit below; HashMap is authoritative here.
             let sender_balance = sov_token.balance_of(&fee_payer);
             if sender_balance < tx.fee as u128 {
                 // This shouldn't happen if validation is working correctly

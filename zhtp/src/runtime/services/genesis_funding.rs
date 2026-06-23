@@ -124,8 +124,6 @@ impl GenesisFundingService {
             return Err(anyhow::anyhow!("No genesis block found in blockchain"));
         }
 
-        let genesis_block = &mut blockchain.blocks[0];
-
         // Add system funding pools (unchanged amounts for network operation)
         genesis_outputs.extend(vec![
             // System UBI funding pool
@@ -222,11 +220,18 @@ impl GenesisFundingService {
             wallet_id_bytes_arr.copy_from_slice(&wallet_id.0);
             let recipient_pk =
                 lib_blockchain::contracts::utils::wallet_key_for_sov(wallet_id_bytes_arr);
-            if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                if token.balance_of(&recipient_pk) == 0 {
-                    token
-                        .mint(&recipient_pk, SOV_WELCOME_BONUS as u128)
-                        .map_err(|e| anyhow::anyhow!("failed to mint genesis wallet SOV: {}", e))?;
+            if blockchain.get_token_contract(&sov_token_id).is_some() {
+                if blockchain
+                    .token_balance(&sov_token_id, &wallet_id_bytes_arr)
+                    .unwrap_or(0) == 0
+                {
+                    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                        token
+                            .mint(&recipient_pk, SOV_WELCOME_BONUS as u128)
+                            .map_err(|e| {
+                                anyhow::anyhow!("failed to mint genesis wallet SOV: {}", e)
+                            })?;
+                    }
                 }
             }
 
@@ -275,6 +280,7 @@ impl GenesisFundingService {
         };
 
         // Add genesis transaction to the genesis block
+        let genesis_block = &mut blockchain.blocks[0];
         genesis_block.transactions.push(genesis_tx.clone());
 
         // Note: Genesis funding is handled via UTXO outputs; SOV mints are issued via

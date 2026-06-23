@@ -1179,12 +1179,23 @@ impl Blockchain {
     /// is metadata only. For balances call [`Self::token_balance`]. (This is the
     /// footgun the renamed-from-`iter_token_contracts` CR flagged.)
     pub fn iter_token_contract_metadata(&self) -> Vec<crate::contracts::TokenContract> {
+        self.iter_token_contract_entries()
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect()
+    }
+
+    /// Sled-first `(token_id, metadata)` pairs for listing (#2637).
+    pub fn iter_token_contract_entries(&self) -> Vec<([u8; 32], crate::contracts::TokenContract)> {
         if let Some(store) = self.get_store() {
             if let Ok(iter) = store.iter_token_contracts() {
-                return iter.map(|(_, c)| c).collect();
+                return iter.map(|(id, c)| (id.0, c)).collect();
             }
         }
-        self.token_contracts.values().cloned().collect()
+        self.token_contracts
+            .iter()
+            .map(|(id, c)| (*id, c.clone()))
+            .collect()
     }
 
     pub fn register_web4_contract(

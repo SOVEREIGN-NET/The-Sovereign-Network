@@ -499,17 +499,12 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        // CBE balances: read from SledStore only (cbe_token field removed)
+        // CBE balances live in the token_balances sled tree (#2637).
         if is_cbe {
             let pubkey = self.identity_to_pubkey(address)?;
-            let key_id = pubkey.key_id;
-            let balance: u128 = if let Some(store) = blockchain.get_store() {
-                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
-                let addr = lib_blockchain::storage::Address::new(key_id);
-                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0)
-            } else {
-                0
-            };
+            let balance = blockchain
+                .token_balance(&cbe_token_id, &pubkey.key_id)
+                .unwrap_or(0);
             return create_json_response(json!({
                 "token_id": token_id_hex,
                 "address": address,
@@ -526,48 +521,14 @@ impl TokenHandler {
             let wallet_id = self
                 .resolve_wallet_id_for_sov(address, &blockchain)
                 .ok_or_else(|| anyhow::anyhow!("SOV balance lookup requires a valid wallet_id"))?;
-            // When BlockExecutor is active it writes to the token_balances Sled tree.
-            // The in-memory token_contracts is NOT updated after executor-path transfers,
-            // so we must read from Sled to get the post-transfer balance.
-            if let Some(store) = blockchain.get_store() {
-                let storage_token_id = lib_blockchain::storage::TokenId(token_id_array);
-                let addr = lib_blockchain::storage::Address::new(wallet_id);
-                store
-                    .get_token_balance(&storage_token_id, &addr)
-                    .unwrap_or(0) as u128
-            } else {
-                let wallet_key = PublicKey {
-                    dilithium_pk: [0u8; 2592],
-                    kyber_pk: [0u8; 1568],
-                    key_id: wallet_id,
-                };
-                token.balance_of(&wallet_key)
-            }
+            blockchain
+                .token_balance(&token_id_array, &wallet_id)
+                .unwrap_or(0)
         } else {
             let pubkey = self.identity_to_pubkey(address)?;
-            let target_key_id = pubkey.key_id;
-            // When BlockExecutor is active it writes credited balances to the
-            // sled-backed `token_balances` tree under the recipient's 32-byte
-            // key_id, NOT to the in-memory `TokenContract.balances` HashMap
-            // (the legacy `process_token_transactions` path is skipped at
-            // commit-time per `lib-blockchain/src/blockchain.rs:1382`). The
-            // in-memory HashMap therefore lags behind for every custom token
-            // (BUBL etc.) — a fallback to it would silently report 0 BUBL for
-            // every wallet that has received reward transfers. Mirror the
-            // SOV-branch behaviour above and read from sled when present.
-            if let Some(store) = blockchain.get_store() {
-                let storage_token_id = lib_blockchain::storage::TokenId(token_id_array);
-                let addr = lib_blockchain::storage::Address::new(target_key_id);
-                // get_token_balance returns Amount (u128) — no cast needed (CR #2660).
-                store
-                    .get_token_balance(&storage_token_id, &addr)
-                    .unwrap_or(0)
-            } else {
-                token
-                    .find_balance_by_key_id(&target_key_id)
-                    .map(|(_, bal)| bal)
-                    .unwrap_or(0)
-            }
+            blockchain
+                .token_balance(&token_id_array, &pubkey.key_id)
+                .unwrap_or(0)
         };
 
         create_json_response(json!({
@@ -722,54 +683,20 @@ impl TokenHandler {
         let native_token_id_hex = hex::encode(native_token_id);
         let mut balances = Vec::new();
 
-        // Collect balances from all token contracts
-        for (token_id, token) in blockchain.query_all_token_contracts() {
-            let balance = if *token_id == native_token_id {
-                // Mirror handle_get_balance (singular): when BlockExecutor is
-                // active it writes SOV debits/credits to the sled
-                // `token_balances` tree, and the post-apply sync to the
-                // in-memory `token_contracts` HashMap can lag (or miss
-                // entries when the original was inserted under a non-synthetic
-                // PublicKey). Reading sled first guarantees the mobile wallet
-                // sees the post-debit balance immediately after a domain
-                // registration fee_payment_tx commits.
-                if let Some(wallet_id) = sov_wallet_id {
-                    if let Some(store) = blockchain.get_store() {
-                        let storage_token_id = lib_blockchain::storage::TokenId(*token_id);
-                        let addr = lib_blockchain::storage::Address::new(wallet_id);
-                        store
-                            .get_token_balance(&storage_token_id, &addr)
+        // Collect balances from all token contracts (sled-first metadata list).
+        for (token_id, token) in blockchain.iter_token_contract_entries() {
+            let balance = if token_id == native_token_id {
+                sov_wallet_id
+                    .map(|wallet_id| {
+                        blockchain
+                            .token_balance(&token_id, &wallet_id)
                             .unwrap_or(0)
-                    } else {
-                        let wallet_key = PublicKey {
-                            dilithium_pk: [0u8; 2592],
-                            kyber_pk: [0u8; 1568],
-                            key_id: wallet_id,
-                        };
-                        token.balance_of(&wallet_key)
-                    }
-                } else {
-                    0
-                }
+                    })
+                    .unwrap_or(0)
             } else {
-                // BlockExecutor writes custom-token balances to the sled
-                // `token_balances` tree under the recipient's 32-byte key_id,
-                // not to the in-memory HashMap (commit-time skips the legacy
-                // path per `lib-blockchain/src/blockchain.rs:1382`). Same
-                // divergence as `handle_get_balance` — read sled first.
-                if let Some(store) = blockchain.get_store() {
-                    let storage_token_id = lib_blockchain::storage::TokenId(*token_id);
-                    let addr = lib_blockchain::storage::Address::new(target_key_id);
-                    // get_token_balance returns Amount (u128) — no cast needed (CR #2660).
-                    store
-                        .get_token_balance(&storage_token_id, &addr)
-                        .unwrap_or(0)
-                } else {
-                    token
-                        .find_balance_by_key_id(&target_key_id)
-                        .map(|(_, bal)| bal)
-                        .unwrap_or(0)
-                }
+                blockchain
+                    .token_balance(&token_id, &target_key_id)
+                    .unwrap_or(0)
             };
 
             debug!(
@@ -804,14 +731,9 @@ impl TokenHandler {
                 .identity_to_pubkey(address)
                 .map(|pk| pk.key_id)
                 .unwrap_or(target_key_id);
-            let cbe_balance: u128 = if let Some(store) = blockchain.get_store() {
-                // Phase 1B moved all CBE balances to token_balances.
-                let storage_token_id = lib_blockchain::storage::TokenId(cbe_token_id);
-                let addr = lib_blockchain::storage::Address::new(cbe_key_id);
-                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0)
-            } else {
-                0
-            };
+            let cbe_balance = blockchain
+                .token_balance(&cbe_token_id, &cbe_key_id)
+                .unwrap_or(0);
             if cbe_balance > 0 {
                 balances.push(json!({
                     "token_id": hex::encode(cbe_token_id),

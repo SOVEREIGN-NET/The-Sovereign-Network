@@ -484,8 +484,10 @@ impl Blockchain {
         };
 
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        if let Some(token) = self.token_contracts.get(&sov_token_id) {
-            Ok(token.balance_of(&treasury_key))
+        if self.get_token_contract(&sov_token_id).is_some() {
+            Ok(self
+                .token_balance(&sov_token_id, &treasury_key.key_id)
+                .unwrap_or(0))
         } else {
             tracing::debug!(
                 "SOV token contract not found, treasury balance query returning 0 during bootstrap"

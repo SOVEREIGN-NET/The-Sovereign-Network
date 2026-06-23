@@ -702,6 +702,35 @@ fn validator_exists_union_inmem_or_sled() {
     assert_eq!(got.stake, 200_000);
 }
 
+/// iter_token_contract_entries returns sled ids + metadata (#2637).
+#[test]
+fn iter_token_contract_entries_lists_sled_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("tok-entries")).unwrap());
+    let token_id = [0x44u8; 32];
+    let creator = crate::integration::crypto_integration::PublicKey::new([1u8; 2592]);
+    let contract = crate::contracts::TokenContract::new(
+        token_id,
+        "Test".to_string(),
+        "TST".to_string(),
+        18,
+        1_000_000,
+        false,
+        0,
+        creator,
+    );
+    store.begin_block(0).unwrap();
+    store.put_token_contract(&contract).unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let entries = bc.iter_token_contract_entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, token_id);
+    assert_eq!(entries[0].1.symbol, "TST");
+}
+
 /// Bootstrap install writes overlay + sled in one batch (#2639).
 #[test]
 fn install_bootstrap_validator_records_persists_to_sled() {

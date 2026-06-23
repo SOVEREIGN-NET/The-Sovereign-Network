@@ -114,24 +114,7 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_token_balance(&self, token_id: &[u8; 32], key_id: &[u8; 32]) -> u128 {
-        // Authoritative source: sled store
-        if let Some(store) = self.get_store() {
-            let storage_token_id = crate::storage::TokenId(*token_id);
-            let addr = crate::storage::Address::new(*key_id);
-            if let Ok(balance) = store.get_token_balance(&storage_token_id, &addr) {
-                return balance as u128;
-            }
-        }
-        // Fallback: in-memory token contract
-        if let Some(token) = self.token_contracts.get(token_id) {
-            let key = crate::integration::crypto_integration::PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: *key_id,
-            };
-            return token.balance_of(&key);
-        }
-        0
+        self.token_balance(token_id, key_id).unwrap_or(0)
     }
 
     fn query_token_contract(
