@@ -164,6 +164,11 @@ pub enum TxApplyError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Write path exists but is intentionally not wired in executor `apply_tx`.
+    /// Caller must use the blockchain-layer persistence path named in the error.
+    #[error("Not persisted via executor: {0}")]
+    NotPersisted(String),
 }
 
 impl From<StorageError> for TxApplyError {

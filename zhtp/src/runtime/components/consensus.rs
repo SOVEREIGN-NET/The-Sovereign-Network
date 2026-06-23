@@ -594,7 +594,7 @@ async fn prioritize_catchup_peers(
 
     let blockchain = blockchain_arc.read().await;
     let mut validator_peer_ids: HashSet<Vec<u8>> = HashSet::new();
-    for validator in blockchain.get_active_validators() {
+    for validator in blockchain.active_validators_for_consensus() {
         if let Some(did_hash) = did_hash_to_identity_id(&validator.identity_id) {
             validator_peer_ids.insert(did_hash.as_bytes().to_vec());
             if let Some(controlled_nodes) =
@@ -1308,8 +1308,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         drop(slot);
 
         let blockchain = blockchain_arc.read().await;
-        let validators = blockchain.get_active_validators();
-        Ok(validators.len())
+        Ok(blockchain.active_validators_for_consensus().len())
     }
 }
 
@@ -1776,7 +1775,7 @@ impl ConsensusComponent {
         };
 
         let bc = blockchain.read().await;
-        let active_validators = bc.get_active_validators();
+        let active_validators = bc.active_validators_for_consensus();
 
         if active_validators.is_empty() {
             debug!("No active validators found in blockchain registry");
@@ -1784,8 +1783,9 @@ impl ConsensusComponent {
         }
 
         let validator_adapters: Vec<BlockchainValidatorAdapter> = active_validators
-            .into_iter()
-            .map(|v| BlockchainValidatorAdapter(v.clone()))
+            .iter()
+            .cloned()
+            .map(BlockchainValidatorAdapter)
             .collect();
 
         let mut validator_manager = self.validator_manager.write().await;
@@ -1803,10 +1803,11 @@ impl ConsensusComponent {
         {
             let mut engine_guard = self.consensus_engine.write().await;
             if let Some(engine) = engine_guard.as_mut() {
-                let active_validators = bc.get_active_validators();
+                let active_validators = bc.active_validators_for_consensus();
                 let adapters_for_engine: Vec<BlockchainValidatorAdapter> = active_validators
-                    .into_iter()
-                    .map(|v| BlockchainValidatorAdapter(v.clone()))
+                    .iter()
+                    .cloned()
+                    .map(BlockchainValidatorAdapter)
                     .collect();
                 let _ = engine
                     .sync_validators_from_list(adapters_for_engine)
@@ -2190,10 +2191,7 @@ impl Component for ConsensusComponent {
 
             let initial = {
                 let bc = blockchain.read().await;
-                bc.get_active_validators()
-                    .into_iter()
-                    .map(|v| v.clone())
-                    .collect::<Vec<_>>()
+                bc.active_validators_for_consensus()
             };
 
             initial
@@ -2588,10 +2586,7 @@ impl Component for ConsensusComponent {
 
                     let active_validators: Vec<lib_blockchain::ValidatorInfo> = {
                         let bc = blockchain_arc.read().await;
-                        bc.get_active_validators()
-                            .into_iter()
-                            .map(|v| v.clone())
-                            .collect()
+                        bc.active_validators_for_consensus()
                     };
 
                     if active_validators.is_empty() {

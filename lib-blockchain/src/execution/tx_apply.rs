@@ -491,6 +491,35 @@ impl<'a> StateMutator<'a> {
         Ok(())
     }
 
+    /// **INERT — not on the live validator write path (#56).**
+    ///
+    /// Validator persistence is handled exclusively by the blockchain layer in
+    /// `Blockchain::finish_block_processing` via the metadata batch
+    /// (`persist_validator_records_for_block`). Executor `apply_tx` treats
+    /// validator transactions as `LegacySystem` no-ops by design.
+    ///
+    /// Calling this method is a programming error. It always returns
+    /// [`TxApplyError::NotPersisted`]; in debug builds it also `debug_assert`s.
+    pub fn register_validator(
+        &self,
+        _did_hash: &[u8; 32],
+        _record: &crate::storage::StoredValidatorRecord,
+    ) -> TxApplyResult<()> {
+        if cfg!(debug_assertions) && !cfg!(test) {
+            debug_assert!(
+                false,
+                "StateMutator::register_validator is inert; live path is \
+                 Blockchain::finish_block_processing metadata batch \
+                 (persist_validator_records_for_block)"
+            );
+        }
+        Err(TxApplyError::NotPersisted(
+            "validator persistence is blockchain-layer only \
+             (finish_block_processing metadata batch)"
+                .to_string(),
+        ))
+    }
+
     /// Update an existing identity's consensus state
     ///
     /// Replaces only the consensus state. Used for:
@@ -1446,5 +1475,48 @@ mod apply_native_transfer_tests {
         assert_eq!(outcome.total_value, 995);
         assert_eq!(outcome.fee, 5);
         assert_eq!(outcome.total_value + outcome.fee, 1_000);
+    }
+
+    /// #56: executor mutator must not silently look like the live validator write path.
+    #[test]
+    fn register_validator_mutator_is_explicitly_inert() {
+        use crate::storage::{StoredValidatorRecord, ValidatorConsensusRecord, ValidatorMetadata};
+
+        let store = fresh_store();
+        let mutator = StateMutator::new(store.as_ref());
+        let did_hash = [0x55u8; 32];
+        let record = StoredValidatorRecord {
+            consensus: ValidatorConsensusRecord {
+                identity_id: "did:zhtp:inert-test".to_string(),
+                consensus_key: [1u8; 2592],
+                stake: 1,
+                storage_provided: 1,
+                status: "active".to_string(),
+                oracle_key_id: None,
+            },
+            metadata: ValidatorMetadata {
+                networking_key: vec![],
+                rewards_key: vec![],
+                network_address: "x".to_string(),
+                commission_rate: 0,
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: "test".to_string(),
+                governance_proposal_id: None,
+            },
+        };
+        let err = mutator
+            .register_validator(&did_hash, &record)
+            .expect_err("must not succeed");
+        assert!(
+            matches!(err, TxApplyError::NotPersisted(_)),
+            "expected NotPersisted, got {err:?}"
+        );
+        assert!(
+            store.get_validator_record(&did_hash).unwrap().is_none(),
+            "inert mutator must not write sled"
+        );
     }
 }

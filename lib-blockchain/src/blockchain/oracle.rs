@@ -146,15 +146,7 @@ impl Blockchain {
             )
         })?;
 
-        let active_validator_key_ids: HashSet<[u8; 32]> = self
-            .validator_registry
-            .values()
-            .filter(|v| v.status == "active")
-            .map(|v| {
-                v.oracle_key_id
-                    .unwrap_or_else(|| crate::types::hash::blake3_hash(&v.consensus_key).as_array())
-            })
-            .collect();
+        let active_validator_key_ids: HashSet<[u8; 32]> = self.active_validator_key_ids();
 
         for member in &update_data.new_members {
             if !active_validator_key_ids.contains(member) {
@@ -430,19 +422,39 @@ impl Blockchain {
     ) -> u64 {
         use crate::types::hash::blake3_hash;
 
-        let validator = self.validator_registry.values_mut().find(|v| {
-            let kid = blake3_hash(&v.consensus_key).as_array();
-            kid == key_id
-        });
+        let identity_id = self
+            .active_validator_infos()
+            .into_iter()
+            .find(|v| {
+                let kid = blake3_hash(&v.consensus_key).as_array();
+                kid == key_id
+            })
+            .map(|v| v.identity_id);
 
-        let slash_amount = if let Some(v) = validator {
+        let mut slash_amount = 0u64;
+        if let Some(identity_id) = identity_id {
+            if !self.validator_registry.contains_key(&identity_id) {
+                if let Some(info) = self.validator_info_by_did(&identity_id) {
+                    self.validator_registry.insert(identity_id.clone(), info);
+                }
+            }
             let config = &self.oracle_slashing_config;
-            let amount = config.calculate_slash(v.stake);
-            v.stake = v.stake.saturating_sub(amount);
-            amount
-        } else {
-            0
-        };
+            let mut persisted: Option<ValidatorInfo> = None;
+            if let Some(v) = self.validator_registry.get_mut(&identity_id) {
+                slash_amount = config.calculate_slash(v.stake);
+                v.stake = v.stake.saturating_sub(slash_amount);
+                v.slash_count = v.slash_count.saturating_add(1);
+                persisted = Some(v.clone());
+            }
+            if let Some(info) = persisted {
+                if let Err(e) = self.persist_validator_record_direct(&info) {
+                    warn!(
+                        "slash_oracle_validator: failed to persist validator {} to sled: {}",
+                        identity_id, e
+                    );
+                }
+            }
+        }
 
         self.oracle_banned_validators.insert(key_id);
 

@@ -64,7 +64,7 @@ impl Blockchain {
         let Some(vd) = tx.validator_data() else {
             return Ok(());
         };
-        let Some(info) = self.validator_registry.get(&vd.identity_id) else {
+        let Some(info) = self.validator_info_by_did(&vd.identity_id) else {
             return Ok(());
         };
         store.stage::<ValidatorProjectionTable>(

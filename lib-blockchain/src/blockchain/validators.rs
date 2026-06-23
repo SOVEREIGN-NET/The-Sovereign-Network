@@ -1,5 +1,8 @@
 use super::*;
-use crate::storage::{StoredValidatorRecord, ValidatorConsensusRecord, ValidatorMetadata};
+use crate::block::Block;
+use crate::storage::{did_to_hash, BlockchainStore, StoredValidatorRecord, ValidatorConsensusRecord, ValidatorMetadata};
+use crate::transaction::ValidatorTransactionData;
+use tracing::{debug, warn};
 
 // =============================================================================
 // Validator storage boundary (#56)
@@ -62,11 +65,221 @@ impl From<&StoredValidatorRecord> for ValidatorInfo {
 }
 
 impl Blockchain {
+    /// Sled-first validator record read (#56 / #2639).
+    pub fn validator_record_by_did(&self, did: &str) -> Option<StoredValidatorRecord> {
+        let store = self.get_store()?;
+        let did_hash = did_to_hash(did);
+        store.get_validator_record(&did_hash).ok().flatten()
+    }
+
+    /// Union existence: in-memory shadow first (same-block / mempool), then sled (#56).
+    pub fn validator_exists(&self, did: &str) -> bool {
+        if self.validator_registry.contains_key(did) {
+            return true;
+        }
+        if let Some(store) = self.get_store() {
+            let did_hash = did_to_hash(did);
+            match store.get_validator_record(&did_hash) {
+                Ok(found) => return found.is_some(),
+                Err(e) => {
+                    warn!(
+                        did = %did,
+                        error = %e,
+                        "validator_exists: sled read failed; treating as not-in-sled"
+                    );
+                }
+            }
+        }
+        false
+    }
+
+    /// Authoritative validator info: in-memory overlay first, then sled (#56).
+    pub fn validator_info_by_did(&self, did: &str) -> Option<ValidatorInfo> {
+        if let Some(info) = self.validator_registry.get(did) {
+            return Some(info.clone());
+        }
+        self.validator_record_by_did(did)
+            .map(|rec| ValidatorInfo::from(&rec))
+    }
+
+    /// Authoritative active validator set for vote/propose/consensus sync (#56).
+    ///
+    /// Sled-first with in-memory overlay for same-block registrations. All
+    /// consensus-relevant active-set reads must use this (or a wrapper), not
+    /// [`get_active_validators`] which reads the in-memory shadow only.
+    pub fn active_validators_for_consensus(&self) -> Vec<ValidatorInfo> {
+        self.active_validator_infos()
+    }
+
+    /// Active validators, sled-first with in-memory overlay (#56).
+    pub fn active_validator_infos(&self) -> Vec<ValidatorInfo> {
+        let mut by_id: HashMap<String, ValidatorInfo> = HashMap::new();
+        if let Some(store) = self.get_store() {
+            match store.iter_validator_records() {
+                Ok(iter) => {
+                    for rec in iter {
+                        if rec.consensus.status == "active" {
+                            by_id.insert(
+                                rec.consensus.identity_id.clone(),
+                                ValidatorInfo::from(&rec),
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "active_validator_infos: sled iter failed; using in-memory shadow only"
+                    );
+                }
+            }
+        }
+        for (did, info) in &self.validator_registry {
+            if info.status == "active" {
+                by_id.insert(did.clone(), info.clone());
+            }
+        }
+        by_id.into_values().collect()
+    }
+
+    /// Active validator oracle key IDs for committee gating (#56).
+    pub fn active_validator_key_ids(&self) -> std::collections::HashSet<[u8; 32]> {
+        use crate::types::hash::blake3_hash;
+        self.active_validator_infos()
+            .into_iter()
+            .map(|v| {
+                v.oracle_key_id
+                    .unwrap_or_else(|| blake3_hash(&v.consensus_key).as_array())
+            })
+            .collect()
+    }
+
+    /// Whether `signer_pk` matches an active validator's consensus key (#56).
+    pub fn is_active_validator_consensus_signer(&self, signer_pk: &[u8]) -> bool {
+        self.active_validator_infos().iter().any(|v| {
+            v.status == "active" && v.consensus_key.as_slice() == signer_pk
+        })
+    }
+
+    /// Resolve a validator by blake3(consensus_key) for oracle attestation checks (#56).
+    pub fn validator_by_consensus_key_hash(
+        &self,
+        key_hash: [u8; 32],
+    ) -> Option<ValidatorInfo> {
+        use crate::types::hash::blake3_hash;
+        self.active_validator_infos()
+            .into_iter()
+            .find(|v| blake3_hash(&v.consensus_key).as_array() == key_hash)
+    }
+
+    fn build_validator_info_from_tx(
+        vd: &ValidatorTransactionData,
+        height: u64,
+        existing: Option<&ValidatorInfo>,
+    ) -> Option<ValidatorInfo> {
+        let consensus_key: [u8; 2592] = vd.consensus_key.as_slice().try_into().ok()?;
+        let status = match vd.operation {
+            crate::transaction::ValidatorOperation::Register => "active",
+            crate::transaction::ValidatorOperation::Update => "active",
+            crate::transaction::ValidatorOperation::Unregister => "inactive",
+        };
+        let (
+            registered_at,
+            blocks_validated,
+            slash_count,
+            oracle_key_id,
+            governance_proposal_id,
+            admission_source,
+        ) = if let Some(ex) = existing {
+            (
+                ex.registered_at,
+                ex.blocks_validated,
+                ex.slash_count,
+                ex.oracle_key_id,
+                ex.governance_proposal_id.clone(),
+                ex.admission_source.clone(),
+            )
+        } else {
+            (
+                height,
+                0,
+                0,
+                None,
+                None,
+                ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+            )
+        };
+        let registered_at = if vd.operation == crate::transaction::ValidatorOperation::Register {
+            height
+        } else {
+            registered_at
+        };
+        Some(ValidatorInfo {
+            identity_id: vd.identity_id.clone(),
+            stake: vd.stake,
+            storage_provided: vd.storage_provided,
+            consensus_key,
+            networking_key: vd.networking_key.clone(),
+            rewards_key: vd.rewards_key.clone(),
+            network_address: vd.network_address.clone(),
+            commission_rate: vd.commission_rate,
+            status: status.to_string(),
+            registered_at,
+            last_activity: height,
+            blocks_validated,
+            slash_count,
+            admission_source,
+            governance_proposal_id,
+            oracle_key_id,
+        })
+    }
+
+    pub(super) fn persist_validator_record(
+        &self,
+        store: &dyn BlockchainStore,
+        info: &ValidatorInfo,
+    ) -> Result<()> {
+        let did_hash = did_to_hash(&info.identity_id);
+        let record = StoredValidatorRecord::from(info);
+        store
+            .put_validator_record(&did_hash, &record)
+            .map_err(|e| anyhow::anyhow!("Failed to store validator {} in sled: {}", info.identity_id, e))?;
+        debug!("Persisted validator {} to sled storage", info.identity_id);
+        Ok(())
+    }
+
+    /// Write durable validator records for validator txs in `block` (requires open tx batch).
+    pub(super) fn persist_validator_records_for_block(
+        &self,
+        store: &dyn BlockchainStore,
+        block: &Block,
+    ) -> Result<()> {
+        for tx in &block.transactions {
+            let Some(vd) = tx.validator_data() else {
+                continue;
+            };
+            if let Some(info) = self.validator_registry.get(&vd.identity_id) {
+                self.persist_validator_record(store, info)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Durable write outside a block batch (oracle slash path).
+    pub(super) fn persist_validator_record_direct(&self, info: &ValidatorInfo) -> Result<()> {
+        let Some(ref store) = self.store else {
+            return Ok(());
+        };
+        let did_hash = did_to_hash(&info.identity_id);
+        let record = StoredValidatorRecord::from(info);
+        store
+            .put_validator_record_direct(&did_hash, &record)
+            .map_err(|e| anyhow::anyhow!("Failed to direct-persist validator {}: {}", info.identity_id, e))?;
+        Ok(())
+    }
+
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
-        if self
-            .validator_registry
-            .contains_key(&validator_info.identity_id)
-        {
+        if self.validator_exists(&validator_info.identity_id) {
             return Err(anyhow::anyhow!(
                 "Validator {} already exists on blockchain",
                 validator_info.identity_id
@@ -181,14 +394,12 @@ impl Blockchain {
         self.validator_registry.get(identity_id)
     }
 
-    pub fn validator_exists(&self, identity_id: &str) -> bool {
-        self.validator_registry.contains_key(identity_id)
-    }
-
     pub fn list_all_validators(&self) -> Vec<&ValidatorInfo> {
         self.validator_registry.values().collect()
     }
 
+    /// In-memory shadow only — **not** for vote/propose. Use
+    /// [`active_validators_for_consensus`] for consensus paths (#56).
     pub fn get_active_validators(&self) -> Vec<&ValidatorInfo> {
         self.validator_registry
             .values()
@@ -298,34 +509,33 @@ impl Blockchain {
     }
 
     pub fn get_active_validator_set_for_consensus(&self) -> Vec<(String, u64)> {
-        self.get_active_validators()
-            .iter()
-            .map(|v| (v.identity_id.clone(), v.stake))
+        self.active_validators_for_consensus()
+            .into_iter()
+            .map(|v| (v.identity_id, v.stake))
             .collect()
     }
 
     pub fn get_total_validator_stake(&self) -> u64 {
-        self.get_active_validators()
-            .iter()
+        self.active_validators_for_consensus()
+            .into_iter()
             .fold(0u64, |sum, v| sum.saturating_add(v.stake))
     }
 
     pub fn is_validator_active(&self, identity_id: &str) -> bool {
-        self.validator_registry
-            .get(identity_id)
+        self.validator_info_by_did(identity_id)
             .map(|validator| validator.status == "active" && validator.stake > 0)
             .unwrap_or(false)
     }
 
     pub fn sync_validator_set_to_consensus(&self) {
-        let active_validators = self.get_active_validators();
+        let active_validators = self.active_validators_for_consensus();
         info!(
             "Validator set sync: {} active validators with {} total stake",
             active_validators.len(),
             self.get_total_validator_stake()
         );
 
-        for validator in active_validators {
+        for validator in &active_validators {
             debug!(
                 "Validator in sync: {} (stake: {}, joined at height: {})",
                 validator.identity_id, validator.stake, validator.registered_at
@@ -333,44 +543,37 @@ impl Blockchain {
         }
     }
 
-    pub fn process_validator_registration_transactions(&mut self, block: &Block) {
+    pub fn process_validator_registration_transactions(&mut self, block: &Block) -> Result<()> {
         let height = block.height();
         for tx in &block.transactions {
-            if let Some(validator_data) = tx.validator_data() {
-                let status = match validator_data.operation {
-                    crate::transaction::ValidatorOperation::Register => "active",
-                    crate::transaction::ValidatorOperation::Update => "active",
-                    crate::transaction::ValidatorOperation::Unregister => "inactive",
-                };
-                let validator_info = ValidatorInfo {
-                    identity_id: validator_data.identity_id.clone(),
-                    stake: validator_data.stake,
-                    storage_provided: validator_data.storage_provided,
-                    consensus_key: validator_data.consensus_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                    networking_key: validator_data.networking_key.clone(),
-                    rewards_key: validator_data.rewards_key.clone(),
-                    network_address: validator_data.network_address.clone(),
-                    commission_rate: validator_data.commission_rate,
-                    status: status.to_string(),
-                    registered_at: height,
-                    last_activity: height,
-                    blocks_validated: 0,
-                    slash_count: 0,
-                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
-                    governance_proposal_id: None,
-                    oracle_key_id: None,
-                };
-                self.validator_registry
-                    .insert(validator_data.identity_id.clone(), validator_info);
+            let Some(validator_data) = tx.validator_data() else {
+                continue;
+            };
+            let existing = self.validator_registry.get(&validator_data.identity_id);
+            let Some(validator_info) =
+                Self::build_validator_info_from_tx(validator_data, height, existing)
+            else {
+                warn!(
+                    "Skipping validator {}: consensus_key must be 2592 bytes (Dilithium5)",
+                    validator_data.identity_id
+                );
+                continue;
+            };
+            self.validator_registry
+                .insert(validator_data.identity_id.clone(), validator_info.clone());
+            if validator_data.operation == crate::transaction::ValidatorOperation::Register {
                 self.validator_blocks
                     .insert(validator_data.identity_id.clone(), height);
-                info!(
-                    "Registered new validator {} with {} SOV stake",
-                    &validator_data.identity_id[..validator_data.identity_id.len().min(40)],
-                    validator_data.stake
-                );
             }
+            info!(
+                "Validator {} {:?} at height {} ({} SOV stake)",
+                validator_data.identity_id,
+                validator_data.operation,
+                height,
+                validator_data.stake
+            );
         }
+        Ok(())
     }
 
     pub fn process_validator_transactions(&mut self, block: &Block) -> Result<()> {
@@ -456,5 +659,92 @@ mod validator_boundary_tests {
             s.metadata.governance_proposal_id,
             info.governance_proposal_id
         );
+    }
+
+    /// Update txs must not reset slash_count / provenance fields — slashing-evasion vector (#56).
+    #[test]
+    fn validator_update_tx_preserves_slash_count_and_provenance_fields() {
+        use crate::block::{Block, BlockHeader};
+        use crate::integration::crypto_integration::{
+            PublicKey, Signature, SignatureAlgorithm,
+        };
+        use crate::transaction::{ValidatorOperation, ValidatorTransactionData};
+        use crate::types::hash::Hash;
+
+        let did = "did:zhtp:val-update".to_string();
+        let mut bc = Blockchain::default();
+        bc.validator_registry.insert(
+            did.clone(),
+            ValidatorInfo {
+                identity_id: did.clone(),
+                stake: 1_000_000,
+                storage_provided: 1 << 40,
+                consensus_key: [11u8; 2592],
+                networking_key: vec![1],
+                rewards_key: vec![2],
+                network_address: "host:1".to_string(),
+                commission_rate: 5,
+                status: "active".to_string(),
+                registered_at: 3,
+                last_activity: 3,
+                blocks_validated: 99,
+                slash_count: 4,
+                admission_source: "governance".to_string(),
+                governance_proposal_id: Some("prop-keep".to_string()),
+                oracle_key_id: Some([0xAB; 32]),
+            },
+        );
+
+        let vd = ValidatorTransactionData {
+            identity_id: did.clone(),
+            stake: 2_000_000,
+            storage_provided: 1 << 40,
+            consensus_key: [11u8; 2592].to_vec(),
+            networking_key: vec![1],
+            rewards_key: vec![2],
+            network_address: "host:2".to_string(),
+            commission_rate: 7,
+            operation: ValidatorOperation::Update,
+            timestamp: 10,
+        };
+        let tx = Transaction::new_validator_update(
+            vd,
+            vec![],
+            vec![],
+            0,
+            Signature {
+                signature: vec![],
+                public_key: PublicKey::new([11u8; 2592]),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 10,
+            },
+            vec![],
+        );
+        let header = BlockHeader {
+            version: 1,
+            previous_hash: [0u8; 32],
+            data_helix_root: [0u8; 32],
+            timestamp: 10,
+            height: 10,
+            verification_helix_root: [0u8; 32],
+            state_root: [0u8; 32],
+            bft_quorum_root: [0u8; 32],
+            block_hash: Hash::default(),
+        };
+        let block = Block::new(header, vec![tx]);
+        bc.process_validator_registration_transactions(&block)
+            .expect("apply update tx");
+
+        let got = bc.validator_registry.get(&did).expect("validator present");
+        assert_eq!(got.stake, 2_000_000, "tx stake applied");
+        assert_eq!(got.slash_count, 4, "slash_count must not reset on update");
+        assert_eq!(got.blocks_validated, 99, "blocks_validated preserved");
+        assert_eq!(got.oracle_key_id, Some([0xAB; 32]), "oracle_key_id preserved");
+        assert_eq!(
+            got.governance_proposal_id.as_deref(),
+            Some("prop-keep"),
+            "governance_proposal_id preserved"
+        );
+        assert_eq!(got.registered_at, 3, "registered_at preserved on update");
     }
 }

@@ -641,3 +641,63 @@ fn validator_records_persist_through_sled() {
     store.clear_validator_records().unwrap();
     assert_eq!(store.count_validator_records().unwrap(), 0);
 }
+
+/// #56: validator_exists is a union — in-memory overlay OR durable sled.
+#[test]
+fn validator_exists_union_inmem_or_sled() {
+    let mut bc = Blockchain::new_runtime_state();
+    let info = ValidatorInfo {
+        identity_id: "did:zhtp:val-inmem".to_string(),
+        stake: 100_000,
+        storage_provided: 1 << 40,
+        consensus_key: [1u8; 2592],
+        networking_key: vec![2],
+        rewards_key: vec![3],
+        network_address: "1.2.3.4:1".to_string(),
+        commission_rate: 0,
+        status: "active".to_string(),
+        registered_at: 1,
+        last_activity: 1,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    };
+    bc.validator_registry.insert(info.identity_id.clone(), info);
+    assert!(bc.validator_exists("did:zhtp:val-inmem"));
+    assert!(!bc.validator_exists("did:zhtp:ghost"));
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val-exists")).unwrap());
+    let did = "did:zhtp:val-sled";
+    let did_hash = crate::storage::did_to_hash(did);
+    let record = crate::storage::StoredValidatorRecord {
+        consensus: crate::storage::ValidatorConsensusRecord {
+            identity_id: did.to_string(),
+            consensus_key: [4u8; 2592],
+            stake: 200_000,
+            storage_provided: 1 << 40,
+            status: "active".to_string(),
+            oracle_key_id: None,
+        },
+        metadata: crate::storage::ValidatorMetadata {
+            networking_key: vec![],
+            rewards_key: vec![],
+            network_address: "host:1".to_string(),
+            commission_rate: 0,
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+        },
+    };
+    store.put_validator_record_direct(&did_hash, &record).unwrap();
+    let mut bc2 = Blockchain::new_runtime_state();
+    bc2.store = Some(store);
+    assert!(bc2.validator_exists(did), "sled-only validator found via union");
+    let got = bc2.validator_info_by_did(did).expect("sled read");
+    assert_eq!(got.stake, 200_000);
+}
