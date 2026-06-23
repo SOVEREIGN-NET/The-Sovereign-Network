@@ -25,6 +25,7 @@ impl Blockchain {
             dao_registry_index: HashMap::new(),
             validator_registry: HashMap::new(),
             validator_blocks: HashMap::new(),
+            active_validator_cache: validators::default_active_validator_cache(),
             gateway_registry: HashMap::new(),
             gateway_blocks: HashMap::new(),
             dao_treasury_wallet_id: None,
@@ -688,44 +689,15 @@ impl Blockchain {
                                 }
                             }
 
-                            if let Some(validator_data) = tx.validator_data() {
-                                let status = match validator_data.operation {
-                                    crate::transaction::ValidatorOperation::Register => "active",
-                                    crate::transaction::ValidatorOperation::Update => "active",
-                                    crate::transaction::ValidatorOperation::Unregister => {
-                                        "inactive"
-                                    }
-                                };
-                                let validator_info = ValidatorInfo {
-                                    identity_id: validator_data.identity_id.clone(),
-                                    stake: validator_data.stake,
-                                    storage_provided: validator_data.storage_provided,
-                                    consensus_key: validator_data
-                                        .consensus_key
-                                        .as_slice()
-                                        .try_into()
-                                        .unwrap_or([0u8; 2592]),
-                                    networking_key: validator_data.networking_key.clone(),
-                                    rewards_key: validator_data.rewards_key.clone(),
-                                    network_address: validator_data.network_address.clone(),
-                                    commission_rate: validator_data.commission_rate,
-                                    status: status.to_string(),
-                                    registered_at: height,
-                                    last_activity: height,
-                                    blocks_validated: 0,
-                                    slash_count: 0,
-                                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE
-                                        .to_string(),
-                                    governance_proposal_id: None,
-                                    oracle_key_id: None,
-                                };
-                                blockchain
-                                    .validator_registry
-                                    .insert(validator_data.identity_id.clone(), validator_info);
-                                blockchain
-                                    .validator_blocks
-                                    .insert(validator_data.identity_id.clone(), height);
-                            }
+                        }
+
+                        if let Err(e) =
+                            blockchain.process_validator_registration_transactions(&block)
+                        {
+                            warn!(
+                                "⚠️ Failed to replay validator transactions at height {}: {}",
+                                height, e
+                            );
                         }
 
                         // Replay CBE pool initialization from on-chain InitCbeToken transactions.
@@ -1036,6 +1008,10 @@ impl Blockchain {
                 ),
             }
         }
+
+        // #56: backfill durable validators tree on normal startup (not replay-only).
+        // Gated by schema version; regenerates from the loaded/replayed registry.
+        blockchain.migrate_validator_records_schema();
 
         Ok(Some(blockchain))
     }

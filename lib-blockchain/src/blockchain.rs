@@ -190,6 +190,9 @@ pub struct Blockchain {
     /// Validator registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
+    /// Cached sled-first active set; invalidated by generation token or overlay fingerprint.
+    #[serde(skip, default = "validators::default_active_validator_cache")]
+    pub(super) active_validator_cache: validators::ActiveValidatorCacheHandle,
     /// On-chain gateway registry (identity_id -> Gateway info)
     #[serde(default)]
     pub gateway_registry: HashMap<String, GatewayInfo>,
@@ -562,7 +565,7 @@ pub struct Blockchain {
 /// `consensus_key != rewards_key`, and `networking_key != rewards_key` at validator
 /// registration time. See [`register_validator`] in the blockchain layer and
 /// [`ValidatorManager::register_validator`] in the consensus layer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     /// Validator identity ID
     pub identity_id: String,
@@ -1107,7 +1110,9 @@ impl Blockchain {
                     // Update blockchain metadata
                     self.push_block_windowed(block.clone());
                     self.height += 1;
-                    self.process_validator_registration_transactions(&block);
+                    if let Err(e) = self.process_validator_registration_transactions(&block) {
+                        warn!("process_validator_registration_transactions in executor path: {}", e);
+                    }
                     self.process_gateway_transactions(&block);
                     // Rebuild wallet_registry and in-memory SOV balances from WalletRegistration
                     // transactions in this block. The BlockExecutor handles SledStore state but
@@ -1126,52 +1131,6 @@ impl Blockchain {
                     self.process_nft_transactions(&block);
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
-                        // Executor returns LegacySystem for ValidatorRegistration — update registry here
-                        if tx.transaction_type == TransactionType::ValidatorRegistration {
-                            if let Some(vd) = tx.validator_data() {
-                                let status = match vd.operation {
-                                    crate::transaction::ValidatorOperation::Register => "active",
-                                    crate::transaction::ValidatorOperation::Update => "active",
-                                    crate::transaction::ValidatorOperation::Unregister => {
-                                        "inactive"
-                                    }
-                                };
-                                // Convert consensus_key from Vec<u8> to [u8; 2592]
-                                let consensus_key: [u8; 2592] = match vd.consensus_key.as_slice().try_into() {
-                                    Ok(k) => k,
-                                    Err(_) => {
-                                        warn!("Skipping validator {}: consensus_key must be 2592 bytes (Dilithium5)", vd.identity_id);
-                                        continue;
-                                    }
-                                };
-                                let vi = ValidatorInfo {
-                                    identity_id: vd.identity_id.clone(),
-                                    stake: vd.stake,
-                                    storage_provided: vd.storage_provided,
-                                    consensus_key,
-                                    networking_key: vd.networking_key.clone(),
-                                    rewards_key: vd.rewards_key.clone(),
-                                    network_address: vd.network_address.clone(),
-                                    commission_rate: vd.commission_rate,
-                                    status: status.to_string(),
-                                    registered_at: block.header.height,
-                                    last_activity: block.header.height,
-                                    blocks_validated: 0,
-                                    slash_count: 0,
-                                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE
-                                        .to_string(),
-                                    governance_proposal_id: None,
-                                    oracle_key_id: None,
-                                };
-                                self.validator_registry.insert(vd.identity_id.clone(), vi);
-                                self.validator_blocks
-                                    .insert(vd.identity_id.clone(), block.header.height);
-                                info!(
-                                    "Validator {} {:?} at height {}",
-                                    vd.identity_id, vd.operation, block.header.height
-                                );
-                            }
-                        }
                     }
                     self.adjust_difficulty()?;
 
@@ -1271,7 +1230,12 @@ impl Blockchain {
         self.process_nft_transactions(&block);
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
-        self.process_validator_registration_transactions(&block);
+        if let Err(e) = self.process_validator_registration_transactions(&block) {
+            return Err(e);
+        }
+        if let Some(ref store) = self.store {
+            self.persist_validator_records_for_block(store.as_ref(), &block)?;
+        }
         self.process_gateway_transactions(&block);
         for tx in &block.transactions {
             self.index_dao_registry_entry_from_tx(tx, block.header.height);
@@ -1417,6 +1381,14 @@ impl Blockchain {
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
         self.process_credential_transactions(&block);
+        // #56: validator sled writes use the metadata batch (executor path) or the
+        // legacy begin_block window — same atomicity class as identity metadata.
+        // A crash between executor commit_block and commit_metadata_write can leave
+        // validators tree briefly behind height; migrate_validator_records_schema on
+        // load_from_store / replay_from_store repairs that gap from blocks.
+        if let Some(ref store) = self.store {
+            self.persist_validator_records_for_block(store.as_ref(), &block)?;
+        }
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {
@@ -4815,6 +4787,7 @@ impl Blockchain {
                             self.wallet_registry = self
                                 .convert_wallet_references_to_full_data(&import.wallet_references);
                             self.validator_registry = import.validator_registry;
+                            self.invalidate_active_validator_cache();
                             self.token_contracts = import.token_contracts;
                             self.web4_contracts = import.web4_contracts;
                             self.contract_blocks = import.contract_blocks;
@@ -4838,6 +4811,7 @@ impl Blockchain {
                     self.wallet_registry =
                         self.convert_wallet_references_to_full_data(&import.wallet_references);
                     self.validator_registry = import.validator_registry;
+                    self.invalidate_active_validator_cache();
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
                     self.contract_blocks = import.contract_blocks;
@@ -5320,6 +5294,7 @@ impl Blockchain {
         self.wallet_registry =
             self.convert_wallet_references_to_full_data(&import.wallet_references);
         self.validator_registry = import.validator_registry.clone();
+        self.invalidate_active_validator_cache();
         self.utxo_set = import.utxo_set.clone();
         self.token_contracts = import.token_contracts.clone();
         self.web4_contracts = import.web4_contracts.clone();

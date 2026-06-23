@@ -573,3 +573,263 @@ fn did_by_device_key_id_reads_sled_metadata() {
         "direct DID-suffix match resolves via identity_exists"
     );
 }
+
+// ---- #56 durable validator record sled persistence ----
+
+/// Durable validator records persist + read back through the sled trait surface:
+/// direct write (migration path), point get, iterator, count, and schema version.
+/// A brand-new store reports schema version 0 (no durable validators yet), and
+/// the iterator validates each record's identity_id hashes to its tree key (#56).
+#[test]
+fn validator_records_persist_through_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SledStore::open(&temp.path().join("validators")).unwrap();
+
+    // Brand-new store: no durable validators, schema version 0.
+    assert_eq!(store.validator_record_schema_version().unwrap(), 0);
+    assert_eq!(store.count_validator_records().unwrap(), 0);
+
+    let did = "did:zhtp:val-A";
+    let did_hash = crate::storage::did_to_hash(did);
+    let record = crate::storage::StoredValidatorRecord {
+        consensus: crate::storage::ValidatorConsensusRecord {
+            identity_id: did.to_string(),
+            consensus_key: [3u8; 2592],
+            stake: 5_000,
+            storage_provided: 1 << 40,
+            status: "active".to_string(),
+            oracle_key_id: None,
+        },
+        metadata: crate::storage::ValidatorMetadata {
+            networking_key: vec![9, 9],
+            rewards_key: vec![8, 8],
+            network_address: "10.0.0.1:7000".to_string(),
+            commission_rate: 3,
+            registered_at: 12,
+            last_activity: 34,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "onchain_governance".to_string(),
+            governance_proposal_id: None,
+        },
+    };
+
+    // Direct write (migration path) + point read round-trips byte-for-byte.
+    store
+        .put_validator_record_direct(&did_hash, &record)
+        .unwrap();
+    let got = store
+        .get_validator_record(&did_hash)
+        .unwrap()
+        .expect("record present");
+    assert_eq!(got, record);
+    assert_eq!(store.count_validator_records().unwrap(), 1);
+
+    // Iterator surfaces it (and would error if id didn't hash to the key).
+    let all: Vec<_> = store.iter_validator_records().unwrap().collect();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].consensus.identity_id, did);
+
+    // Schema version round-trips.
+    store.set_validator_record_schema_version(1).unwrap();
+    assert_eq!(store.validator_record_schema_version().unwrap(), 1);
+
+    // Unknown key -> None.
+    assert!(store.get_validator_record(&[0u8; 32]).unwrap().is_none());
+
+    // Clear empties the tree.
+    store.clear_validator_records().unwrap();
+    assert_eq!(store.count_validator_records().unwrap(), 0);
+}
+
+/// #56: validator_exists is a union — in-memory overlay OR durable sled.
+#[test]
+fn validator_exists_union_inmem_or_sled() {
+    let mut bc = Blockchain::new_runtime_state();
+    let info = ValidatorInfo {
+        identity_id: "did:zhtp:val-inmem".to_string(),
+        stake: 100_000,
+        storage_provided: 1 << 40,
+        consensus_key: [1u8; 2592],
+        networking_key: vec![2],
+        rewards_key: vec![3],
+        network_address: "1.2.3.4:1".to_string(),
+        commission_rate: 0,
+        status: "active".to_string(),
+        registered_at: 1,
+        last_activity: 1,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    };
+    bc.validator_registry.insert(info.identity_id.clone(), info);
+    assert!(bc.validator_exists("did:zhtp:val-inmem"));
+    assert!(!bc.validator_exists("did:zhtp:ghost"));
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val-exists")).unwrap());
+    let did = "did:zhtp:val-sled";
+    let did_hash = crate::storage::did_to_hash(did);
+    let record = crate::storage::StoredValidatorRecord {
+        consensus: crate::storage::ValidatorConsensusRecord {
+            identity_id: did.to_string(),
+            consensus_key: [4u8; 2592],
+            stake: 200_000,
+            storage_provided: 1 << 40,
+            status: "active".to_string(),
+            oracle_key_id: None,
+        },
+        metadata: crate::storage::ValidatorMetadata {
+            networking_key: vec![],
+            rewards_key: vec![],
+            network_address: "host:1".to_string(),
+            commission_rate: 0,
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+        },
+    };
+    store.put_validator_record_direct(&did_hash, &record).unwrap();
+    let mut bc2 = Blockchain::new_runtime_state();
+    bc2.store = Some(store);
+    assert!(bc2.validator_exists(did), "sled-only validator found via union");
+    let got = bc2.validator_info_by_did(did).expect("sled read");
+    assert_eq!(got.stake, 200_000);
+}
+
+/// Repeated reads hit the generation/fingerprint cache; sled-only writes invalidate gen (#56).
+#[test]
+fn active_validator_infos_cache_invalidates_on_sled_write() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val-cache")).unwrap());
+    let did = "did:zhtp:val-cache";
+    let did_hash = crate::storage::did_to_hash(did);
+    store
+        .put_validator_record_direct(
+            &did_hash,
+            &crate::storage::StoredValidatorRecord {
+                consensus: crate::storage::ValidatorConsensusRecord {
+                    identity_id: did.to_string(),
+                    consensus_key: [6u8; 2592],
+                    stake: 100_000,
+                    storage_provided: 1 << 40,
+                    status: "active".to_string(),
+                    oracle_key_id: None,
+                },
+                metadata: crate::storage::ValidatorMetadata {
+                    networking_key: vec![],
+                    rewards_key: vec![],
+                    network_address: "h:1".to_string(),
+                    commission_rate: 0,
+                    registered_at: 1,
+                    last_activity: 1,
+                    blocks_validated: 0,
+                    slash_count: 0,
+                    admission_source: "test".to_string(),
+                    governance_proposal_id: None,
+                },
+            },
+        )
+        .unwrap();
+
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store.clone());
+    assert_eq!(bc.active_validator_infos().len(), 1);
+
+    bc.persist_validator_record_direct(&ValidatorInfo {
+        identity_id: "did:zhtp:val-cache-2".to_string(),
+        stake: 200_000,
+        storage_provided: 1 << 40,
+        consensus_key: [7u8; 2592],
+        networking_key: vec![],
+        rewards_key: vec![],
+        network_address: "h:2".to_string(),
+        commission_rate: 0,
+        status: "active".to_string(),
+        registered_at: 1,
+        last_activity: 1,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    })
+    .unwrap();
+
+    assert_eq!(bc.active_validator_infos().len(), 2);
+}
+
+/// In-memory non-active overlay must evict a sled-active record before persist (#56).
+#[test]
+fn active_validator_infos_inmem_unregister_evicts_sled_active() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val-overlay")).unwrap());
+    let did = "did:zhtp:val-deact";
+    let did_hash = crate::storage::did_to_hash(did);
+    store
+        .put_validator_record_direct(
+            &did_hash,
+            &crate::storage::StoredValidatorRecord {
+                consensus: crate::storage::ValidatorConsensusRecord {
+                    identity_id: did.to_string(),
+                    consensus_key: [5u8; 2592],
+                    stake: 100_000,
+                    storage_provided: 1 << 40,
+                    status: "active".to_string(),
+                    oracle_key_id: None,
+                },
+                metadata: crate::storage::ValidatorMetadata {
+                    networking_key: vec![],
+                    rewards_key: vec![],
+                    network_address: "h:1".to_string(),
+                    commission_rate: 0,
+                    registered_at: 1,
+                    last_activity: 1,
+                    blocks_validated: 0,
+                    slash_count: 0,
+                    admission_source: "test".to_string(),
+                    governance_proposal_id: None,
+                },
+            },
+        )
+        .unwrap();
+
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    bc.validator_registry.insert(
+        did.to_string(),
+        ValidatorInfo {
+            identity_id: did.to_string(),
+            stake: 100_000,
+            storage_provided: 1 << 40,
+            consensus_key: [5u8; 2592],
+            networking_key: vec![],
+            rewards_key: vec![],
+            network_address: "h:1".to_string(),
+            commission_rate: 0,
+            status: "inactive".to_string(),
+            registered_at: 1,
+            last_activity: 2,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        },
+    );
+
+    let active: Vec<_> = bc
+        .active_validator_infos()
+        .into_iter()
+        .map(|v| v.identity_id)
+        .collect();
+    assert!(
+        !active.contains(&did.to_string()),
+        "inactive in-mem overlay must not leave sled-active in consensus set"
+    );
+}

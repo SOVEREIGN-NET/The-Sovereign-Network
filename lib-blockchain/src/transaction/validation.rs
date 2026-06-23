@@ -1816,10 +1816,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // This is a stateful rule (depends on validator_registry).
                 let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
                 let signer_pk = transaction.signature.public_key.as_bytes();
-                let is_active_validator = blockchain
-                    .validator_registry
-                    .values()
-                    .any(|v| v.status == "active" && v.consensus_key.as_slice() == signer_pk.as_slice());
+                let is_active_validator =
+                    blockchain.is_active_validator_consensus_signer(signer_pk.as_slice());
                 if !is_active_validator {
                     return Err(ValidationError::InvalidTransaction);
                 }
@@ -3236,16 +3234,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                 data.validate(current_epoch)
                     .map_err(|_| ValidationError::InvalidTransaction)?;
 
-                let active_validator_key_ids: std::collections::HashSet<[u8; 32]> = blockchain
-                    .validator_registry
-                    .values()
-                    .filter(|v| v.status == "active")
-                    .map(|v| {
-                        v.oracle_key_id.unwrap_or_else(|| {
-                            crate::types::hash::blake3_hash(&v.consensus_key).as_array()
-                        })
-                    })
-                    .collect();
+                let active_validator_key_ids = blockchain.active_validator_key_ids();
 
                 if data
                     .new_members
@@ -3376,9 +3365,7 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // Resolve the validator's signing public key
         let validator_key = blockchain
-            .validator_registry
-            .values()
-            .find(|v| lib_crypto::hash_blake3(&v.consensus_key) == data.validator_pubkey)
+            .validator_by_consensus_key_hash(data.validator_pubkey)
             .ok_or(ValidationError::InvalidTransaction)?;
 
         // Verify the signature

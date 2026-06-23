@@ -44,6 +44,7 @@ const TREE_CONTRACT_STORAGE: &str = "contract_storage"; // Contract key-value st
 const TREE_IDENTITIES: &str = "identities"; // Consensus state (participates in state hash)
 const TREE_IDENTITY_METADATA: &str = "identity_meta"; // Non-consensus (for DID resolution)
 const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_hash
+const TREE_VALIDATORS: &str = "validators"; // #56: did_hash → StoredValidatorRecord (consensus+metadata split)
 const TREE_BONDING_CURVES: &str = "bonding_curves"; // Bonding curve tokens
 const TREE_BONDING_CURVE_SYMBOLS: &str = "bonding_curve_symbols"; // Index: symbol → token_id
 const TREE_CBE_ACCOUNTS: &str = "cbe_accounts"; // Canonical CBE account states (#1926)
@@ -98,6 +99,7 @@ pub struct SledStore {
     identities: Tree,            // Consensus: did_hash → IdentityConsensus
     identity_metadata: Tree,     // Non-consensus: did_hash → IdentityMetadata
     identity_by_owner: Tree,     // Index: owner_addr → did_hash
+    validators: Tree,            // #56: did_hash → StoredValidatorRecord (consensus+metadata split)
     bonding_curves: Tree,        // Bonding curve tokens: token_id → BondingCurveToken
     bonding_curve_symbols: Tree, // Index: symbol → token_id
     cbe_accounts: Tree,          // Canonical CBE account states: key_id → BondingCurveAccountState
@@ -339,6 +341,9 @@ impl SledStore {
         let identity_by_owner = db
             .open_tree(TREE_IDENTITY_BY_OWNER)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let validators = db
+            .open_tree(TREE_VALIDATORS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let bonding_curves = db
             .open_tree(TREE_BONDING_CURVES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -443,6 +448,7 @@ impl SledStore {
             contract_storage,
             identities,
             identity_metadata,
+            validators,
             identity_by_owner,
             bonding_curves,
             bonding_curve_symbols,
@@ -851,6 +857,7 @@ impl SledStore {
             TREE_IDENTITIES => &self.identities,
             TREE_IDENTITY_METADATA => &self.identity_metadata,
             TREE_IDENTITY_BY_OWNER => &self.identity_by_owner,
+            TREE_VALIDATORS => &self.validators,
             TREE_BONDING_CURVES => &self.bonding_curves,
             TREE_BONDING_CURVE_SYMBOLS => &self.bonding_curve_symbols,
             TREE_CBE_ACCOUNTS => &self.cbe_accounts,
@@ -2272,6 +2279,149 @@ impl BlockchainStore for SledStore {
             .clear()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    // ---- Durable validator records (#56), keyed by did_to_hash(identity_id) ----
+
+    fn get_validator_record(
+        &self,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<Option<crate::storage::StoredValidatorRecord>> {
+        match self.validators.get(did_hash) {
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn iter_validator_records(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = crate::storage::StoredValidatorRecord> + '_>> {
+        // Materialize in one pass so a deserialize error surfaces here (mirrors
+        // iter_identity_metadata). Each record's identity_id must hash back to its
+        // tree key, so a corrupted/mismatched value cannot feed a wrong validator.
+        let mut results = Vec::new();
+        for entry in self.validators.iter() {
+            match entry {
+                Ok((key, value)) => {
+                    let record: crate::storage::StoredValidatorRecord =
+                        Self::deserialize(&value)?;
+                    if crate::storage::did_to_hash(&record.consensus.identity_id).as_ref()
+                        != key.as_ref()
+                    {
+                        return Err(StorageError::CorruptedData(format!(
+                            "validator record id {} does not hash to its tree key {}",
+                            record.consensus.identity_id,
+                            hex::encode(key.as_ref())
+                        )));
+                    }
+                    results.push(record);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(Box::new(results.into_iter()))
+    }
+
+    fn put_validator_record(
+        &self,
+        did_hash: &[u8; 32],
+        record: &crate::storage::StoredValidatorRecord,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let value = Self::serialize(record)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_VALIDATORS).insert(did_hash.as_ref(), value);
+        }
+        Ok(())
+    }
+
+    fn delete_validator_record(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+        self.require_transaction()?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_VALIDATORS).remove(did_hash.as_ref());
+        }
+        Ok(())
+    }
+
+    fn count_validator_records(&self) -> StorageResult<usize> {
+        Ok(self.validators.len())
+    }
+
+    fn put_validator_record_direct(
+        &self,
+        did_hash: &[u8; 32],
+        record: &crate::storage::StoredValidatorRecord,
+    ) -> StorageResult<()> {
+        let value = Self::serialize(record)?;
+        self.validators
+            .insert(did_hash.as_ref(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.validators
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Bulk insert + single flush (#56 — used by the regenerate-from-blocks
+    /// migration to amortise fsync cost, mirroring put_identity_metadata_batch).
+    fn put_validator_record_batch(
+        &self,
+        records: &[([u8; 32], crate::storage::StoredValidatorRecord)],
+    ) -> StorageResult<usize> {
+        let mut written = 0usize;
+        for (did_hash, record) in records {
+            let value = Self::serialize(record)?;
+            self.validators
+                .insert(did_hash.as_ref(), value)
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            written += 1;
+        }
+        self.validators
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(written)
+    }
+
+    fn validator_record_schema_version(&self) -> StorageResult<u32> {
+        // Absent key => version 0 (no durable validators yet → migrate to v1).
+        match self.meta.get(keys::meta::VALIDATOR_RECORD_SCHEMA_VERSION) {
+            Ok(Some(bytes)) => {
+                let arr: [u8; 4] = bytes.as_ref().try_into().map_err(|_| {
+                    StorageError::Database(
+                        "validator_record_schema_version: malformed u32".to_string(),
+                    )
+                })?;
+                Ok(u32::from_be_bytes(arr))
+            }
+            Ok(None) => Ok(0),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn set_validator_record_schema_version(&self, version: u32) -> StorageResult<()> {
+        self.meta
+            .insert(
+                keys::meta::VALIDATOR_RECORD_SCHEMA_VERSION,
+                &version.to_be_bytes(),
+            )
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.meta
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn clear_validator_records(&self) -> StorageResult<()> {
+        self.validators
+            .clear()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.validators
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())

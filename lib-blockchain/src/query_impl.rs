@@ -71,12 +71,22 @@ impl BlockchainQuery for Blockchain {
         self.wallet_registry.len()
     }
 
-    fn query_validator_count(&self) -> usize {
-        self.validator_registry.len()
+    fn query_validator(&self, did: &str) -> Option<&ValidatorInfo> {
+        // #56: sled-first path returns owned data; query surface still serves
+        // in-memory refs when present (same-block overlay).
+        self.validator_registry.get(did)
     }
 
-    fn query_validator(&self, did: &str) -> Option<&ValidatorInfo> {
-        self.validator_registry.get(did)
+    fn query_validator_count(&self) -> usize {
+        if let Some(store) = self.get_store() {
+            match store.count_validator_records() {
+                Ok(n) => return n,
+                Err(e) => {
+                    tracing::warn!(error = %e, "query_validator_count: sled count failed; using in-memory shadow");
+                }
+            }
+        }
+        self.validator_registry.len()
     }
 
     fn query_is_council_member(&self, did: &str) -> bool {

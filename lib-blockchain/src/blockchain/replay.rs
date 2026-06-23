@@ -39,7 +39,7 @@ impl Blockchain {
         self.process_employment_contract_transactions(block)?;
         self.process_domain_transactions(block);
         self.process_credential_transactions(block);
-        self.process_validator_registration_transactions(block);
+        self.process_validator_registration_transactions(block)?;
         self.process_gateway_transactions(block);
         self.process_contract_transactions(block)?;
         // Boot replay: tolerate non-integrity TokenTransfer errors (approximate
@@ -167,6 +167,7 @@ impl Blockchain {
         // (#58: adds kyber_public_key). Regenerates from the just-replayed
         // in-memory registry; gated so it only runs once per upgrade.
         bc.migrate_identity_metadata_schema();
+        bc.migrate_validator_records_schema();
 
         Ok(Some(bc))
     }
@@ -257,6 +258,80 @@ impl Blockchain {
         }
 
         info!("identity_metadata schema migration complete: {written} records at v{current}");
+    }
+
+    /// Version-gated regeneration of the sled `validators` tree (#56).
+    ///
+    /// Fully derivable from replayed blocks — never decodes legacy blobs.
+    /// Called from `replay_from_store` and `load_from_store` so existing chains
+    /// backfill the durable validators tree on normal startup, not replay-only.
+    pub(crate) fn migrate_validator_records_schema(&self) {
+        let Some(ref store) = self.store else {
+            return;
+        };
+        let current = crate::storage::VALIDATOR_RECORD_SCHEMA_VERSION;
+        let persisted = match store.validator_record_schema_version() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("validator_records schema migration: version read failed: {e} — skipping");
+                return;
+            }
+        };
+        if persisted >= current {
+            return;
+        }
+
+        info!(
+            "Migrating validator_records schema v{} -> v{}: regenerating {} records from blocks",
+            persisted,
+            current,
+            self.validator_registry.len()
+        );
+
+        if let Err(e) = store.clear_validator_records() {
+            warn!(
+                "validator_records schema migration: clear failed: {e} — aborting (version unchanged)"
+            );
+            return;
+        }
+
+        let records: Vec<([u8; 32], crate::storage::StoredValidatorRecord)> = self
+            .validator_registry
+            .iter()
+            .map(|(did, info)| {
+                let did_hash = crate::storage::did_to_hash(did);
+                (did_hash, crate::storage::StoredValidatorRecord::from(info))
+            })
+            .collect();
+        let expected = records.len();
+
+        let written = match store.put_validator_record_batch(&records) {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(
+                    "validator_records schema migration: bulk write failed after clear: {e} \
+                     — version NOT bumped, next boot will retry"
+                );
+                return;
+            }
+        };
+        if written != expected {
+            warn!(
+                "validator_records schema migration: only {written}/{expected} records written \
+                 — version NOT bumped, next boot will retry"
+            );
+            return;
+        }
+
+        if let Err(e) = store.set_validator_record_schema_version(current) {
+            warn!(
+                "validator_records schema migration: version bump failed: {e} — will retry next boot"
+            );
+            return;
+        }
+
+        self.invalidate_active_validator_cache();
+        info!("validator_records schema migration complete: {written} records at v{current}");
     }
 
     /// Ensure every in-memory genesis identity is also present in the sled
