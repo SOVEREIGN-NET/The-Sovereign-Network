@@ -2580,6 +2580,46 @@ impl ConsensusEngine {
     pub(super) async fn on_round_timeout(&mut self) -> ConsensusResult<()> {
         use lib_consensus_core::fsm::{transition, Event};
 
+        // BFT-FF-2026-06-18: Fast-forward the FSM when the local blockchain has
+        // advanced past our consensus height via observer-sync (or any external
+        // commit path that bypassed `process_committed_block`). Without this,
+        // a validator that restarts and catches up via observer-sync ends up
+        // with `engine.current_height < blockchain.height`, spinning rounds
+        // proposing at already-committed heights — every proposal it makes is
+        // rejected by peers as a fork. This was the Jun-17/18 g1 wedge.
+        //
+        // CONS-512 safety: that bug was advancing the engine via
+        // `sync_height_with_blockchain` when `blockchain.height == engine.height`
+        // AND engine was mid-vote in Commit step (engine was finishing N when
+        // storage already reflected N, and the sync incorrectly bumped it to N+1).
+        //
+        // Our guard: only fast-forward when blockchain has STRICTLY moved past
+        // (or AT) our height AND we are not currently in Commit step. The
+        // step != Commit check preserves CONS-512's invariant that storage is
+        // never the source of truth during a live commit at our own height.
+        if !matches!(self.current_round.step, ConsensusStep::Commit) {
+            if let Some(ref provider) = self.blockchain_provider {
+                if let Ok(blockchain_height) = provider.get_blockchain_height().await {
+                    if blockchain_height >= self.current_round.height {
+                        tracing::warn!(
+                            "🔧 FSM fast-forward: blockchain h={} >= engine h={} step={:?} round={} — chain advanced via external commit, resyncing",
+                            blockchain_height,
+                            self.current_round.height,
+                            self.current_round.step,
+                            self.current_round.round,
+                        );
+                        // Delegate to the existing height-sync helper. It
+                        // already runs the BFT-J-1015 monotonic-height
+                        // invariant check and clears lock/proposal state on a
+                        // height crossing. New caller per CONS-512 docs is
+                        // justified above.
+                        self.sync_height_with_blockchain().await?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
         let height = self.current_round.height;
         let round = self.current_round.round;
         let step = self.current_round.step.clone();

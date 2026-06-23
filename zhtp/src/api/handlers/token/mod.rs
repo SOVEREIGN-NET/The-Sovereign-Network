@@ -725,13 +725,29 @@ impl TokenHandler {
         // Collect balances from all token contracts
         for (token_id, token) in blockchain.query_all_token_contracts() {
             let balance = if *token_id == native_token_id {
+                // Mirror handle_get_balance (singular): when BlockExecutor is
+                // active it writes SOV debits/credits to the sled
+                // `token_balances` tree, and the post-apply sync to the
+                // in-memory `token_contracts` HashMap can lag (or miss
+                // entries when the original was inserted under a non-synthetic
+                // PublicKey). Reading sled first guarantees the mobile wallet
+                // sees the post-debit balance immediately after a domain
+                // registration fee_payment_tx commits.
                 if let Some(wallet_id) = sov_wallet_id {
-                    let wallet_key = PublicKey {
-                        dilithium_pk: [0u8; 2592],
-                        kyber_pk: [0u8; 1568],
-                        key_id: wallet_id,
-                    };
-                    token.balance_of(&wallet_key)
+                    if let Some(store) = blockchain.get_store() {
+                        let storage_token_id = lib_blockchain::storage::TokenId(*token_id);
+                        let addr = lib_blockchain::storage::Address::new(wallet_id);
+                        store
+                            .get_token_balance(&storage_token_id, &addr)
+                            .unwrap_or(0)
+                    } else {
+                        let wallet_key = PublicKey {
+                            dilithium_pk: [0u8; 2592],
+                            kyber_pk: [0u8; 1568],
+                            key_id: wallet_id,
+                        };
+                        token.balance_of(&wallet_key)
+                    }
                 } else {
                     0
                 }

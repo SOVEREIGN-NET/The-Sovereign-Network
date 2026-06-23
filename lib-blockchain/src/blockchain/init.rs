@@ -744,6 +744,28 @@ impl Blockchain {
                             );
                         }
 
+                        // Replay credential registration/update so credential_registry
+                        // and did_to_username are populated. Without these the OPAQUE
+                        // login handler returns 401 for every user, and the profile
+                        // handler reports no username for every DID, because both
+                        // in-memory maps are empty after this fallback-replay path
+                        // runs (the fast hydrate in `hydrate_hot_state_from_projections`
+                        // would have populated them, but every node in the cluster has
+                        // been falling through to here — credentials=0 on all 7 nodes).
+                        // Same call already made by `replay_block_state` in replay.rs.
+                        blockchain.process_credential_transactions(&block);
+
+                        // Replay NFT registration so nft_registry is populated.
+                        blockchain.process_nft_transactions(&block);
+
+                        // Replay entity-registry transactions so the registry index is populated.
+                        if let Err(e) = blockchain.process_entity_registry_transactions(&block) {
+                            warn!(
+                                "⚠️ Failed to replay entity registry tx at height {}: {}",
+                                height, e
+                            );
+                        }
+
                         // During sled-store replay we skip SOV token transaction processing
                         // entirely.  The correct final SOV balances are loaded from the
                         // token_balances sled tree after this loop.

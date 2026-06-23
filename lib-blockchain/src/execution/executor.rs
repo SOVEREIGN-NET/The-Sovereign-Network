@@ -769,6 +769,15 @@ impl BlockExecutor {
         for (rel_index, tx) in block.transactions[non_coinbase_start..].iter().enumerate() {
             let index = rel_index + non_coinbase_start;
 
+            let _tx_hash_hex = hex::encode(tx.hash().as_bytes());
+            tracing::info!(
+                tx_hash = %&_tx_hash_hex[..16],
+                tx_type = ?tx.transaction_type,
+                index = index,
+                height = block_height,
+                "[fee-debug] executor entering per-tx loop"
+            );
+
             // Resource accounting: accumulate tx resources BEFORE application
             // Block is rejected if any limit exceeded
             let (payload_bytes, witness_bytes, verify_units, state_write_bytes) =
@@ -3118,6 +3127,16 @@ impl BlockExecutor {
                 } else {
                     crate::contracts::tokens::constants::SOV_FEE_RATE_BPS
                 };
+                tracing::info!(
+                    tx_hash = %hex::encode(&tx.hash().as_bytes()[..8]),
+                    token = %hex::encode(&token.0[..8]),
+                    from = %hex::encode(&from.0[..8]),
+                    to = %hex::encode(&to.0[..8]),
+                    amount = amount,
+                    nonce = transfer_data.nonce,
+                    fee_bps = fee_bps,
+                    "[fee-debug] BEFORE apply_token_transfer"
+                );
                 let _fee_collected = tx_apply::apply_token_transfer(
                     mutator,
                     &token,
@@ -3127,6 +3146,14 @@ impl BlockExecutor {
                     fee_bps,
                     &fee_destination,
                 )?;
+                tracing::info!(
+                    tx_hash = %hex::encode(&tx.hash().as_bytes()[..8]),
+                    from = %hex::encode(&from.0[..8]),
+                    to = %hex::encode(&to.0[..8]),
+                    amount = amount,
+                    fee_collected = _fee_collected,
+                    "[fee-debug] AFTER apply_token_transfer (debit succeeded)"
+                );
 
                 // Increment nonce for replay protection
                 mutator.increment_token_nonce(&token, &from)?;

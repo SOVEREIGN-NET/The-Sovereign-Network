@@ -1,0 +1,18 @@
+[Unit]
+Description=ZHTP QUIC reachability watchdog
+After=zhtp.service
+Wants=zhtp.service
+
+[Service]
+Type=simple
+ExecStart=/opt/zhtp/watchdog.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Watchdog must run as root to issue systemctl restart on g1-g3 (root) and
+# work via sudoers NOPASSWD on g4/g5/gateways (where zhtp.service is owned
+# by root but the unit file may be owned by a non-root user).
+
+[Install]
+WantedBy=multi-user.target
