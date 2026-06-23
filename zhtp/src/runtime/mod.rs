@@ -370,13 +370,84 @@ async fn try_initial_sync_from_peer(
                 &blocks_resp.body,
             ) {
                 Ok(b) => b,
-                Err(e) => {
+                Err(batch_err) => {
+                    // Batch decode failed. Fall back to fetching this range one
+                    // block at a time. The Jun-17 2026 incident showed that batch
+                    // decode can fail on a specific block while the same block
+                    // decodes fine via the per-block path (e.g. when the bincode
+                    // Vec wrapper interacts badly with a `TransactionPayload`
+                    // variant boundary). Per-block requests still hit the same
+                    // endpoint with start==end, but each response is a Vec of
+                    // length 1 — far less surface area for the decoder.
                     warn!(
-                        "⚠️  Failed to deserialize blocks {}-{} from {}: {}",
-                        start, end, peer_addr, e
+                        "⚠️  Batch decode failed for blocks {}-{} from {}: {} — falling back to per-block fetch",
+                        start, end, peer_addr, batch_err
                     );
-                    page_error = true;
-                    break;
+                    let mut singles: Vec<lib_blockchain::Block> = Vec::new();
+                    let mut single_error = false;
+                    for h in start..=end {
+                        let single_url = format!("/api/v1/blockchain/blocks/{}/{}", h, h);
+                        let single_resp = match tokio::time::timeout(
+                            std::time::Duration::from_secs(30),
+                            client.get(&single_url),
+                        )
+                        .await
+                        {
+                            Ok(Ok(r)) => r,
+                            Ok(Err(e)) => {
+                                warn!(
+                                    "⚠️  Per-block fallback: block {} request failed from {}: {}",
+                                    h, peer_addr, e
+                                );
+                                single_error = true;
+                                break;
+                            }
+                            Err(_) => {
+                                warn!(
+                                    "⚠️  Per-block fallback: block {} request timed out from {}",
+                                    h, peer_addr
+                                );
+                                single_error = true;
+                                break;
+                            }
+                        };
+                        if !single_resp.is_success() {
+                            warn!(
+                                "⚠️  Per-block fallback: block {} from {} returned error: {}",
+                                h, peer_addr, single_resp.status_message
+                            );
+                            single_error = true;
+                            break;
+                        }
+                        match deserialize_blocks_compatible(&single_resp.body) {
+                            Ok(mut bs) if !bs.is_empty() => singles.append(&mut bs),
+                            Ok(_) => {
+                                warn!(
+                                    "⚠️  Per-block fallback: block {} from {} returned empty body",
+                                    h, peer_addr
+                                );
+                                single_error = true;
+                                break;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "⚠️  Per-block fallback: block {} from {} failed to decode individually: {} — peer abandoned",
+                                    h, peer_addr, e
+                                );
+                                single_error = true;
+                                break;
+                            }
+                        }
+                    }
+                    if single_error {
+                        page_error = true;
+                        break;
+                    }
+                    info!(
+                        "✅ Per-block fallback succeeded for blocks {}-{} from {} ({} blocks)",
+                        start, end, peer_addr, singles.len()
+                    );
+                    singles
                 }
             };
 
