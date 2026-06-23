@@ -1191,16 +1191,13 @@ impl Web4Handler {
             key_id: to_wallet,
         };
 
-        let token = blockchain
-            .token_contracts
-            .get_mut(&sov_token_id)
-            .ok_or_else(|| anyhow!("SOV token contract not initialized"))?;
-
-        let balance = u128::from(token.balance_of(&sender_key));
-        if balance < fee_sov {
+        let sender_balance = blockchain
+            .token_balance(&sov_token_id, &from_wallet_id)
+            .unwrap_or(0);
+        if sender_balance < fee_sov {
             return Err(anyhow!(
                 "Insufficient SOV balance: have {} atoms, need {} atoms",
-                balance,
+                sender_balance,
                 fee_sov
             ));
         }
@@ -1209,8 +1206,14 @@ impl Web4Handler {
         // across nodes. The fee debit must be moved into block-level processing (like
         // WalletRegistration initial_balance). The DomainRegistration transaction should carry the
         // fee amount, and `process_domain_transactions` should debit/credit during block execution.
-        let sender_balance = u128::from(token.balance_of(&sender_key));
-        let treasury_balance = u128::from(token.balance_of(&treasury_key));
+        // Writes path: in-memory set_balance below; reads above use sled-first token_balance (#2637).
+        let treasury_balance = blockchain
+            .token_balance(&sov_token_id, &to_wallet)
+            .unwrap_or(0);
+        let token = blockchain
+            .token_contracts
+            .get_mut(&sov_token_id)
+            .ok_or_else(|| anyhow!("SOV token contract not initialized"))?;
         token.set_balance(&sender_key, sender_balance - fee_sov);
         token.set_balance(&treasury_key, treasury_balance + fee_sov);
 

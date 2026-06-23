@@ -1201,18 +1201,17 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
     // TokenTransfer. If the loaded keystore lacks a positive balance, refuse
     // to enable rewards rather than queue txes that will fail on every
     // future replay.
-    let token = match blockchain.get_token_contract(&bubl_token_id) {
-        Some(t) => t,
-        None => {
-            warn!(
-                "rewards: BUBL token contract {} not found on chain; \
-                 rewards endpoint disabled",
-                hex::encode(&bubl_token_id[..4]),
-            );
-            return None;
-        }
-    };
-    let balance = token.balance_of(&keypair.public_key);
+    if blockchain.get_token_contract(&bubl_token_id).is_none() {
+        warn!(
+            "rewards: BUBL token contract {} not found on chain; \
+             rewards endpoint disabled",
+            hex::encode(&bubl_token_id[..4]),
+        );
+        return None;
+    }
+    let balance = blockchain
+        .token_balance(&bubl_token_id, &signer_key_id)
+        .unwrap_or(0);
     if balance == 0 {
         warn!(
             "rewards: keystore at {} holds 0 BUBL for signer key_id={}. \

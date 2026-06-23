@@ -1541,7 +1541,7 @@ pub async fn handle_migrate_identity(
                                 Some(short_key_min_len.map(|v| v.min(key_len)).unwrap_or(key_len));
                             short_key_max_len =
                                 Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
-                        } else if let Some(ref token) = token_opt {
+                        } else if token_opt.is_some() {
                             let old_pk_bytes: [u8; 2592] = wallet_data.public_key.as_slice().try_into()
                                 .unwrap_or([0u8; 2592]);
                             let new_pk_bytes: [u8; 2592] = new_public_key_bytes.as_slice().try_into()
@@ -1549,8 +1549,11 @@ pub async fn handle_migrate_identity(
                             let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
                             let new_pk = lib_crypto::PublicKey::new(new_pk_bytes);
                             if old_pk != new_pk {
-                                movable_balance_total =
-                                    movable_balance_total.saturating_add(token.balance_of(&old_pk));
+                                movable_balance_total = movable_balance_total.saturating_add(
+                                    blockchain
+                                        .token_balance(&sov_token_id, &old_pk.key_id)
+                                        .unwrap_or(0),
+                                );
                             }
                         }
                     }
@@ -1821,9 +1824,9 @@ pub async fn handle_migrate_identity(
                     // Build TokenMint txs for balance fixes
                     if old_pk_is_short {
                         if existing.initial_balance > 0 {
-                            let token_opt = blockchain.query_token_contract(&sov_token_id);
-                            let current_balance =
-                                token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
+                            let current_balance = blockchain
+                                .token_balance(&sov_token_id, &wallet_id_bytes)
+                                .unwrap_or(0);
                             if current_balance < existing.initial_balance as u128 {
                                 let mint_amount = existing.initial_balance as u128 - current_balance;
                                 let mint_amount_u64 = u64::try_from(mint_amount).unwrap_or(u64::MAX);
@@ -1855,12 +1858,14 @@ pub async fn handle_migrate_identity(
                             }
                         }
                     } else {
-                        if let Some(token) = blockchain.query_token_contract(&sov_token_id) {
+                        if blockchain.query_token_contract(&sov_token_id).is_some() {
                             let old_pk_bytes: [u8; 2592] = old_public_key.as_slice().try_into()
                                 .unwrap_or([0u8; 2592]);
                             let old_pk = lib_crypto::PublicKey::new(old_pk_bytes);
                             if old_pk.key_id != wallet_addr.key_id {
-                                let old_balance = token.balance_of(&old_pk);
+                                let old_balance = blockchain
+                                    .token_balance(&sov_token_id, &old_pk.key_id)
+                                    .unwrap_or(0);
                                 if old_balance > 0 {
                                     let memo = format!(
                                         "TOKEN_MIGRATE_V1:{}",
