@@ -463,6 +463,14 @@ impl Blockchain {
                 return None;
             }
         };
+        if crate::types::hash::blake3_hash(&meta.public_key).as_array() != consensus.public_key_hash
+        {
+            tracing::warn!(
+                did = %meta.did,
+                "identity_transaction_data_from_sled: metadata key hash != consensus public_key_hash; refusing drifted key"
+            );
+            return None;
+        }
         Some(IdentityTransactionData {
             did: meta.did.clone(),
             display_name: meta.display_name.clone(),
@@ -486,12 +494,32 @@ impl Blockchain {
     pub fn identity_transaction_data(&self, did: &str) -> Option<IdentityTransactionData> {
         if let Some(store) = self.get_store() {
             let did_hash = crate::storage::did_to_hash(did);
-            if let Ok(Some(meta)) = store.get_identity_metadata(&did_hash) {
-                let consensus = store.get_identity(&did_hash).ok().flatten();
-                if let Some(data) =
-                    Self::identity_transaction_data_from_sled(&meta, consensus.as_ref())
-                {
-                    return Some(data);
+            match store.get_identity_metadata(&did_hash) {
+                Ok(Some(meta)) => {
+                    let consensus = match store.get_identity(&did_hash) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                did = %did,
+                                "identity_transaction_data: consensus read failed"
+                            );
+                            return self.identity_registry.get(did).cloned();
+                        }
+                    };
+                    if let Some(data) =
+                        Self::identity_transaction_data_from_sled(&meta, consensus.as_ref())
+                    {
+                        return Some(data);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        did = %did,
+                        "identity_transaction_data: metadata read failed"
+                    );
                 }
             }
         }
@@ -509,7 +537,17 @@ impl Blockchain {
                 Ok(iter) => {
                     for meta in iter {
                         let did_hash = crate::storage::did_to_hash(&meta.did);
-                        let consensus = store.get_identity(&did_hash).ok().flatten();
+                        let consensus = match store.get_identity(&did_hash) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    did = %meta.did,
+                                    "identity_registry_snapshot: consensus read failed; skipping entry"
+                                );
+                                continue;
+                            }
+                        };
                         if let Some(data) =
                             Self::identity_transaction_data_from_sled(&meta, consensus.as_ref())
                         {
@@ -550,8 +588,9 @@ impl Blockchain {
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
-                        "identity_display_name_taken: sled iter failed; using in-memory shadow only"
+                        "identity_display_name_taken: sled iter failed; failing closed (treat as taken)"
                     );
+                    return true;
                 }
             }
         }

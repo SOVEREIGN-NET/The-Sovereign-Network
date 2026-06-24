@@ -1355,9 +1355,7 @@ impl BlockchainHandler {
                     }
                 }
                 "did" => {
-                    if let Some(identity) =
-                        blockchain.identity_transaction_data(&value.to_string())
-                    {
+                    if let Some(identity) = blockchain.identity_transaction_data(&value) {
                         let identity_mgr = self.identity_manager.read().await;
                         let view = identity_mgr.get_identity_view_by_did(&principal, &identity.did);
                         let (controlled_nodes, owned_wallets) = match view {
@@ -3103,7 +3101,7 @@ impl BlockchainHandler {
         let blockchain = blockchain_arc.read().await;
 
         // Query identity from registry
-        if let Some(identity) = blockchain.identity_transaction_data(&did.to_string()) {
+        if let Some(identity) = blockchain.identity_transaction_data(did) {
             let response_data = match view {
                 Some(lib_identity::types::IdentityView::Public(_)) => {
                     serde_json::json!({

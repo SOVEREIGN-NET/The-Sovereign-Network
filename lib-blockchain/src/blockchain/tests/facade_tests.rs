@@ -542,12 +542,15 @@ fn identity_transaction_data_reads_sled_metadata() {
     let store = Arc::new(SledStore::open(&temp.path().join("id_tx_data")).unwrap());
     let did = "did:zhtp:tx-data";
     let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0xAB; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
     store.begin_block(0).unwrap();
     store
         .put_identity(
             &did_hash,
             &IdentityConsensus {
                 did_hash,
+                public_key_hash: pk_hash,
                 created_at: 42,
                 registration_fee: 7,
                 ..Default::default()
@@ -560,7 +563,7 @@ fn identity_transaction_data_reads_sled_metadata() {
             &crate::storage::IdentityMetadata {
                 did: did.to_string(),
                 display_name: "Sled User".to_string(),
-                public_key: vec![0xAB; 2592],
+                public_key: pk,
                 ..Default::default()
             },
         )
@@ -583,9 +586,18 @@ fn identity_registry_snapshot_includes_sled_without_in_memory() {
     let store = Arc::new(SledStore::open(&temp.path().join("id_snapshot")).unwrap());
     let did = "did:zhtp:snapshot-only";
     let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0xCD; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
     store.begin_block(0).unwrap();
     store
-        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                public_key_hash: pk_hash,
+                ..Default::default()
+            },
+        )
         .unwrap();
     store
         .put_identity_metadata(
@@ -593,7 +605,7 @@ fn identity_registry_snapshot_includes_sled_without_in_memory() {
             &crate::storage::IdentityMetadata {
                 did: did.to_string(),
                 display_name: "Only Sled".to_string(),
-                public_key: vec![0xCD; 2592],
+                public_key: pk,
                 ..Default::default()
             },
         )
@@ -697,12 +709,15 @@ fn identity_registry_snapshot_overlay_in_memory_wins() {
     let store = Arc::new(SledStore::open(&temp.path().join("id_overlay")).unwrap());
     let did = "did:zhtp:overlay";
     let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0xCD; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
     store.begin_block(0).unwrap();
     store
         .put_identity(
             &did_hash,
             &IdentityConsensus {
                 did_hash,
+                public_key_hash: pk_hash,
                 created_at: 1,
                 ..Default::default()
             },
@@ -714,7 +729,7 @@ fn identity_registry_snapshot_overlay_in_memory_wins() {
             &crate::storage::IdentityMetadata {
                 did: did.to_string(),
                 display_name: "From Sled".to_string(),
-                public_key: vec![0xCD; 2592],
+                public_key: pk,
                 ..Default::default()
             },
         )
