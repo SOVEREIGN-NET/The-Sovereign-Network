@@ -55,27 +55,24 @@ fn create_block_with_txs(
 }
 
 fn insert_active_validator(blockchain: &mut Blockchain, identity: &str, key_id: [u8; 32]) {
-    blockchain.validator_registry.insert(
-        identity.to_string(),
-        ValidatorInfo {
-            identity_id: identity.to_string(),
-            stake: 10_000,
-            storage_provided: 0,
-            consensus_key: key_id.to_vec(),
-            networking_key: Vec::new(),
-            rewards_key: Vec::new(),
-            network_address: "127.0.0.1:0".to_string(),
-            commission_rate: 0,
-            status: "active".to_string(),
-            registered_at: 0,
-            last_activity: 0,
-            blocks_validated: 0,
-            slash_count: 0,
-            admission_source: "test".to_string(),
-            governance_proposal_id: None,
-            oracle_key_id: Some(key_id),
-        },
-    );
+    blockchain.insert_validator_shadow(ValidatorInfo {
+        identity_id: identity.to_string(),
+        stake: 10_000,
+        storage_provided: 0,
+        consensus_key: key_id.to_vec(),
+        networking_key: Vec::new(),
+        rewards_key: Vec::new(),
+        network_address: "127.0.0.1:0".to_string(),
+        commission_rate: 0,
+        status: "active".to_string(),
+        registered_at: 0,
+        last_activity: 0,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: Some(key_id),
+    });
 }
 
 /// Test that UpdateOracleCommittee transaction type exists and has correct value.

@@ -27,7 +27,7 @@ use lib_blockchain::{Block, BlockHeader, Blockchain, ValidatorInfo};
 // Helpers
 // ============================================================================
 
-/// Register `n` validators directly into `blockchain.validator_registry`.
+/// Register `n` validators via the public shadow-insert API.
 ///
 /// BFT requires ≥4 validators (f=1, quorum=3).  The test registers exactly 4.
 fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
@@ -51,7 +51,7 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
             governance_proposal_id: None,
             oracle_key_id: None,
         };
-        blockchain.validator_registry.insert(id, info);
+        blockchain.insert_validator_shadow(info);
     }
 }
 
@@ -99,7 +99,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     // Register ≥4 validators — required for BFT (3f+1, f=1 ⟹ n≥4).
     register_n_validators(&mut local_chain, 4);
     assert_eq!(
-        local_chain.validator_registry.len(),
+        local_chain.validator_count(),
         4,
         "Must have exactly 4 validators registered"
     );

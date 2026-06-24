@@ -80,9 +80,7 @@ fn register_validator_identity(blockchain: &mut Blockchain, id: &str) -> Result<
         1000,
         100,
     );
-    blockchain
-        .identity_registry
-        .insert(id.to_string(), identity_data);
+    blockchain.insert_identity_shadow(id.to_string(), identity_data);
     Ok(())
 }
 
@@ -166,9 +164,7 @@ async fn test_identity_registration() -> Result<()> {
     );
 
     // Register the identity directly in registry (bypass transaction validation for test)
-    blockchain
-        .identity_registry
-        .insert(identity_data.did.clone(), identity_data.clone());
+    blockchain.insert_identity_shadow(identity_data.did.clone(), identity_data.clone());
     blockchain
         .identity_blocks
         .insert(identity_data.did.clone(), blockchain.height + 1);
@@ -199,9 +195,7 @@ async fn test_identity_update() -> Result<()> {
         100,
     );
 
-    blockchain
-        .identity_registry
-        .insert(original_data.did.clone(), original_data);
+    blockchain.insert_identity_shadow(original_data.did.clone(), original_data);
     blockchain
         .identity_blocks
         .insert("did:zhtp:update_test".to_string(), blockchain.height);
@@ -219,9 +213,7 @@ async fn test_identity_update() -> Result<()> {
     );
 
     // Update directly for test
-    blockchain
-        .identity_registry
-        .insert(updated_data.did.clone(), updated_data);
+    blockchain.insert_identity_shadow(updated_data.did.clone(), updated_data);
 
     // Verify update
     let updated_identity = blockchain.get_identity("did:zhtp:update_test").unwrap();
@@ -232,7 +224,7 @@ async fn test_identity_update() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_identity_revocation() -> Result<()> {
+async fn test_identity_shadow_type_update_in_place() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
 
     // Register an identity first directly
@@ -247,30 +239,21 @@ async fn test_identity_revocation() -> Result<()> {
         100,
     );
 
-    blockchain
-        .identity_registry
-        .insert(identity_data.did.clone(), identity_data);
+    blockchain.insert_identity_shadow(identity_data.did.clone(), identity_data);
     blockchain
         .identity_blocks
         .insert("did:zhtp:revoke_test".to_string(), blockchain.height);
     assert!(blockchain.identity_exists("did:zhtp:revoke_test"));
 
-    // Revoke the identity directly for test
-    if let Some(mut identity_data) = blockchain.identity_registry.remove("did:zhtp:revoke_test") {
-        identity_data.identity_type = "revoked".to_string();
-        blockchain
-            .identity_registry
-            .insert("did:zhtp:revoke_test_revoked".to_string(), identity_data);
-    }
+    // Shadow-only type patch (not production revocation semantics).
+    assert!(blockchain.set_identity_shadow_type(
+        "did:zhtp:revoke_test",
+        "revoked".to_string()
+    ));
 
-    // Verify revocation
-    assert!(!blockchain.identity_exists("did:zhtp:revoke_test"));
-    assert!(blockchain.identity_exists("did:zhtp:revoke_test_revoked"));
-
-    let revoked_identity = blockchain
-        .get_identity("did:zhtp:revoke_test_revoked")
-        .unwrap();
-    assert_eq!(revoked_identity.identity_type, "revoked");
+    assert!(blockchain.identity_exists("did:zhtp:revoke_test"));
+    let updated = blockchain.get_identity("did:zhtp:revoke_test").unwrap();
+    assert_eq!(updated.identity_type, "revoked");
 
     Ok(())
 }
@@ -454,9 +437,7 @@ async fn test_identity_confirmations() -> Result<()> {
                 Err(validation_error) => {
                     println!("Transaction validation failed: {:?}", validation_error);
                     // For now, let's bypass the validation issue and manually test confirmations
-                    blockchain
-                        .identity_registry
-                        .insert(identity_data.did.clone(), identity_data.clone());
+                    blockchain.insert_identity_shadow(identity_data.did.clone(), identity_data.clone());
                     blockchain
                         .identity_blocks
                         .insert(identity_data.did.clone(), blockchain.height + 1);
@@ -608,9 +589,7 @@ async fn test_register_validator_added_to_blockchain() -> Result<()> {
 
     // Directly add validator to registry for testing
     let validator_info = create_test_validator("validator_001", 5000);
-    blockchain
-        .validator_registry
-        .insert("validator_001".to_string(), validator_info.clone());
+    blockchain.insert_validator_shadow(validator_info.clone());
     blockchain
         .validator_blocks
         .insert("validator_001".to_string(), blockchain.height + 1);
@@ -638,18 +617,9 @@ async fn test_consensus_queries_validator_set() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_003")?;
 
     // Directly add validators to registry for testing
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 5000),
-    );
-    blockchain.validator_registry.insert(
-        "validator_002".to_string(),
-        create_test_validator("validator_002", 3000),
-    );
-    blockchain.validator_registry.insert(
-        "validator_003".to_string(),
-        create_test_validator("validator_003", 2000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 5000));
+    blockchain.insert_validator_shadow(create_test_validator("validator_002", 3000));
+    blockchain.insert_validator_shadow(create_test_validator("validator_003", 2000));
 
     // Query the active validator set for consensus
     let active_set = blockchain.get_active_validator_set_for_consensus();
@@ -680,24 +650,15 @@ async fn test_validator_set_in_sync() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_003")?;
 
     // Add initial validators
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 5000),
-    );
-    blockchain.validator_registry.insert(
-        "validator_002".to_string(),
-        create_test_validator("validator_002", 3000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 5000));
+    blockchain.insert_validator_shadow(create_test_validator("validator_002", 3000));
 
     // Get initial set
     let initial_set = blockchain.get_active_validator_set_for_consensus();
     assert_eq!(initial_set.len(), 2);
 
     // Add a new validator
-    blockchain.validator_registry.insert(
-        "validator_003".to_string(),
-        create_test_validator("validator_003", 2000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_003", 2000));
 
     // Get updated set
     let updated_set = blockchain.get_active_validator_set_for_consensus();
@@ -718,10 +679,7 @@ async fn test_validator_stake_update_propagates() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_001")?;
 
     // Add a validator
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 5000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 5000));
 
     // Get initial set
     let initial_set = blockchain.get_active_validator_set_for_consensus();
@@ -733,10 +691,7 @@ async fn test_validator_stake_update_propagates() -> Result<()> {
     assert_eq!(initial_stake, 5000);
 
     // Update validator stake directly in registry
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 7500),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 7500));
 
     // Get updated set
     let updated_set = blockchain.get_active_validator_set_for_consensus();
@@ -760,18 +715,9 @@ async fn test_total_validator_stake_calculation() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_003")?;
 
     // Add validators with specific stakes
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 5000),
-    );
-    blockchain.validator_registry.insert(
-        "validator_002".to_string(),
-        create_test_validator("validator_002", 3000),
-    );
-    blockchain.validator_registry.insert(
-        "validator_003".to_string(),
-        create_test_validator("validator_003", 2000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 5000));
+    blockchain.insert_validator_shadow(create_test_validator("validator_002", 3000));
+    blockchain.insert_validator_shadow(create_test_validator("validator_003", 2000));
 
     // Calculate total stake
     let total_stake = blockchain.get_total_validator_stake();
@@ -790,10 +736,7 @@ async fn test_is_validator_active_check() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_001")?;
 
     // Add a validator
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 5000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 5000));
 
     // Should be active
     assert!(
@@ -819,14 +762,8 @@ async fn test_sync_validator_set_to_consensus() -> Result<()> {
     register_validator_identity(&mut blockchain, "validator_002")?;
 
     // Add validators
-    blockchain.validator_registry.insert(
-        "validator_001".to_string(),
-        create_test_validator("validator_001", 5000),
-    );
-    blockchain.validator_registry.insert(
-        "validator_002".to_string(),
-        create_test_validator("validator_002", 3000),
-    );
+    blockchain.insert_validator_shadow(create_test_validator("validator_001", 5000));
+    blockchain.insert_validator_shadow(create_test_validator("validator_002", 3000));
 
     // Call sync - should log active validators
     // This method is primarily for logging/event emission, so we just verify it doesn't panic

@@ -1,6 +1,65 @@
 use super::*;
 
 impl Blockchain {
+    /// Legacy in-memory shadow insert — genesis/bootstrap only (#2640).
+    pub fn insert_identity_shadow(&mut self, did: String, data: IdentityTransactionData) {
+        self.identity_registry.insert(did, data);
+    }
+
+    /// In-memory shadow only — test premises that must not use sled-first facades.
+    pub fn identity_shadow_contains_key(&self, did: &str) -> bool {
+        self.identity_registry.contains_key(did)
+    }
+
+    /// In-memory shadow only — whether any entry carries this exact public key bytes.
+    pub fn identity_shadow_any_public_key(&self, pk: &[u8]) -> bool {
+        self.identity_registry
+            .values()
+            .any(|identity| identity.public_key == pk)
+    }
+
+    /// Patch Kyber key in the in-memory identity shadow (cache warmup before tx commit).
+    pub fn update_identity_shadow_kyber_public_key(&mut self, did: &str, key: Vec<u8>) -> bool {
+        if let Some(entry) = self.identity_registry.get_mut(did) {
+            entry.kyber_public_key = key;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Patch display name in the in-memory identity shadow (username claim mirror).
+    pub fn update_identity_shadow_display_name(&mut self, did: &str, name: String) -> bool {
+        if let Some(entry) = self.identity_registry.get_mut(did) {
+            entry.display_name = name;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Append a controlled node id to the in-memory identity shadow.
+    pub fn push_identity_shadow_controlled_node(&mut self, did: &str, node_id: String) -> bool {
+        if let Some(entry) = self.identity_registry.get_mut(did) {
+            if !entry.controlled_nodes.contains(&node_id) {
+                entry.controlled_nodes.push(node_id);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Test/bootstrap helper: set identity_type on an in-memory shadow entry.
+    pub fn set_identity_shadow_type(&mut self, did: &str, identity_type: String) -> bool {
+        if let Some(entry) = self.identity_registry.get_mut(did) {
+            entry.identity_type = identity_type;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn register_identity(&mut self, identity_data: IdentityTransactionData) -> Result<Hash> {
         // #2639: union check — also catches a DID already committed to sled but
         // absent from the in-memory shadow after a restart, which the bare

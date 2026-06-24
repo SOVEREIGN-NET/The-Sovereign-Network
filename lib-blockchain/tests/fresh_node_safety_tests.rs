@@ -189,7 +189,7 @@ async fn fresh_node_ignores_forged_state_maps() -> Result<()> {
 
     // …but the attacker's forged validator must NOT have leaked into state.
     assert!(
-        !node.validator_registry.contains_key("attacker_validator"),
+        !node.validator_exists("attacker_validator"),
         "forged validator from the import map must be ignored — state is \
          derived from blocks, not copied from the import"
     );

@@ -98,7 +98,7 @@ async fn test_get_token_nonce_reads_sled_first_under_executor() {
     // Deliberately seed the in-memory HashMap with the STALE value the bug
     // produced in production. Pre-fix `get_token_nonce` returned this 2279
     // (HashMap-first), causing the mempool to accept a tx with nonce 2279.
-    bc.token_nonces.insert((token_id, sender), 2279);
+    bc.insert_token_nonce_shadow(token_id, sender, 2279);
 
     // CONS-513: under executor mode, sled wins.
     assert_eq!(
@@ -124,6 +124,6 @@ async fn test_get_token_nonce_uses_hashmap_in_storeless_mode() {
     assert_eq!(bc.get_token_nonce(&token_id, &sender), 0);
 
     // Populate HashMap → that value is the answer.
-    bc.token_nonces.insert((token_id, sender), 7);
+    bc.insert_token_nonce_shadow(token_id, sender, 7);
     assert_eq!(bc.get_token_nonce(&token_id, &sender), 7);
 }

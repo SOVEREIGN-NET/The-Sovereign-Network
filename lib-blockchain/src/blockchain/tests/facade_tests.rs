@@ -111,7 +111,7 @@ fn token_nonce_reads_sled_when_store_attached() {
 
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
-    bc.token_nonces.insert(([5u8; 32], [0xCC; 32]), 7);
+    bc.insert_token_nonce_shadow([5u8; 32], [0xCC; 32], 7);
 
     assert_eq!(
         bc.token_nonce(&[5u8; 32], &[0xCC; 32]).unwrap(),
@@ -137,7 +137,7 @@ fn is_nonce_current_reads_sled_nonce_not_stale_in_memory() {
 
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
-    bc.token_nonces.insert((token_id, sender), 0);
+    bc.insert_token_nonce_shadow(token_id, sender, 0);
 
     let current_tx = Transaction {
         version: 2,
@@ -245,7 +245,7 @@ fn count_token_holders_uses_in_memory_in_storeless_mode() {
         key_id: [0x11; 32],
     };
     token.mint(&holder, 1_000).unwrap();
-    bc.token_contracts.insert(token_id, token);
+    bc.insert_token_contract(token_id, token);
 
     assert_eq!(bc.count_token_holders(&token_id), 1);
 }
@@ -304,11 +304,10 @@ fn calculate_user_voting_power_reads_sled_not_in_memory() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
     bc.voting_power_mode = crate::dao::VotingPowerMode::Linear;
-    bc.token_contracts
-        .insert(sov_id, crate::contracts::TokenContract::new_sov_native());
+    bc.insert_token_contract(sov_id, crate::contracts::TokenContract::new_sov_native());
 
     let wallet_id_hash = Hash::new(wallet_id);
-    bc.wallet_registry.insert(
+    bc.insert_wallet_shadow(
         hex::encode(wallet_id),
         WalletTransactionData {
             wallet_id: wallet_id_hash,
@@ -408,8 +407,7 @@ fn put_sled_identity(store: &SledStore, height: u64, did: &str, consensus: Ident
 fn identity_exists_union_inmem_or_sled() {
     // store-less: answers from the in-memory shadow.
     let mut bc = Blockchain::new().unwrap();
-    bc.identity_registry
-        .insert("did:zhtp:inmem".to_string(), mk_inmem_identity("did:zhtp:inmem"));
+    bc.insert_identity_shadow("did:zhtp:inmem".to_string(), mk_inmem_identity("did:zhtp:inmem"));
     assert!(bc.identity_exists("did:zhtp:inmem"), "in-mem present -> true");
     assert!(!bc.identity_exists("did:zhtp:ghost"), "absent everywhere -> false");
 
@@ -428,7 +426,7 @@ fn identity_exists_union_inmem_or_sled() {
     let mut bc2 = Blockchain::new().unwrap();
     bc2.set_store(store);
     assert!(
-        !bc2.identity_registry.contains_key(did),
+        !bc2.identity_shadow_contains_key(did),
         "test premise: this DID is sled-only (absent from the in-mem shadow)"
     );
     assert!(bc2.identity_exists(did), "sled-only identity found via union");
@@ -651,7 +649,7 @@ fn identity_display_name_taken_reads_sled() {
 fn identity_display_name_taken_sees_in_memory_pending_registration() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     let did = "did:zhtp:pending-name";
-    bc.identity_registry.insert(
+    bc.insert_identity_shadow(
         did.to_string(),
         crate::transaction::IdentityTransactionData {
             did: did.to_string(),
@@ -738,7 +736,7 @@ fn identity_registry_snapshot_overlay_in_memory_wins() {
 
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
-    bc.identity_registry.insert(
+    bc.insert_identity_shadow(
         did.to_string(),
         crate::transaction::IdentityTransactionData {
             did: did.to_string(),
@@ -784,7 +782,7 @@ fn wallet_exists_union_inmem_or_sled() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     let wallet_id = [0x77u8; 32];
     let wallet_id_hex = hex::encode(wallet_id);
-    bc.wallet_registry.insert(
+    bc.insert_wallet_shadow(
         wallet_id_hex.clone(),
         test_wallet_data(wallet_id, "In-Mem"),
     );
@@ -905,8 +903,7 @@ fn wallet_count_ignores_in_memory_only_entries() {
     bc.set_store(store);
     let sled_hex = hex::encode([1u8; 32]);
     let inmem_hex = hex::encode([2u8; 32]);
-    bc.wallet_registry
-        .insert(inmem_hex.clone(), test_wallet_data([2u8; 32], "InMemOnly"));
+    bc.insert_wallet_shadow(inmem_hex.clone(), test_wallet_data([2u8; 32], "InMemOnly"));
     assert_eq!(bc.wallet_count(), 1, "count is sled cardinality, not union");
     let snap = bc.wallet_registry_snapshot();
     assert_eq!(
@@ -940,7 +937,7 @@ fn wallet_registry_snapshot_overlay_in_memory_wins() {
 
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
-    bc.wallet_registry.insert(
+    bc.insert_wallet_shadow(
         wallet_id_hex.clone(),
         test_wallet_data(wallet_id, "From InMem"),
     );
@@ -999,7 +996,7 @@ fn did_by_public_key_reads_sled_metadata() {
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store.clone());
     assert!(
-        !bc.identity_registry.values().any(|i| i.public_key == pk),
+        !bc.identity_shadow_contains_key(did) && !bc.identity_shadow_any_public_key(&pk),
         "test premise: this pubkey is sled-only (in-mem shadow empty, like after restart)"
     );
     assert_eq!(
@@ -1093,7 +1090,7 @@ fn identity_controlled_nodes_reads_sled_metadata() {
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store);
     assert!(
-        !bc.identity_registry.contains_key(did),
+        !bc.identity_shadow_contains_key(did),
         "test premise: DID is sled-only (in-mem shadow empty, like after restart)"
     );
     assert_eq!(
@@ -1152,8 +1149,7 @@ fn did_by_device_key_id_reads_sled_metadata() {
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store.clone());
     assert!(
-        !bc.identity_registry.contains_key(did)
-            && !bc.identity_registry.values().any(|i| i.public_key == pk),
+        !bc.identity_shadow_contains_key(did) && !bc.identity_shadow_any_public_key(&pk),
         "test premise: this identity is sled-only (absent from the in-mem shadow, like after restart)"
     );
 
@@ -1290,7 +1286,7 @@ fn validator_exists_union_inmem_or_sled() {
         governance_proposal_id: None,
         oracle_key_id: None,
     };
-    bc.validator_registry.insert(info.identity_id.clone(), info);
+    bc.insert_validator_shadow(info);
     assert!(bc.validator_exists("did:zhtp:val-inmem"));
     assert!(!bc.validator_exists("did:zhtp:ghost"));
 
@@ -1363,7 +1359,7 @@ fn custom_token_balance_reads_sled_not_in_memory() {
     bc.set_store(store);
     // Simulate post-restart: no in-mem contract overlay.
     assert!(
-        !bc.token_contracts.contains_key(&token_id),
+        !bc.token_contract_shadow_contains_key(&token_id),
         "test premise: custom token exists only in sled"
     );
     assert_eq!(
@@ -1373,8 +1369,7 @@ fn custom_token_balance_reads_sled_not_in_memory() {
     );
     // In-mem-only read would wrongly return 0 — regression guard.
     assert_eq!(
-        bc.token_contracts
-            .get(&token_id)
+        bc.token_contract_shadow(&token_id)
             .map(|c| c.balance_of(&crate::integration::crypto_integration::PublicKey::new(
                 [0u8; 2592]
             )))
@@ -1419,10 +1414,9 @@ fn legacy_fee_deduction_syncs_sled_balance() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store.clone());
     let sov = crate::contracts::TokenContract::new_sov_native();
-    bc.token_contracts.insert(sov_id, sov);
-    bc.token_contracts
-        .get_mut(&sov_id)
-        .unwrap()
+    bc.insert_token_contract(sov_id, sov);
+    bc.get_token_contract_mut(&sov_id)
+        .expect("SOV token shadow")
         .set_balance(&sender, initial);
 
     let tx = Transaction {
@@ -1546,27 +1540,24 @@ fn validator_registry_snapshot_overlay_in_memory_wins() {
         .unwrap();
     let mut bc = Blockchain::new_runtime_state();
     bc.store = Some(store);
-    bc.validator_registry.insert(
-        did.to_string(),
-        ValidatorInfo {
-            identity_id: did.to_string(),
-            stake: 999_000,
-            storage_provided: 1 << 40,
-            consensus_key: [5u8; 2592],
-            networking_key: vec![],
-            rewards_key: vec![],
-            network_address: "overlay:1".to_string(),
-            commission_rate: 0,
-            status: "active".to_string(),
-            registered_at: 0,
-            last_activity: 0,
-            blocks_validated: 0,
-            slash_count: 0,
-            admission_source: "test".to_string(),
-            governance_proposal_id: None,
-            oracle_key_id: None,
-        },
-    );
+    bc.insert_validator_shadow(ValidatorInfo {
+        identity_id: did.to_string(),
+        stake: 999_000,
+        storage_provided: 1 << 40,
+        consensus_key: [5u8; 2592],
+        networking_key: vec![],
+        rewards_key: vec![],
+        network_address: "overlay:1".to_string(),
+        commission_rate: 0,
+        status: "active".to_string(),
+        registered_at: 0,
+        last_activity: 0,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    });
     let snap = bc.validator_registry_snapshot();
     assert_eq!(
         snap.get(did).map(|v| v.stake),
@@ -1766,27 +1757,24 @@ fn active_validator_infos_inmem_unregister_evicts_sled_active() {
 
     let mut bc = Blockchain::new_runtime_state();
     bc.store = Some(store);
-    bc.validator_registry.insert(
-        did.to_string(),
-        ValidatorInfo {
-            identity_id: did.to_string(),
-            stake: 100_000,
-            storage_provided: 1 << 40,
-            consensus_key: [5u8; 2592],
-            networking_key: vec![],
-            rewards_key: vec![],
-            network_address: "h:1".to_string(),
-            commission_rate: 0,
-            status: "inactive".to_string(),
-            registered_at: 1,
-            last_activity: 2,
-            blocks_validated: 0,
-            slash_count: 0,
-            admission_source: "test".to_string(),
-            governance_proposal_id: None,
-            oracle_key_id: None,
-        },
-    );
+    bc.insert_validator_shadow(ValidatorInfo {
+        identity_id: did.to_string(),
+        stake: 100_000,
+        storage_provided: 1 << 40,
+        consensus_key: [5u8; 2592],
+        networking_key: vec![],
+        rewards_key: vec![],
+        network_address: "h:1".to_string(),
+        commission_rate: 0,
+        status: "inactive".to_string(),
+        registered_at: 1,
+        last_activity: 2,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    });
 
     let active: Vec<_> = bc
         .active_validator_infos()

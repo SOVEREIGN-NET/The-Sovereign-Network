@@ -1686,7 +1686,7 @@ impl WalletHandler {
                 // bridges the gap until block commit. Note: identity_blocks height will
                 // be the current chain height (not the future block height where the tx
                 // lands), but this is acceptable for the handshake check.
-                blockchain.identity_registry.insert(did.clone(), identity_data);
+                blockchain.insert_identity_shadow(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
                 blockchain.identity_blocks.insert(did.clone(), current_height);
                 tracing::info!(

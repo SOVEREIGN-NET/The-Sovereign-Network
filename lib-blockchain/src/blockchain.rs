@@ -156,17 +156,22 @@ pub struct Blockchain {
     pub nullifier_set: HashSet<Hash>,
     /// Pending transactions waiting to be mined
     pub pending_transactions: Vec<Transaction>,
-    /// On-chain identity registry (DID -> Identity data)
-    pub identity_registry: HashMap<String, IdentityTransactionData>,
-    /// Identity DID to block height mapping for verification
+    /// On-chain identity registry (DID -> Identity data). Legacy write shadow —
+    /// external callers must use facades / `register_identity` (#2640).
+    pub(crate) identity_registry: HashMap<String, IdentityTransactionData>,
+    /// Identity DID → registration block height (height-index metadata, not
+    /// authoritative registry state). Privatization deferred past #2640.
     pub identity_blocks: HashMap<String, u64>,
-    /// On-chain wallet registry (wallet_id -> Wallet data)
-    pub wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
-    /// Wallet ID to block height mapping for verification
+    /// On-chain wallet registry (wallet_id -> Wallet data). Legacy write shadow —
+    /// external callers must use facades / `register_wallet` (#2640).
+    pub(crate) wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
+    /// Wallet ID → registration block height (height-index metadata).
+    /// Privatization deferred past #2640.
     pub wallet_blocks: HashMap<String, u64>,
-    /// Smart contract registry - Token contracts (contract_id -> TokenContract)
+    /// Smart contract registry - Token contracts (contract_id -> TokenContract).
+    /// Legacy write shadow — external callers must use facades / store APIs (#2640).
     #[serde(default)]
-    pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
+    pub(crate) token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     /// Smart contract registry - Web4 Website contracts (contract_id -> Web4Contract)
     #[serde(default)]
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
@@ -184,10 +189,12 @@ pub struct Blockchain {
     /// Indexed DAO registry (dao_id -> entry), updated incrementally per block.
     #[serde(default)]
     pub dao_registry_index: HashMap<[u8; 32], DaoRegistryIndexEntry>,
-    /// On-chain validator registry (identity_id -> Validator info)
+    /// On-chain validator registry (identity_id -> Validator info). Legacy write
+    /// shadow — external callers must use facades / `register_validator` (#2640).
     #[serde(default)]
-    pub validator_registry: HashMap<String, ValidatorInfo>,
-    /// Validator registration block heights (identity_id -> block_height)
+    pub(crate) validator_registry: HashMap<String, ValidatorInfo>,
+    /// Validator registration block heights (identity_id → block_height).
+    /// Height-index metadata; privatization deferred past #2640.
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
     /// Cached sled-first active set; invalidated by generation token or overlay fingerprint.
@@ -289,10 +296,10 @@ pub struct Blockchain {
     /// UBI registration block heights (identity_id -> block_height)
     #[serde(default)]
     pub ubi_blocks: HashMap<String, u64>,
-    /// Per-token, per-address nonce for token transfer replay protection
-    /// Key: (token_id, sender address) where address is wallet_id for SOV or key_id for custom tokens
+    /// Per-token, per-address nonce for token transfer replay protection.
+    /// Key: (token_id, sender address). External reads use `token_nonce()` (#2640).
     #[serde(default)]
-    pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
+    pub(crate) token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
     /// Block executor for state changes
     /// When present, this is the SINGLE SOURCE OF TRUTH for state mutations.
     /// All block applications should go through this executor.

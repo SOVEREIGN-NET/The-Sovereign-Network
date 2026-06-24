@@ -186,7 +186,7 @@ fn load_from_file_does_not_mint_or_repair_sov_balances() {
         (missing_wallet, missing_initial_balance),
         (partial_wallet, partial_initial_balance),
     ] {
-        bc.wallet_registry.insert(
+        bc.insert_wallet_shadow(
             hex::encode(wallet_id),
             crate::transaction::WalletTransactionData {
                 wallet_id: Hash::new(wallet_id),
@@ -209,11 +209,9 @@ fn load_from_file_does_not_mint_or_repair_sov_balances() {
     let partial_recipient = Blockchain::wallet_key_for_sov(&partial_wallet);
     {
         let token = bc
-            .token_contracts
-            .get_mut(&sov_token_id)
+            .get_token_contract_mut(&sov_token_id)
             .expect("SOV token should exist");
-        token
-            .set_balance(&partial_recipient, partial_existing_balance);
+        token.set_balance(&partial_recipient, partial_existing_balance);
         token.total_supply = partial_existing_balance;
     }
 
@@ -227,7 +225,7 @@ fn load_from_file_does_not_mint_or_repair_sov_balances() {
     let loaded = Blockchain::load_from_file(&path).expect("load should succeed");
 
     let token = loaded
-        .token_contracts
+        .get_all_token_contracts()
         .get(&sov_token_id)
         .expect("loaded SOV token should exist");
     assert_eq!(

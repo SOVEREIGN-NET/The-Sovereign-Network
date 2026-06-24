@@ -3745,9 +3745,7 @@ mod tests {
     }
 
     fn insert_active_validator(blockchain: &mut Blockchain, did: &str, key_id: [u8; 32]) {
-        blockchain.validator_registry.insert(
-            did.to_string(),
-            ValidatorInfo {
+        blockchain.insert_validator_shadow(ValidatorInfo {
                 identity_id: did.to_string(),
                 stake: 10_000,
                 storage_provided: 0,
@@ -3768,8 +3766,7 @@ mod tests {
                 admission_source: "test".to_string(),
                 governance_proposal_id: None,
                 oracle_key_id: Some(key_id),
-            },
-        );
+            });
     }
 
     #[test]

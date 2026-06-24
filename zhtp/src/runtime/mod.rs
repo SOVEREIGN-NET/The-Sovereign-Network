@@ -1209,13 +1209,13 @@ impl RuntimeOrchestrator {
                     let blockchain = blockchain_arc.read().await;
                     let has_data = blockchain.height > 0
                         || !blockchain.utxo_set.is_empty()
-                        || !blockchain.token_contracts.is_empty();
+                        || !blockchain.token_contracts_is_empty();
                     if has_data {
                         info!(
                             "✓ Global blockchain has data (height: {}, UTXOs: {}, tokens: {})",
                             blockchain.height,
                             blockchain.utxo_set.len(),
-                            blockchain.token_contracts.len()
+                            blockchain.token_contract_count()
                         );
                     }
                     has_data
@@ -1284,9 +1284,11 @@ impl RuntimeOrchestrator {
                 let mut blockchain = blockchain_arc.write().await;
 
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                    let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
-                    blockchain.token_contracts.insert(sov_token_id, sov_token);
+                if blockchain.get_token_contract(&sov_token_id).is_none() {
+                    blockchain.insert_token_contract(
+                        sov_token_id,
+                        lib_blockchain::contracts::TokenContract::new_sov_native(),
+                    );
                     info!(
                         "🪙 SOV token contract initialized (upgrade migration): {}",
                         hex::encode(&sov_token_id[..8])
@@ -1434,7 +1436,7 @@ impl RuntimeOrchestrator {
             // (idempotent) ensures every restart finds the correct genesis balances.
             if let Some(store) = blockchain.store.as_ref() {
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
+                if let Some(sov_contract) = blockchain.get_token_contract(&sov_token_id) {
                     let entries: Vec<([u8; 32], u128)> = sov_contract
                         .balances_iter()
                         .map(|(pk, &bal)| (pk.key_id, bal))
@@ -2247,15 +2249,17 @@ impl RuntimeOrchestrator {
                 info!(
                     "📂 Loaded existing blockchain from SledStore (height: {}, tokens: {})",
                     bc.height,
-                    bc.token_contracts.len()
+                    bc.token_contract_count()
                 );
 
                 // CRITICAL: Ensure SOV token contract is always initialized
                 // This handles upgrades from older blockchain data that didn't have the SOV token
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                if !bc.token_contracts.contains_key(&sov_token_id) {
-                    let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
-                    bc.token_contracts.insert(sov_token_id, sov_token.clone());
+                if bc.get_token_contract(&sov_token_id).is_none() {
+                    bc.insert_token_contract(
+                        sov_token_id,
+                        lib_blockchain::contracts::TokenContract::new_sov_native(),
+                    );
 
                     info!("🪙 SOV token contract initialized (persistence deferred to next block commit): {}", hex::encode(&sov_token_id[..8]));
                 }
@@ -2938,11 +2942,11 @@ impl RuntimeOrchestrator {
                                     let welcome_bonus = SOV_WELCOME_BONUS;
 
                                     // Update wallet registry balance
-                                    if let Some(wallet_entry) =
-                                        blockchain_ref.wallet_registry.get_mut(&wallet_id_hex)
-                                    {
-                                        wallet_entry.initial_balance = welcome_bonus;
-                                    }
+                                    blockchain_ref
+                                        .update_wallet_shadow_initial_balance(
+                                            &wallet_id_hex,
+                                            welcome_bonus,
+                                        );
 
                                     // Create spendable UTXO for the welcome bonus
                                     let utxo_output =
@@ -3131,12 +3135,11 @@ impl RuntimeOrchestrator {
                                                 let welcome_bonus = SOV_WELCOME_BONUS;
 
                                                 // Update wallet registry balance
-                                                if let Some(wallet_entry) = blockchain_ref
-                                                    .wallet_registry
-                                                    .get_mut(&wallet_id_hex)
-                                                {
-                                                    wallet_entry.initial_balance = welcome_bonus;
-                                                }
+                                                blockchain_ref
+                                                    .update_wallet_shadow_initial_balance(
+                                                        &wallet_id_hex,
+                                                        welcome_bonus,
+                                                    );
 
                                                 // Create spendable UTXO for the welcome bonus
                                                 let utxo_output = lib_blockchain::transaction::TransactionOutput {
@@ -3192,11 +3195,10 @@ impl RuntimeOrchestrator {
                                         let welcome_bonus = SOV_WELCOME_BONUS;
 
                                         // Update wallet registry
-                                        if let Some(wallet_mut) =
-                                            blockchain_ref.wallet_registry.get_mut(&wallet_id_hex)
-                                        {
-                                            wallet_mut.initial_balance = welcome_bonus;
-                                        }
+                                        blockchain_ref.update_wallet_shadow_initial_balance(
+                                            &wallet_id_hex,
+                                            welcome_bonus,
+                                        );
 
                                         // Create spendable UTXO
                                         let utxo_output =
@@ -3294,12 +3296,11 @@ impl RuntimeOrchestrator {
                                                 let welcome_bonus = SOV_WELCOME_BONUS;
 
                                                 // Update wallet registry balance
-                                                if let Some(wallet_entry) = blockchain_ref
-                                                    .wallet_registry
-                                                    .get_mut(&wallet_id_hex)
-                                                {
-                                                    wallet_entry.initial_balance = welcome_bonus;
-                                                }
+                                                blockchain_ref
+                                                    .update_wallet_shadow_initial_balance(
+                                                        &wallet_id_hex,
+                                                        welcome_bonus,
+                                                    );
 
                                                 // Create spendable UTXO for the welcome bonus
                                                 let utxo_output = lib_blockchain::transaction::TransactionOutput {
@@ -4662,10 +4663,10 @@ impl RuntimeOrchestrator {
 
             info!(
                 " Scanning blockchain wallet_registry (total entries: {})...",
-                blockchain.wallet_registry.len()
+                blockchain.wallet_count()
             );
 
-            for (wallet_id_hex, wallet_data) in blockchain.wallet_registry.iter() {
+            for (wallet_id_hex, wallet_data) in blockchain.wallet_registry_snapshot() {
                 if wallet_data.initial_balance > 0 {
                     info!(
                         "   Found funded wallet: {} → {} SOV",
@@ -5685,9 +5686,8 @@ pub(super) fn try_restore_validators_from_dat(
     match load_validated_blockchain_dat(dat_path, allow_genesis_mismatch)? {
         Some(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
             let restored: Vec<_> = dat_bc
-                .validator_registry
-                .values()
-                .cloned()
+                .validator_registry_snapshot()
+                .into_values()
                 .collect();
             let count = restored.len();
             bc.validator_blocks = dat_bc.validator_blocks;
@@ -6480,9 +6480,7 @@ mod oracle_startup_tests {
         // Insert an active validator with a Dilithium5-sized consensus key.
         let consensus_key = [0xABu8; 2592];
         let key_id = lib_blockchain::blake3_hash(&consensus_key).as_array();
-        bc.validator_registry.insert(
-            "did:zhtp:validator-test".to_string(),
-            ValidatorInfo {
+        bc.insert_validator_shadow(ValidatorInfo {
                 identity_id: "did:zhtp:validator-test".to_string(),
                 stake: 1_000_000,
                 storage_provided: 0,
@@ -6499,13 +6497,12 @@ mod oracle_startup_tests {
                 admission_source: "test".to_string(),
                 governance_proposal_id: None,
                 oracle_key_id: None,
-            },
-        );
+            });
 
         // Replicate the bootstrap logic from seed_blockchain_validator_registry.
         // Type system now enforces 2592-byte keys, no length check needed.
         let mut committee_members: Vec<([u8; 32], Vec<u8>)> = bc
-            .validator_registry
+            .validator_registry_snapshot()
             .values()
             .filter(|v| v.status == "active")
             .map(|v| {
@@ -6529,9 +6526,7 @@ mod oracle_startup_tests {
 
         // Insert a validator with an all-zeros consensus key (invalid).
         // Type system enforces 2592-byte size, but we can still test for invalid content.
-        bc.validator_registry.insert(
-            "did:zhtp:bad-validator".to_string(),
-            ValidatorInfo {
+        bc.insert_validator_shadow(ValidatorInfo {
                 identity_id: "did:zhtp:bad-validator".to_string(),
                 stake: 1_000_000,
                 storage_provided: 0,
@@ -6548,12 +6543,11 @@ mod oracle_startup_tests {
                 admission_source: "test".to_string(),
                 governance_proposal_id: None,
                 oracle_key_id: None,
-            },
-        );
+            });
 
         // Filter out validators with all-zeros keys (invalid)
         let committee_members: Vec<([u8; 32], [u8; 2592])> = bc
-            .validator_registry
+            .validator_registry_snapshot()
             .values()
             .filter(|v| v.status == "active")
             .filter(|v| v.consensus_key != [0u8; 2592]) // skip all-zeros
@@ -6612,10 +6606,8 @@ mod validator_startup_tests {
         let sled_path = dir.path().join("sled");
 
         let mut src = Blockchain::new().expect("Blockchain::new");
-        src.validator_registry
-            .insert("validator-1".to_string(), make_validator("validator-1"));
-        src.validator_registry
-            .insert("validator-2".to_string(), make_validator("validator-2"));
+        src.insert_validator_shadow(make_validator("validator-1"));
+        src.insert_validator_shadow(make_validator("validator-2"));
         #[allow(deprecated)]
         src.save_to_file(&dat_path).expect("save_to_file");
 

@@ -37,9 +37,7 @@ fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {
     };
 
     // Register the treasury wallet
-    blockchain
-        .wallet_registry
-        .insert("dao_treasury".to_string(), treasury_wallet);
+    blockchain.insert_wallet_shadow("dao_treasury".to_string(), treasury_wallet);
     blockchain.dao_treasury_wallet_id = Some("dao_treasury".to_string());
 
     // Create SOV token with kernel authority
@@ -48,7 +46,7 @@ fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {
     let sov_token_id = generate_lib_token_id();
 
     // Register the SOV token
-    blockchain.token_contracts.insert(sov_token_id, sov_token);
+    blockchain.insert_token_contract(sov_token_id, sov_token);
 
     (blockchain, treasury_pubkey)
 }
@@ -65,7 +63,7 @@ fn test_treasury_balance_uses_token_contract() {
     let sov_token_id = generate_lib_token_id();
     let treasury_amount: u128 = 1_000_000;
 
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token
             .set_balance(&treasury_pubkey, treasury_amount);
     }
@@ -88,7 +86,7 @@ fn test_treasury_balance_not_placeholder() {
     let sov_token_id = generate_lib_token_id();
     let expected_amount: u128 = 5_555_555;
 
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token
             .set_balance(&treasury_pubkey, expected_amount);
     }
@@ -126,9 +124,7 @@ fn test_treasury_balance_returns_zero_without_token_contract() {
         initial_balance: 0,
     };
 
-    blockchain
-        .wallet_registry
-        .insert("dao_treasury".to_string(), treasury_wallet);
+    blockchain.insert_wallet_shadow("dao_treasury".to_string(), treasury_wallet);
     blockchain.dao_treasury_wallet_id = Some("dao_treasury".to_string());
 
     // No SOV token contract registered - should return 0 (not panic)
@@ -149,7 +145,7 @@ fn test_treasury_balance_updates_after_transactions() {
     assert_eq!(balance1, 0);
 
     // Add some tokens
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.set_balance(&treasury_pubkey, 100_000);
     }
 
@@ -157,7 +153,7 @@ fn test_treasury_balance_updates_after_transactions() {
     assert_eq!(balance2, 100_000);
 
     // Add more tokens
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.set_balance(&treasury_pubkey, 250_000);
     }
 
@@ -165,7 +161,7 @@ fn test_treasury_balance_updates_after_transactions() {
     assert_eq!(balance3, 250_000);
 
     // Reduce tokens (simulating spending)
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.set_balance(&treasury_pubkey, 150_000);
     }
 

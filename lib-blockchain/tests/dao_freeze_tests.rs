@@ -23,7 +23,7 @@ fn add_validator(bc: &mut Blockchain, did: &str) {
         governance_proposal_id: None,
         oracle_key_id: None,
     };
-    bc.validator_registry.insert(did.to_string(), vinfo);
+    bc.insert_validator_shadow(vinfo);
 }
 
 // ── default values ────────────────────────────────────────────────────────────

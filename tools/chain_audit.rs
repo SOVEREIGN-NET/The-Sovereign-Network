@@ -141,12 +141,13 @@ fn main() -> Result<()> {
         }
     };
 
-    println!("  identity_registry entries:  {}", bc.identity_registry.len());
-    println!("  wallet_registry entries:    {}", bc.wallet_registry.len());
+    println!("  identity_registry entries:  {}", bc.identity_count());
+    println!("  wallet_registry entries:    {}", bc.wallet_count());
 
     println!();
     println!("=== IDENTITY → WALLET MAPPING ===");
-    let mut sorted_ids: Vec<_> = bc.identity_registry.values().collect();
+    let identity_snapshot = bc.identity_registry_snapshot();
+    let mut sorted_ids: Vec<_> = identity_snapshot.values().collect();
     sorted_ids.sort_by(|a, b| a.did.cmp(&b.did));
     for id in &sorted_ids {
         println!("  SID:     {}", id.did);
@@ -158,12 +159,9 @@ fn main() -> Result<()> {
     }
 
     let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-    let sov_balance_count = bc.token_contracts
-        .get(&sov_id)
-        .map(|t| t.balances_len())
-        .unwrap_or(0);
-    let sov_total: u128 = bc.token_contracts
-        .get(&sov_id)
+    let sov_balance_count = bc.count_token_holders(&sov_id);
+    let sov_total: u128 = bc
+        .token_contract_shadow(&sov_id)
         .map(|t| t.total_balance_sum())
         .unwrap_or(0);
     println!("  SOV token balance entries:  {}", sov_balance_count);
@@ -171,14 +169,14 @@ fn main() -> Result<()> {
     println!();
 
     println!("=== DIVERGENCE ANALYSIS ===");
-    let identity_divergence = bc.identity_registry.len() as i64 - identity_dids_in_blocks.len() as i64;
-    let wallet_divergence = bc.wallet_registry.len() as i64 - wallet_ids_in_blocks.len() as i64;
+    let identity_divergence = bc.identity_count() as i64 - identity_dids_in_blocks.len() as i64;
+    let wallet_divergence = bc.wallet_count() as i64 - wallet_ids_in_blocks.len() as i64;
     let balance_divergence = sov_balance_count as i64 - token_mint_wallets.len() as i64;
 
     println!("  Identities: {} in memory vs {} in blocks  -> divergence: {}",
-        bc.identity_registry.len(), identity_dids_in_blocks.len(), identity_divergence);
+        bc.identity_count(), identity_dids_in_blocks.len(), identity_divergence);
     println!("  Wallets:    {} in memory vs {} in blocks  -> divergence: {}",
-        bc.wallet_registry.len(), wallet_ids_in_blocks.len(), wallet_divergence);
+        bc.wallet_count(), wallet_ids_in_blocks.len(), wallet_divergence);
     println!("  Balances:   {} in memory vs {} minted in blocks -> divergence: {}",
         sov_balance_count, token_mint_wallets.len(), balance_divergence);
 
@@ -195,8 +193,8 @@ fn main() -> Result<()> {
     if identity_divergence > 0 {
         println!();
         println!("=== IDENTITIES IN MEMORY BUT NOT IN ANY BLOCK ===");
-        for (did, _) in &bc.identity_registry {
-            if !identity_dids_in_blocks.contains(did) {
+        for (did, _) in bc.identity_registry_snapshot() {
+            if !identity_dids_in_blocks.contains(&did) {
                 println!("  {}", did);
             }
         }
@@ -206,8 +204,8 @@ fn main() -> Result<()> {
     if wallet_divergence > 0 {
         println!();
         println!("=== WALLETS IN MEMORY BUT NOT IN ANY BLOCK ===");
-        for (wallet_id, wallet) in &bc.wallet_registry {
-            if !wallet_ids_in_blocks.contains(wallet_id) {
+        for (wallet_id, wallet) in bc.wallet_registry_snapshot() {
+            if !wallet_ids_in_blocks.contains(&wallet_id) {
                 println!("  {} (type: {}, initial_balance: {})",
                     wallet_id, wallet.wallet_type, wallet.initial_balance);
             }
