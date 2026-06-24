@@ -173,11 +173,13 @@ impl OracleComponent {
             }
 
             // Build key lookup: oracle_signing_pubkeys (from bootstrap) takes priority,
-            // then validator_registry consensus keys as fallback.
+            // then active validators' consensus keys as fallback. Use
+            // active_validator_infos (not validator_registry_snapshot) so
+            // deregistered validators' keys are excluded from attestation verification.
             let oracle_pubkeys = bc.oracle_state.oracle_signing_pubkeys.clone();
             let key_map: Vec<([u8; 32], [u8; 2592])> = bc
-                .validator_registry_snapshot()
-                .values()
+                .active_validator_infos()
+                .into_iter()
                 .filter(|v| !v.consensus_key.is_empty())
                 .map(|v| {
                     let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
@@ -520,9 +522,10 @@ impl OracleComponent {
                         let mut bc = blockchain.write().await;
                         let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
                         let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
+                        // Active validators only — see consumer key_map comment above.
                         let key_map: Vec<([u8; 32], [u8; 2592])> = bc
-                            .validator_registry_snapshot()
-                            .values()
+                            .active_validator_infos()
+                            .into_iter()
                             .filter(|v| !v.consensus_key.is_empty())
                             .map(|v| {
                                 let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();

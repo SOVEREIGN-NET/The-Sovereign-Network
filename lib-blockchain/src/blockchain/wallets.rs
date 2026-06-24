@@ -778,6 +778,10 @@ impl Blockchain {
         }
         if let Some(store) = self.get_store() {
             let Some(wallet_id_bytes) = Self::wallet_id_bytes_from_hex(wallet_id) else {
+                tracing::warn!(
+                    wallet_id = %wallet_id,
+                    "wallet_exists: invalid wallet_id hex; treating as absent"
+                );
                 return false;
             };
             match store.get_wallet_projection(&wallet_id_bytes) {
@@ -821,9 +825,17 @@ impl Blockchain {
     ) -> HashMap<String, crate::transaction::WalletTransactionData> {
         let mut out = HashMap::new();
         if let Some(store) = self.get_store() {
-            if let Ok(iter) = store.iter_wallet_projections() {
-                for (wallet_id, record) in iter {
-                    out.insert(hex::encode(wallet_id), record.wallet_data);
+            match store.iter_wallet_projections() {
+                Ok(iter) => {
+                    for (wallet_id, record) in iter {
+                        out.insert(hex::encode(wallet_id), record.wallet_data);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "wallet_registry_snapshot: sled iter failed; using in-memory shadow only"
+                    );
                 }
             }
         }
@@ -834,6 +846,10 @@ impl Blockchain {
     }
 
     /// Authoritative wallet count from sled when attached (#2639).
+    ///
+    /// Returns durable sled cardinality only — NOT a union with the in-memory
+    /// shadow (unlike [`wallet_registry_snapshot`].len()). Pending same-block
+    /// wallets are visible via the snapshot, not this count.
     pub fn wallet_count(&self) -> usize {
         if let Some(store) = self.get_store() {
             match store.count_wallet_projections() {

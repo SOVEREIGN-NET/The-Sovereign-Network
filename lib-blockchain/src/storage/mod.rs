@@ -1192,8 +1192,14 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()>;
 
     /// Count wallet projection entries (authoritative sled cardinality).
+    ///
+    /// Implementations should override with an O(1) tree length when available;
+    /// the default deliberately errors rather than silently O(N)-scanning.
     fn count_wallet_projections(&self) -> StorageResult<usize> {
-        Ok(self.iter_wallet_projections()?.count())
+        Err(StorageError::Database(
+            "count_wallet_projections not implemented for this BlockchainStore backend"
+                .to_string(),
+        ))
     }
 
     /// Iterate all wallet projection entries.

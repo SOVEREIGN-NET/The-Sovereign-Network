@@ -1224,7 +1224,7 @@ async fn backfill_identities_from_blockchain(
 
     let bc = blockchain_arc.read().await;
     let identity_registry = bc.identity_registry_snapshot();
-    let wallet_registry = bc.wallet_registry.clone();
+    let wallet_registry = bc.wallet_registry_snapshot();
     drop(bc);
 
     if identity_registry.is_empty() {

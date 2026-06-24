@@ -203,6 +203,9 @@ impl Blockchain {
     }
 
     /// Authoritative validator count from sled when attached (#2639).
+    ///
+    /// Returns durable sled cardinality only — NOT a union with the in-memory
+    /// shadow (unlike [`validator_registry_snapshot`].len()).
     pub fn validator_count(&self) -> usize {
         if let Some(store) = self.get_store() {
             match store.count_validator_records() {
