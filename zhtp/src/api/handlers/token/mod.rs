@@ -684,6 +684,8 @@ impl TokenHandler {
         let mut balances = Vec::new();
 
         // Collect balances from all token contracts (sled-first metadata list).
+        // TODO(#2637): O(N) sled reads per token — add caching/pagination if
+        // user-creatable tokens grow beyond a handful.
         for (token_id, token) in blockchain.iter_token_contract_entries() {
             let balance = if token_id == native_token_id {
                 sov_wallet_id

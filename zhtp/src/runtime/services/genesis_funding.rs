@@ -220,6 +220,11 @@ impl GenesisFundingService {
             wallet_id_bytes_arr.copy_from_slice(&wallet_id.0);
             let recipient_pk =
                 lib_blockchain::contracts::utils::wallet_key_for_sov(wallet_id_bytes_arr);
+            // Genesis-only dual-write: in-mem mint + sled force_set. Gated on
+            // current_balance == 0 (idempotent welcome bonus). Runtime balance
+            // mutations must NOT follow this pattern — executor/sled is authoritative.
+            // Must run before the consensus loop (force_set errors if tx_active).
+            // TODO(#2637): collapse to a single sled write once in-mem mint is removed.
             if blockchain.get_token_contract(&sov_token_id).is_some() {
                 let current_balance = blockchain
                     .token_balance(&sov_token_id, &wallet_id_bytes_arr)

@@ -89,6 +89,10 @@ pub trait BlockchainQuery {
 
     /// Get token balance for an address. Reads from sled (authoritative) with
     /// in-memory fallback. Returns 0 if token or address not found.
+    ///
+    /// **Limitation:** sled I/O errors are swallowed as 0 (trait returns `u128`,
+    /// not `Result`). Callers needing fail-closed semantics should use
+    /// `Blockchain::token_balance` directly.
     fn query_token_balance(&self, token_id: &[u8; 32], key_id: &[u8; 32]) -> u128;
 
     /// Get a token contract by ID (from sled or in-memory).

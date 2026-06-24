@@ -1258,11 +1258,17 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// Unlike `set_token_balance`, this does NOT require an active block transaction.
     /// Use ONLY in startup migrations (e.g., correcting backfill inflation), never
     /// during block execution.
+    ///
+    /// SledStore implements this path. Other backends must override or callers
+    /// receive an explicit error — never a silent `Ok(0)` no-write.
     fn force_set_token_balances(
         &self,
         _entries: &[(TokenId, Address, u128)],
     ) -> StorageResult<usize> {
-        Ok(0) // Default no-op
+        Err(StorageError::Database(
+            "force_set_token_balances not implemented for this BlockchainStore backend"
+                .to_string(),
+        ))
     }
 
     // =========================================================================

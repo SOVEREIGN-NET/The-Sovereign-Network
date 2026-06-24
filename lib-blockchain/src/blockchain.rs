@@ -1072,8 +1072,10 @@ impl Blockchain {
             match executor.apply_block(&block) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor.
-                    // Writes path: sync in-memory token_contracts from sled after apply.
-                    // Public reads must use token_balance() — not this HashMap (#2637).
+                    // Writes path: sync in-memory token_contracts from sled after apply
+                    // (SOV/CBE addresses touched in this block only). The HashMap is a
+                    // legacy-write cache — NOT authoritative for public reads; handlers
+                    // must use token_balance() (#2637).
                     if let Some(store) = &self.store {
                         let sov_id = crate::contracts::utils::generate_lib_token_id();
                         let storage_sov_id = crate::storage::TokenId(sov_id);
@@ -1896,6 +1898,15 @@ impl Blockchain {
             })
             .collect();
 
+        // Legacy-path fee debits write in-mem first; mirror to sled when attached so
+        // sled-first reads (token_balance) observe the debit (#2712 review).
+        let mirror_fee_to_sled = self.get_store().is_some();
+        let mut sled_fee_sync: Vec<(
+            crate::storage::TokenId,
+            crate::storage::Address,
+            u128,
+        )> = Vec::new();
+
         // Get mutable reference to SOV token contract
         let sov_token = match self.token_contracts.get_mut(&sov_token_id) {
             Some(token) => token,
@@ -1915,8 +1926,7 @@ impl Blockchain {
             let tx = &block.transactions[*i];
             let sender = &tx.signature.public_key;
 
-            // Check sender's balance before deduction.
-            // Writes path: legacy in-memory fee debit below; HashMap is authoritative here.
+            // Check sender's balance before deduction (legacy in-mem path).
             let sender_balance = sov_token.balance_of(&fee_payer);
             if sender_balance < tx.fee as u128 {
                 // This shouldn't happen if validation is working correctly
@@ -1936,6 +1946,13 @@ impl Blockchain {
             // but this historical fee deduction maintains existing behavior.
             let new_balance = sender_balance - tx.fee as u128;
             sov_token.set_balance(&fee_payer, new_balance);
+            if mirror_fee_to_sled {
+                sled_fee_sync.push((
+                    crate::storage::TokenId::new(sov_token_id),
+                    crate::storage::Address::new(fee_payer.key_id),
+                    new_balance,
+                ));
+            }
 
             total_fees = total_fees.saturating_add(tx.fee);
 
@@ -1958,8 +1975,16 @@ impl Blockchain {
                         treasury_id.copy_from_slice(&bytes);
                         let treasury_key = Self::wallet_key_for_sov(&treasury_id);
                         let treasury_balance = sov_token.balance_of(&treasury_key);
-                        sov_token
-                            .set_balance(&treasury_key, treasury_balance.saturating_add(total_fees as u128));
+                        let new_treasury_balance =
+                            treasury_balance.saturating_add(total_fees as u128);
+                        sov_token.set_balance(&treasury_key, new_treasury_balance);
+                        if mirror_fee_to_sled {
+                            sled_fee_sync.push((
+                                crate::storage::TokenId::new(sov_token_id),
+                                crate::storage::Address::new(treasury_id),
+                                new_treasury_balance,
+                            ));
+                        }
                         debug!(
                             "Block {} fees credited to DAO treasury: {} SOV",
                             block.height(),
@@ -1990,6 +2015,23 @@ impl Blockchain {
                     })
                     .count()
             );
+        }
+
+        if let Some(store) = self.get_store() {
+            if !sled_fee_sync.is_empty() {
+                match store.force_set_token_balances(&sled_fee_sync) {
+                    Ok(n) => debug!(
+                        "legacy fee path: synced {} sled balance(s) for block {}",
+                        n,
+                        block.height()
+                    ),
+                    Err(e) => warn!(
+                        error = %e,
+                        block = block.height(),
+                        "legacy fee path: failed to sync sled balances after in-mem debit"
+                    ),
+                }
+            }
         }
 
         Ok(total_fees)
