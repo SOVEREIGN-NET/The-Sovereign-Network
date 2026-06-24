@@ -2945,10 +2945,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             None => return Ok(()), // no store — defer lock check to executor
         };
 
-        // Validate nonce against current SOV nonce for the staker to prevent replays.
-        let sov_token = crate::storage::TokenId(crate::contracts::utils::generate_lib_token_id());
-        let staker_addr = crate::storage::Address(data.staker);
-        let current_nonce = store.get_token_nonce(&sov_token, &staker_addr)
+        // Validate nonce against current SOV nonce for the staker to prevent replays (#2638).
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let current_nonce = blockchain
+            .token_nonce(&sov_token_id, &data.staker)
             .map_err(|_| ValidationError::InvalidTransaction)?;
         if data.nonce != current_nonce {
             tracing::warn!(

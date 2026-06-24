@@ -678,7 +678,6 @@ pub async fn handle_admission_prepare(
         Some(s) => s.clone(),
         None => return Ok(server_error("blockchain has no persistent store")),
     };
-    drop(blockchain);
 
     let sponsor_did_hash = did_to_hash(&req.sponsor_user_did);
     let identity = match store.get_identity(&sponsor_did_hash) {
@@ -692,14 +691,13 @@ pub async fn handle_admission_prepare(
         Err(e) => return Ok(server_error(format!("identity store error: {e}"))),
     };
 
-    let sov_token = lib_blockchain::storage::TokenId::new(
-        lib_blockchain::contracts::utils::generate_lib_token_id(),
-    );
-    let sponsor_addr = identity.owner;
-    let current_nonce = match store.get_token_nonce(&sov_token, &sponsor_addr) {
+    let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+    let sponsor_addr = identity.owner.0;
+    let current_nonce = match blockchain.token_nonce(&sov_token_id, &sponsor_addr) {
         Ok(n) => n,
         Err(e) => return Ok(server_error(format!("nonce lookup failed: {e}"))),
     };
+    drop(blockchain);
 
     let data = RegisterObserverData {
         observer_node_did: req.observer_node_did,
