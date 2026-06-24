@@ -47,10 +47,12 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_identity(&self, did: &str) -> Option<&IdentityTransactionData> {
+        // In-memory ref only — sled-backed identities use identity_transaction_data().
         self.identity_registry.get(did)
     }
 
     fn query_all_identities(&self) -> Vec<(&String, &IdentityTransactionData)> {
+        // Legacy ref iterator — IPC uses identity_registry_snapshot() instead (#2639).
         self.identity_registry.iter().collect()
     }
 

@@ -536,6 +536,105 @@ fn identity_public_key_pins_to_consensus() {
     );
 }
 
+#[test]
+fn identity_transaction_data_reads_sled_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_tx_data")).unwrap());
+    let did = "did:zhtp:tx-data";
+    let did_hash = crate::storage::did_to_hash(did);
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                created_at: 42,
+                registration_fee: 7,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "Sled User".to_string(),
+                public_key: vec![0xAB; 2592],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let got = bc
+        .identity_transaction_data(did)
+        .expect("sled-backed identity");
+    assert_eq!(got.display_name, "Sled User");
+    assert_eq!(got.created_at, 42);
+    assert_eq!(got.registration_fee, 7);
+}
+
+#[test]
+fn identity_registry_snapshot_includes_sled_without_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_snapshot")).unwrap());
+    let did = "did:zhtp:snapshot-only";
+    let did_hash = crate::storage::did_to_hash(did);
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "Only Sled".to_string(),
+                public_key: vec![0xCD; 2592],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let snap = bc.identity_registry_snapshot();
+    assert_eq!(snap.get(did).map(|d| d.display_name.as_str()), Some("Only Sled"));
+}
+
+#[test]
+fn identity_display_name_taken_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_name_taken")).unwrap());
+    let did = "did:zhtp:name-taken";
+    let did_hash = crate::storage::did_to_hash(did);
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "UniqueName".to_string(),
+                public_key: vec![0xEF; 2592],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    assert!(bc.identity_display_name_taken("uniquename"));
+    assert!(!bc.identity_display_name_taken("available"));
+}
+
 /// did_by_public_key() resolves a DID from a public key by scanning sled
 /// metadata even when the in-memory shadow is empty (restart case) — the read
 /// that lets council-membership / dedup checks work on a store-backed node

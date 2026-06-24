@@ -568,7 +568,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
         // Check if already on blockchain
         {
             let bc = blockchain_arc.read().await;
-            if bc.identity_registry.contains_key(did) {
+            if bc.identity_exists(did) {
                 debug!("Identity {} already on blockchain, skipping", id_preview);
                 skipped += 1;
                 continue;
@@ -1223,7 +1223,7 @@ async fn backfill_identities_from_blockchain(
     };
 
     let bc = blockchain_arc.read().await;
-    let identity_registry = bc.identity_registry.clone();
+    let identity_registry = bc.identity_registry_snapshot();
     let wallet_registry = bc.wallet_registry.clone();
     drop(bc);
 

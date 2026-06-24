@@ -151,14 +151,13 @@ async fn dispatch_request(
         }
         IpcRequest::QueryIdentity { did } => {
             let bc = blockchain.read().await;
-            IpcResponse::Identity(bc.query_identity(did).cloned())
+            IpcResponse::Identity(bc.identity_transaction_data(did))
         }
         IpcRequest::QueryAllIdentities => {
             let bc = blockchain.read().await;
             let owned: Vec<(String, crate::transaction::IdentityTransactionData)> = bc
-                .query_all_identities()
+                .identity_registry_snapshot()
                 .into_iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             IpcResponse::AllIdentities(owned)
         }
