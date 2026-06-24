@@ -2189,10 +2189,7 @@ struct BlockchainIdentityRegistryVerifier {
 impl IdentityRegistryVerifier for BlockchainIdentityRegistryVerifier {
     async fn is_registered(&self, did: &str) -> Result<bool> {
         let bc = self.blockchain.read().await;
-        // #2639: identity via sled-union (in-mem OR durable sled). Without this a
-        // restarted store-backed node has an empty in-mem registry and would
-        // reject EVERY peer (network partition). validator_registry stays in-mem
-        // pending its own sled write-path (#2639 deferral).
-        Ok(bc.identity_exists(did) || bc.validator_registry.contains_key(did))
+        // #2639: sled-union for both identity and validator registries.
+        Ok(bc.identity_exists(did) || bc.validator_exists(did))
     }
 }

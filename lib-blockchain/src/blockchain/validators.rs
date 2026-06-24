@@ -172,6 +172,49 @@ impl Blockchain {
             .map(|rec| ValidatorInfo::from(&rec))
     }
 
+    /// Sled-first snapshot for backfill / iteration (#2639).
+    ///
+    /// Builds a map from durable validator records, then overlays the in-memory
+    /// shadow (pending / same-block registrations win).
+    pub fn validator_registry_snapshot(&self) -> HashMap<String, ValidatorInfo> {
+        let mut out = HashMap::new();
+        if let Some(store) = self.get_store() {
+            match store.iter_validator_records() {
+                Ok(iter) => {
+                    for rec in iter {
+                        out.insert(
+                            rec.consensus.identity_id.clone(),
+                            ValidatorInfo::from(&rec),
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "validator_registry_snapshot: sled iter failed; using in-memory shadow only"
+                    );
+                }
+            }
+        }
+        for (did, info) in &self.validator_registry {
+            out.insert(did.clone(), info.clone());
+        }
+        out
+    }
+
+    /// Authoritative validator count from sled when attached (#2639).
+    pub fn validator_count(&self) -> usize {
+        if let Some(store) = self.get_store() {
+            match store.count_validator_records() {
+                Ok(n) => return n,
+                Err(e) => {
+                    warn!(error = %e, "validator_count: sled count failed; using in-memory shadow");
+                }
+            }
+        }
+        self.validator_registry.len()
+    }
+
     /// Authoritative active validator set for vote/propose/consensus sync (#56).
     ///
     /// Sled-first with in-memory overlay for same-block registrations. All

@@ -3605,9 +3605,8 @@ impl RuntimeOrchestrator {
         const DILITHIUM5_PK_LEN: usize = 2592;
 
         let mut committee_members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = blockchain
-            .validator_registry
-            .values()
-            .filter(|v| v.status == "active")
+            .active_validator_infos()
+            .into_iter()
             .filter_map(|v| {
                 if v.consensus_key == [0u8; 2592] {
                     return None;
@@ -3679,7 +3678,7 @@ impl RuntimeOrchestrator {
         let mut blockchain = blockchain_arc.write().await;
 
         // Idempotent: skip if this node is already in validator_registry
-        if blockchain.validator_registry.contains_key(&node_did) {
+        if blockchain.validator_exists(&node_did) {
             info!(
                 "ℹ️ Node {} already in validator_registry, skipping self-registration",
                 &node_did[..40]

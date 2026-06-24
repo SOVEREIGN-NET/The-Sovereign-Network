@@ -77,21 +77,13 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_validator(&self, did: &str) -> Option<&ValidatorInfo> {
-        // #56: sled-first path returns owned data; query surface still serves
-        // in-memory refs when present (same-block overlay).
+        // In-memory ref only — sled-backed validators use validator_info_by_did().
         self.validator_registry.get(did)
     }
 
     fn query_validator_count(&self) -> usize {
-        if let Some(store) = self.get_store() {
-            match store.count_validator_records() {
-                Ok(n) => return n,
-                Err(e) => {
-                    tracing::warn!(error = %e, "query_validator_count: sled count failed; using in-memory shadow");
-                }
-            }
-        }
-        self.validator_registry.len()
+        // #2639: authoritative sled count (in-memory shadow is non-durable).
+        self.validator_count()
     }
 
     fn query_is_council_member(&self, did: &str) -> bool {
@@ -140,6 +132,7 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_all_validators(&self) -> Vec<(&String, &crate::blockchain::ValidatorInfo)> {
+        // Legacy ref iterator — handlers use validator_registry_snapshot() instead (#2639).
         self.validator_registry.iter().collect()
     }
 

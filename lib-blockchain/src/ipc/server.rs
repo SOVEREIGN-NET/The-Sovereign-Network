@@ -171,7 +171,7 @@ async fn dispatch_request(
         }
         IpcRequest::QueryValidator { did } => {
             let bc = blockchain.read().await;
-            IpcResponse::Validator(bc.query_validator(did).cloned())
+            IpcResponse::Validator(bc.validator_info_by_did(did))
         }
         IpcRequest::QueryIsCouncilMember { did } => {
             let bc = blockchain.read().await;

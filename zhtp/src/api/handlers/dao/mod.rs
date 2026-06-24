@@ -806,15 +806,7 @@ impl DaoHandler {
             data.validate(current_epoch)
                 .map_err(|e| anyhow::anyhow!("Invalid oracle committee update payload: {}", e))?;
 
-            let active_validator_key_ids: std::collections::HashSet<[u8; 32]> = blockchain
-                .validator_registry
-                .values()
-                .filter(|v| v.status == "active")
-                .map(|v| {
-                    v.oracle_key_id
-                        .unwrap_or_else(|| lib_blockchain::blake3_hash(&v.consensus_key).as_array())
-                })
-                .collect();
+            let active_validator_key_ids = blockchain.active_validator_key_ids();
 
             for member in &data.new_members {
                 if !active_validator_key_ids.contains(member) {

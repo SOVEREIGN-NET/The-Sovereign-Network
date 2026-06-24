@@ -1696,8 +1696,8 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        // Get validators directly from blockchain validator_registry
-        let all_validators = blockchain.get_all_validators();
+        // Sled-first validator snapshot (#2639).
+        let all_validators = blockchain.validator_registry_snapshot();
 
         // Map validator info to API format
         let validators: Vec<ValidatorInfo> = all_validators

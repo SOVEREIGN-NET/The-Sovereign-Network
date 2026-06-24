@@ -84,9 +84,9 @@ impl OracleComponent {
                 for _ in 0..60 {
                     let count = {
                         let b = bc.read().await;
-                        b.validator_registry
-                            .values()
-                            .filter(|v| v.status == "active" && !v.consensus_key.is_empty())
+                        b.active_validator_infos()
+                            .into_iter()
+                            .filter(|v| !v.consensus_key.is_empty())
                             .count()
                     };
                     if count >= 2 {
@@ -176,7 +176,7 @@ impl OracleComponent {
             // then validator_registry consensus keys as fallback.
             let oracle_pubkeys = bc.oracle_state.oracle_signing_pubkeys.clone();
             let key_map: Vec<([u8; 32], [u8; 2592])> = bc
-                .validator_registry
+                .validator_registry_snapshot()
                 .values()
                 .filter(|v| !v.consensus_key.is_empty())
                 .map(|v| {
@@ -521,7 +521,7 @@ impl OracleComponent {
                         let epoch2 = bc.oracle_state.epoch_id(bc.last_committed_timestamp());
                         let oracle_pubkeys2 = bc.oracle_state.oracle_signing_pubkeys.clone();
                         let key_map: Vec<([u8; 32], [u8; 2592])> = bc
-                            .validator_registry
+                            .validator_registry_snapshot()
                             .values()
                             .filter(|v| !v.consensus_key.is_empty())
                             .map(|v| {

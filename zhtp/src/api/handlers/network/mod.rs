@@ -963,7 +963,7 @@ impl NetworkHandler {
         // whether *its own* identity has a chain-side tx — and the mobile
         // app reads this `state` field to decide whether the node is
         // reachable.
-        let node_is_known_validator = blockchain.query_validator(&node_did).is_some();
+        let node_is_known_validator = blockchain.validator_info_by_did(&node_did).is_some();
         let identity_known_to_chain = identity_registered || node_is_known_validator;
 
         let state = if node_did == "not_initialized" {
@@ -1170,11 +1170,11 @@ impl NetworkHandler {
         // Build validator entries from on-chain registry, with IP overlay
         let ip_overlay = crate::runtime::validator_ip::get_all_resolved_addresses();
         let validators: Vec<serde_json::Value> = blockchain
-            .validator_registry
-            .iter()
-            .filter(|(_, v)| v.status == "active")
-            .map(|(did, v)| {
-                let endpoint = ip_overlay.get(did).unwrap_or(&v.network_address);
+            .active_validator_infos()
+            .into_iter()
+            .map(|v| {
+                let did = v.identity_id.clone();
+                let endpoint = ip_overlay.get(&did).unwrap_or(&v.network_address);
                 let ip = Self::extract_host(endpoint);
                 let spki_pin = known_spki_pins.get(ip.as_str()).copied();
                 serde_json::json!({

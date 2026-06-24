@@ -1288,6 +1288,74 @@ fn legacy_fee_deduction_syncs_sled_balance() {
     );
 }
 
+#[test]
+fn validator_registry_snapshot_includes_sled_without_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val_snapshot")).unwrap());
+    let did = "did:zhtp:val-snapshot";
+    let did_hash = crate::storage::did_to_hash(did);
+    store
+        .put_validator_record_direct(
+            &did_hash,
+            &crate::storage::StoredValidatorRecord {
+                consensus: crate::storage::ValidatorConsensusRecord {
+                    identity_id: did.to_string(),
+                    consensus_key: [5u8; 2592],
+                    stake: 300_000,
+                    storage_provided: 1 << 40,
+                    status: "active".to_string(),
+                    oracle_key_id: None,
+                },
+                metadata: crate::storage::ValidatorMetadata {
+                    networking_key: vec![],
+                    rewards_key: vec![],
+                    network_address: "snap:1".to_string(),
+                    commission_rate: 0,
+                    registered_at: 0,
+                    last_activity: 0,
+                    blocks_validated: 0,
+                    slash_count: 0,
+                    admission_source: "test".to_string(),
+                    governance_proposal_id: None,
+                },
+            },
+        )
+        .unwrap();
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    let snap = bc.validator_registry_snapshot();
+    assert_eq!(snap.get(did).map(|v| v.stake), Some(300_000));
+}
+
+#[test]
+fn validator_count_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val_count")).unwrap());
+    for i in 0..3u8 {
+        let did = format!("did:zhtp:val-count{}", i);
+        let did_hash = crate::storage::did_to_hash(&did);
+        store
+            .put_validator_record_direct(
+                &did_hash,
+                &crate::storage::StoredValidatorRecord {
+                    consensus: crate::storage::ValidatorConsensusRecord {
+                        identity_id: did,
+                        consensus_key: [i; 2592],
+                        stake: 100_000,
+                        storage_provided: 1 << 40,
+                        status: "active".to_string(),
+                        oracle_key_id: None,
+                    },
+                    metadata: crate::storage::ValidatorMetadata::default(),
+                },
+            )
+            .unwrap();
+    }
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    assert_eq!(bc.validator_count(), 3, "count comes from sled, not the in-mem shadow");
+}
+
 /// iter_token_contract_entries returns sled ids + metadata (#2637).
 #[test]
 fn iter_token_contract_entries_lists_sled_ids() {
