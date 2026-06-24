@@ -8,8 +8,19 @@ use lib_types::NodeType;
 ///
 /// This is the canonical integration point used across all API handlers.
 /// Authenticated DIDs are checked against the on-chain council member list
-/// to assign `Role::Council` vs `Role::Citizen`. If the blockchain lock is
-/// contended, defaults to `Role::Citizen` (safe: never elevates on failure).
+/// to assign `Role::Council` vs `Role::Citizen`. The membership check reads a
+/// sync-warmed council cache first (see `BlockchainProvider::is_council_member_blocking`),
+/// so it is safe to call **before** acquiring a `blockchain.read()` guard.
+///
+/// **Handler invariant (deadlock):** `extract_principal_from_request` must run
+/// before any `blockchain.read().await` / `write().await` on the global chain.
+/// Tokio `RwLock` is not re-entrant; a nested read on the same task deadlocks.
+/// Council-gated handlers audited in this PR (all extract principal first):
+/// - `network/mod.rs` — halt-consensus
+/// - `notifications/mod.rs` — subscriber list
+/// - `blockchain/mod.rs` — export/import chain, list wallets (Council bypass paths)
+/// - `dao/mod.rs` — council register, entity-registry init
+/// - `wallet/mod.rs` — cross-wallet transfer, stake/unstake, simple send (Council bypass)
 ///
 /// Mobile clients sign QUIC bytes with a per-device Dilithium key
 /// (`53c47662…`) which is *different by design* from the user's canonical
@@ -57,17 +68,18 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 /// Determine the role for an authenticated DID by checking on-chain state.
 ///
 /// Council members get `Role::Council`, everyone else gets `Role::Citizen`.
-/// Uses non-blocking read — if the lock is contended, returns `Role::Citizen`
-/// (never elevates privileges on failure).
+/// Uses `is_council_member_blocking` (cache → try_read → await). Performs two
+/// sequential `block_in_place` transitions when canonical DID resolution also
+/// hits the chain — acceptable overhead per authenticated request.
 fn resolve_role_for_did(did: &str) -> Role {
     let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
         Some(p) => p,
         None => return Role::Citizen,
     };
 
-    match provider.is_council_member_sync(did) {
+    match provider.is_council_member_blocking(did) {
         Some(true) => Role::Council,
-        _ => Role::Citizen, // Not council, not initialized, or lock contended
+        Some(false) | None => Role::Citizen, // not on council, or blockchain unavailable
     }
 }
 

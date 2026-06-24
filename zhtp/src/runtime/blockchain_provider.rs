@@ -3,7 +3,7 @@ use base64::Engine;
 use lib_blockchain::events::BlockchainEvent;
 use lib_blockchain::{Block, Blockchain, Hash, IdentityTransactionData, Transaction};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
@@ -23,6 +23,11 @@ pub enum BlockchainAccessMode {
 pub struct BlockchainProvider {
     blockchain: Arc<RwLock<Option<Arc<RwLock<Blockchain>>>>>,
     access_mode: Arc<RwLock<BlockchainAccessMode>>,
+    /// Sync-readable council DID set refreshed from chain state. Role checks read
+    /// this first so `extract_principal_from_request` never needs a nested tokio
+    /// `blockchain.read()` while a handler already holds the same guard (tokio
+    /// RwLock is not re-entrant — a second read on the same task deadlocks).
+    council_member_cache: Arc<StdRwLock<HashSet<String>>>,
 }
 
 impl BlockchainProvider {
@@ -31,14 +36,32 @@ impl BlockchainProvider {
         Self {
             blockchain: Arc::new(RwLock::new(None)),
             access_mode: Arc::new(RwLock::new(BlockchainAccessMode::ReadOnly)),
+            council_member_cache: Arc::new(StdRwLock::new(HashSet::new())),
         }
     }
 
     /// Set the blockchain instance
     pub async fn set_blockchain(&self, blockchain: Arc<RwLock<Blockchain>>) -> Result<()> {
         *self.blockchain.write().await = Some(blockchain);
+        self.refresh_council_member_cache().await;
         info!("Global blockchain instance set");
         Ok(())
+    }
+
+    async fn refresh_council_member_cache(&self) {
+        let outer = self.blockchain.read().await;
+        let Some(arc) = outer.as_ref() else {
+            return;
+        };
+        let bc = arc.read().await;
+        let members: HashSet<String> = bc
+            .get_council_members()
+            .iter()
+            .map(|m| m.identity_id.clone())
+            .collect();
+        if let Ok(mut cache) = self.council_member_cache.write() {
+            *cache = members;
+        }
     }
 
     /// Get the blockchain instance
@@ -56,14 +79,84 @@ impl BlockchainProvider {
         self.blockchain.read().await.is_some()
     }
 
-    /// Non-blocking, read-only council membership check for sync contexts.
-    /// Returns None if the lock is contended or blockchain isn't initialized.
-    /// Does NOT expose the blockchain Arc — callers cannot take a write lock.
-    pub fn is_council_member_sync(&self, did: &str) -> Option<bool> {
+    /// Async council membership check against live chain state. Awaits the
+    /// blockchain read lock. Prefer [`Self::is_council_member_blocking`] from
+    /// sync principal extraction (uses cache first).
+    pub async fn is_council_member(&self, did: &str) -> Option<bool> {
+        let outer = self.blockchain.read().await;
+        let arc = outer.as_ref()?;
+        let bc = arc.read().await;
+        let is_member = bc.is_council_member(did);
+        if let Ok(mut cache) = self.council_member_cache.write() {
+            *cache = bc
+                .get_council_members()
+                .iter()
+                .map(|m| m.identity_id.clone())
+                .collect();
+        }
+        Some(is_member)
+    }
+
+    /// Callable from sync code; may block until the blockchain read lock is
+    /// available. **Not** a fast/non-blocking API despite the historical `_sync`
+    /// name — use the warmed [`Self::council_member_cache`] path when possible.
+    ///
+    /// Lookup order:
+    /// 1. Sync council cache (deadlock-safe under an existing blockchain read guard)
+    /// 2. `try_read` chain snapshot (fixes writer-queue contention without awaiting)
+    /// 3. `block_in_place` + `read().await` on multi-thread runtimes only
+    pub fn is_council_member_blocking(&self, did: &str) -> Option<bool> {
+        if let Ok(cache) = self.council_member_cache.read() {
+            if !cache.is_empty() {
+                return Some(cache.contains(did));
+            }
+        }
+
+        if let Some(is_member) = self.try_read_council_membership(did) {
+            return Some(is_member);
+        }
+
+        self.await_council_membership_from_chain(did)
+    }
+
+    fn try_read_council_membership(&self, did: &str) -> Option<bool> {
         let outer = self.blockchain.try_read().ok()?;
         let arc = outer.as_ref()?;
         let bc = arc.try_read().ok()?;
-        Some(bc.is_council_member(did))
+        let members: HashSet<String> = bc
+            .get_council_members()
+            .iter()
+            .map(|m| m.identity_id.clone())
+            .collect();
+        let is_member = members.contains(did);
+        if let Ok(mut cache) = self.council_member_cache.write() {
+            *cache = members;
+        }
+        Some(is_member)
+    }
+
+    fn await_council_membership_from_chain(&self, did: &str) -> Option<bool> {
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle,
+            Err(_) => {
+                warn!(
+                    "council membership check for {} skipped: no tokio runtime",
+                    did
+                );
+                return None;
+            }
+        };
+
+        if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
+            warn!(
+                "council membership check for {} skipped on current_thread runtime \
+                 (block_in_place would panic; use multi-thread tokio in production)",
+                did
+            );
+            return None;
+        }
+
+        tokio::task::block_in_place(|| handle.block_on(self.is_council_member(did)))
     }
 
     /// Resolve a 32-byte QUIC device key (the `request.requester` blob set by
@@ -124,6 +217,7 @@ static PENDING_IDENTITY_PROJECTIONS: OnceLock<Mutex<HashMap<String, PendingIdent
     OnceLock::new();
 static PENDING_WALLET_PROJECTIONS: OnceLock<Mutex<HashMap<String, PendingWalletProjection>>> =
     OnceLock::new();
+static COUNCIL_CACHE_REFRESH_STARTED: OnceLock<()> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct PendingIdentityProjection {
@@ -450,7 +544,21 @@ pub async fn set_global_blockchain(blockchain: Arc<RwLock<Blockchain>>) -> Resul
         info!("Blockchain IPC server started at {}", socket_path.display());
     }
 
-    provider.set_blockchain(blockchain).await
+    provider.set_blockchain(blockchain).await?;
+
+    // Keep the sync council cache fresh for role checks without nested tokio reads.
+    let _ = COUNCIL_CACHE_REFRESH_STARTED.get_or_init(|| {
+        let provider = initialize_global_blockchain_provider().clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                interval.tick().await;
+                provider.refresh_council_member_cache().await;
+            }
+        });
+    });
+
+    Ok(())
 }
 
 pub fn register_pending_identity_projection(tx_hash: &str, projection: PendingIdentityProjection) {
@@ -625,6 +733,170 @@ mod tests {
             .await
             .unwrap();
         storage
+    }
+
+    #[tokio::test]
+    async fn is_council_member_async_awaits_write_lock() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
+
+        let council_did = "did:zhtp:alice";
+        let mut bc = Blockchain::new().expect("genesis");
+        bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+            members: vec![CouncilBootstrapEntry {
+                identity_id: council_did.to_string(),
+                wallet_id: "aaaa".to_string(),
+                stake_amount: 1_000_000,
+            }],
+            threshold: 1,
+        });
+
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+
+        // Simulate block-commit writer hold: try_read would return Err here.
+        let write_guard = bc_arc.write().await;
+
+        let provider_for_check = provider.clone();
+        let did = council_did.to_string();
+        let membership_check = tokio::spawn(async move {
+            provider_for_check.is_council_member(&did).await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !membership_check.is_finished(),
+            "council check must await the write lock, not fail on try_read contention"
+        );
+
+        drop(write_guard);
+        assert_eq!(
+            membership_check.await.expect("join"),
+            Some(true),
+            "council DID must resolve after the write lock is released"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn is_council_member_blocking_awaits_write_lock_on_cold_cache() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
+
+        let council_did = "did:zhtp:bob";
+        let mut bc = Blockchain::new().expect("genesis");
+        bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+            members: vec![CouncilBootstrapEntry {
+                identity_id: council_did.to_string(),
+                wallet_id: "bbbb".to_string(),
+                stake_amount: 1_000_000,
+            }],
+            threshold: 1,
+        });
+
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+
+        let bc_for_writer = bc_arc.clone();
+        let write_holder = tokio::spawn(async move {
+            let _guard = bc_for_writer.write().await;
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let provider_for_sync = provider.clone();
+        let did = council_did.to_string();
+        // Cold cache: force empty so tier-3 await path is exercised.
+        provider_for_sync
+            .council_member_cache
+            .write()
+            .unwrap()
+            .clear();
+
+        let sync_check = tokio::spawn(async move {
+            provider_for_sync.is_council_member_blocking(&did)
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !sync_check.is_finished(),
+            "sync wrapper must await the write lock, not return None under contention"
+        );
+
+        write_holder.await.expect("write holder join");
+        assert_eq!(
+            sync_check.await.expect("sync check join"),
+            Some(true),
+            "sync council check must succeed once write lock releases"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn is_council_member_blocking_uses_cache_under_held_blockchain_read() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
+
+        let council_did = "did:zhtp:carol";
+        let mut bc = Blockchain::new().expect("genesis");
+        bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+            members: vec![CouncilBootstrapEntry {
+                identity_id: council_did.to_string(),
+                wallet_id: "cccc".to_string(),
+                stake_amount: 1_000_000,
+            }],
+            threshold: 1,
+        });
+
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+
+        // Handler-shaped: hold blockchain read, then run sync role check.
+        let read_guard = bc_arc.read().await;
+        assert_eq!(
+            provider.is_council_member_blocking(council_did),
+            Some(true),
+            "warmed cache must answer without nested tokio read acquire"
+        );
+        drop(read_guard);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cold_cache_nested_read_falls_back_without_deadlocking_when_writer_absent() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
+
+        let council_did = "did:zhtp:dave";
+        let mut bc = Blockchain::new().expect("genesis");
+        bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+            members: vec![CouncilBootstrapEntry {
+                identity_id: council_did.to_string(),
+                wallet_id: "dddd".to_string(),
+                stake_amount: 1_000_000,
+            }],
+            threshold: 1,
+        });
+
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+        provider.council_member_cache.write().unwrap().clear();
+
+        let read_guard = bc_arc.read().await;
+        let provider_clone = provider.clone();
+        let did = council_did.to_string();
+        let check = tokio::task::spawn_blocking(move || {
+            provider_clone.is_council_member_blocking(&did)
+        });
+
+        let result = tokio::time::timeout(std::time::Duration::from_millis(500), check).await;
+        drop(read_guard);
+        assert!(
+            result.is_ok(),
+            "nested-read + cold cache must not deadlock when no writer is queued"
+        );
+        assert_eq!(
+            result.unwrap().expect("join"),
+            Some(true)
+        );
     }
 
     #[tokio::test]
