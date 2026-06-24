@@ -618,7 +618,15 @@ impl TokenHandler {
         address.copy_from_slice(&address_bytes);
 
         let blockchain = self.blockchain.read().await;
-        let nonce = blockchain.token_nonce(&token_id, &address).unwrap_or(0);
+        let nonce = match blockchain.token_nonce(&token_id, &address) {
+            Ok(n) => n,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::InternalServerError,
+                    format!("nonce lookup failed: {e}"),
+                ));
+            }
+        };
 
         create_json_response(json!({
             "token_id": token_id_hex,

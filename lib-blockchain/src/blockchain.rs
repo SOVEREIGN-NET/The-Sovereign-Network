@@ -2308,7 +2308,17 @@ impl Blockchain {
                 } else {
                     transfer.token_id
                 };
-                let expected = self.get_token_nonce(&token_id, &transfer.from);
+                let expected = match self.token_nonce(&token_id, &transfer.from) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            tx = %tx.hash(),
+                            "is_nonce_current: nonce read failed; failing closed (rejecting tx)"
+                        );
+                        return false;
+                    }
+                };
                 if transfer.nonce < expected {
                     tracing::debug!(
                         "Stale nonce: tx {} has nonce {} but chain expects {} for sender {}",
@@ -2679,6 +2689,11 @@ impl Blockchain {
     ///   (populated from the TokenStateSnapshot on restart and incremented
     ///   during `process_token_transactions`). The store is consulted only
     ///   when the HashMap has no entry yet (e.g. pre-snapshot-load).
+    /// Legacy convenience wrapper returning `0` on sled read failure.
+    ///
+    /// Prefer [`token_nonce`] for admission / write paths — swallowing errors
+    /// here can treat a failed read as nonce-0 and admit replayable transfers.
+    /// [`is_nonce_current`] uses `token_nonce` directly and fails closed.
     pub fn get_token_nonce(&self, token_id: &[u8; 32], address: &[u8; 32]) -> u64 {
         self.token_nonce(token_id, address).unwrap_or(0)
     }
