@@ -56,7 +56,10 @@ impl GenesisFundingService {
 
         // Initialize SOV token contract FIRST so we can credit balances during genesis
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        blockchain.ensure_sov_token_contract();
+        blockchain.insert_token_contract(
+            sov_token_id,
+            lib_blockchain::contracts::TokenContract::new_sov_native(),
+        );
         info!(
             "🪙 SOV token contract initialized: {}",
             hex::encode(&sov_token_id[..8])
@@ -227,7 +230,6 @@ impl GenesisFundingService {
                         anyhow::anyhow!("failed to read genesis wallet SOV balance: {e}")
                     })?;
                 if current_balance == 0 {
-                    blockchain.ensure_sov_token_contract();
                     let token = blockchain
                         .get_token_contract_mut(&sov_token_id)
                         .ok_or_else(|| {

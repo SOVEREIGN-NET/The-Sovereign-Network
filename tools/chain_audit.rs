@@ -161,8 +161,7 @@ fn main() -> Result<()> {
     let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
     let sov_balance_count = bc.count_token_holders(&sov_id);
     let sov_total: u128 = bc
-        .get_all_token_contracts()
-        .get(&sov_id)
+        .token_contract_shadow(&sov_id)
         .map(|t| t.total_balance_sum())
         .unwrap_or(0);
     println!("  SOV token balance entries:  {}", sov_balance_count);

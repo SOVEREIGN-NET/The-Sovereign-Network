@@ -137,8 +137,7 @@ fn test_restart_replays_committed_token_state_and_nonces() -> Result<()> {
         .expect("Expected blockchain to load from committed block replay");
 
     let token = reloaded
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .expect("SOV token must be reconstructed from committed block replay");
     assert_eq!(token.balance_of(&wallet_key(&sender_wallet)), 8_500);
     assert_eq!(token.balance_of(&wallet_key(&recipient_wallet)), 1_500);
@@ -198,12 +197,10 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
     let node_b = lib_blockchain::Blockchain::load_from_store(store)?.expect("node B should load");
 
     let token_a = node_a
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .expect("node A token missing");
     let token_b = node_b
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .expect("node B token missing");
 
     assert_eq!(token_a.balance_of(&wallet_key(&sender_wallet)), 17_500);
@@ -269,12 +266,10 @@ fn test_restart_preserves_sov_supply_and_recipient_count() -> Result<()> {
         .expect("after restart should load from committed replay");
 
     let before_token = before_restart
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .expect("before restart SOV token should exist");
     let after_token = after_restart
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .expect("after restart SOV token should exist");
 
     assert_eq!(
@@ -366,8 +361,7 @@ fn test_uncommitted_block_does_not_leak_token_state_after_restart() -> Result<()
         .expect("recovery load should succeed");
 
     let token = recovered
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .expect("SOV token should exist after recovery");
     assert_eq!(token.balance_of(&wallet_key(&sender_wallet)), 9_000);
     assert_eq!(token.balance_of(&wallet_key(&recipient_wallet)), 0);

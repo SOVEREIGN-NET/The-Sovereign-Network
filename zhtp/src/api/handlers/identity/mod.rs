@@ -1624,9 +1624,7 @@ impl IdentityHandler {
             let mut blockchain = blockchain_arc.write().await;
 
             // Update in-memory immediately (cache warmup)
-            if let Some(id) = blockchain.identity_registry_entry_mut(&req.did) {
-                id.kyber_public_key = kyber_pk.clone();
-            }
+            blockchain.update_identity_shadow_kyber_public_key(&req.did, kyber_pk.clone());
 
             // Submit IdentityUpdate system transaction for block persistence
             let mut identity_data = blockchain
@@ -1822,9 +1820,7 @@ impl IdentityHandler {
             blockchain
                 .did_to_username
                 .insert(did.clone(), username.clone());
-            if let Some(id) = blockchain.identity_registry_entry_mut(&did) {
-                id.display_name = username.clone();
-            }
+            blockchain.update_identity_shadow_display_name(&did, username.clone());
         }
 
         tracing::info!(

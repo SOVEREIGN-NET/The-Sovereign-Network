@@ -91,8 +91,7 @@ fn test_fee_deduction_reduces_sender_balance() {
 
     // Verify initial balance
     let balance_before = blockchain
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
     assert_eq!(balance_before, initial_balance);
@@ -115,8 +114,7 @@ fn test_fee_deduction_reduces_sender_balance() {
 
     // Verify: sender balance was reduced
     let balance_after = blockchain
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
 
@@ -200,8 +198,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
 
     // Verify: sender balance unchanged
     let balance_after = blockchain
-        .get_all_token_contracts()
-        .get(&sov_token_id)
+        .token_contract_shadow(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
 

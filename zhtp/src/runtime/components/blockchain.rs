@@ -166,14 +166,11 @@ impl BlockchainComponent {
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(blockchain_arc) => {
                 let mut blockchain = blockchain_arc.write().await;
-                if let Some(identity_data) = blockchain.identity_registry_entry_mut(&user_did) {
-                    if !identity_data.controlled_nodes.contains(&node_id_hex) {
-                        identity_data.controlled_nodes.push(node_id_hex.clone());
-                        info!(
-                            " Added node {} to user's controlled_nodes list",
-                            &node_id_hex[..32]
-                        );
-                    }
+                if blockchain.push_identity_shadow_controlled_node(&user_did, node_id_hex.clone()) {
+                    info!(
+                        " Added node {} to user's controlled_nodes list",
+                        &node_id_hex[..32]
+                    );
                 }
             }
             Err(e) => {

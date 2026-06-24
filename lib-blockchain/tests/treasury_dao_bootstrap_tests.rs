@@ -138,7 +138,8 @@ fn test_treasury_wallet_survives_round_trip() {
     let mut blockchain = Blockchain::default();
 
     // Ensure SOV token contract is present (needed for persistence tests).
-    blockchain.ensure_sov_token_contract();
+    let sov_token_id = generate_lib_token_id();
+    blockchain.insert_token_contract(sov_token_id, TokenContract::new_sov_native());
 
     let original_id = blockchain.dao_treasury_wallet_id.clone().unwrap();
 
@@ -182,8 +183,8 @@ fn test_block_fees_credited_to_treasury() {
     treasury_id.copy_from_slice(&treasury_id_bytes);
 
     // Ensure SOV token contract exists.
-    blockchain.ensure_sov_token_contract();
     let sov_token_id = generate_lib_token_id();
+    blockchain.insert_token_contract(sov_token_id, TokenContract::new_sov_native());
 
     // v2 genesis may pre-fund the treasury, so capture the starting balance
     // rather than assuming zero — the invariant under test is that a credited

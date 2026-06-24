@@ -1295,8 +1295,33 @@ impl Blockchain {
         self.web4_contracts.get_mut(contract_id)
     }
 
-    pub fn get_all_token_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::TokenContract> {
+    pub(crate) fn get_all_token_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::TokenContract> {
         &self.token_contracts
+    }
+
+    /// In-memory shadow only — whether a token contract entry exists locally.
+    pub fn token_contract_shadow_contains_key(&self, contract_id: &[u8; 32]) -> bool {
+        self.token_contracts.contains_key(contract_id)
+    }
+
+    /// In-memory shadow only — read a token contract from the local map (audit/tests).
+    pub fn token_contract_shadow(
+        &self,
+        contract_id: &[u8; 32],
+    ) -> Option<&crate::contracts::TokenContract> {
+        self.token_contracts.get(contract_id)
+    }
+
+    /// Cardinality of the in-memory token-contract shadow (audit / divergence tooling).
+    pub fn token_contract_shadow_len(&self) -> usize {
+        self.token_contracts.len()
+    }
+
+    /// Iterate in-memory token contract shadow values (tests / audit only).
+    pub fn iter_token_contract_shadow_values(
+        &self,
+    ) -> impl Iterator<Item = &crate::contracts::TokenContract> {
+        self.token_contracts.values()
     }
 
     /// Number of in-memory token contract entries (metadata shadow; use
@@ -1328,7 +1353,8 @@ impl Blockchain {
         self.token_nonces.insert((token_id, sender), nonce);
     }
 
-    /// Snapshot of in-memory token nonces (tests / persistence parity; reads use `token_nonce`).
+    /// Clone of the in-memory token-nonce shadow. **Tests and persistence parity
+    /// only** — production reads must use `token_nonce()`. Clones the full map.
     pub fn token_nonces_snapshot(&self) -> HashMap<([u8; 32], [u8; 32]), u64> {
         self.token_nonces.clone()
     }

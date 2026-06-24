@@ -225,10 +225,12 @@ fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
     pk
 }
 
-/// Insert the native SOV token contract into the blockchain (replaces private ensure_sov_token_contract).
+/// Insert the native SOV token contract into the blockchain in-memory shadow.
 fn insert_sov_token(blockchain: &mut Blockchain) {
     let sov_token_id = generate_lib_token_id();
-    blockchain.ensure_sov_token_contract();
+    if !blockchain.token_contract_shadow_contains_key(&sov_token_id) {
+        blockchain.insert_token_contract(sov_token_id, TokenContract::new_sov_native());
+    }
 }
 
 // ============================================================================
@@ -771,22 +773,33 @@ fn test_token_list() {
     blockchain.insert_token_contract(id1, token1);
     blockchain.insert_token_contract(id2, token2);
 
-    // Verify all tokens are listed
-    let contracts = blockchain.get_all_token_contracts();
+    // Verify all tokens are listed in the in-memory shadow
     assert!(
-        contracts.contains_key(&generate_lib_token_id()),
+        blockchain.token_contract_shadow_contains_key(&generate_lib_token_id()),
         "SOV should be in list"
     );
-    assert!(contracts.contains_key(&id1), "Alpha should be in list");
-    assert!(contracts.contains_key(&id2), "Beta should be in list");
     assert!(
-        contracts.len() >= 3,
+        blockchain.token_contract_shadow_contains_key(&id1),
+        "Alpha should be in list"
+    );
+    assert!(
+        blockchain.token_contract_shadow_contains_key(&id2),
+        "Beta should be in list"
+    );
+    assert!(
+        blockchain.token_contract_shadow_len() >= 3,
         "Should have at least SOV + 2 custom tokens"
     );
 
     // Verify metadata
-    assert_eq!(contracts[&id1].symbol, "ALP");
-    assert_eq!(contracts[&id2].symbol, "BET");
+    assert_eq!(
+        blockchain.token_contract_shadow(&id1).unwrap().symbol,
+        "ALP"
+    );
+    assert_eq!(
+        blockchain.token_contract_shadow(&id2).unwrap().symbol,
+        "BET"
+    );
 }
 
 /// Test 9: Wallet registration via block processing mints initial SOV balance.
@@ -928,8 +941,7 @@ fn test_duplicate_symbol_rejected() {
 
     // Verify only the original token exists (no duplicate created)
     let count = blockchain
-        .get_all_token_contracts()
-        .values()
+        .iter_token_contract_shadow_values()
         .filter(|t| t.symbol.to_uppercase() == "CBE")
         .count();
     assert_eq!(

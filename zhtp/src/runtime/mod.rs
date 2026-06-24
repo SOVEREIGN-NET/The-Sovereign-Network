@@ -1285,7 +1285,10 @@ impl RuntimeOrchestrator {
 
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if blockchain.get_token_contract(&sov_token_id).is_none() {
-                    blockchain.ensure_sov_token_contract();
+                    blockchain.insert_token_contract(
+                        sov_token_id,
+                        lib_blockchain::contracts::TokenContract::new_sov_native(),
+                    );
                     info!(
                         "🪙 SOV token contract initialized (upgrade migration): {}",
                         hex::encode(&sov_token_id[..8])
@@ -2253,7 +2256,10 @@ impl RuntimeOrchestrator {
                 // This handles upgrades from older blockchain data that didn't have the SOV token
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 if bc.get_token_contract(&sov_token_id).is_none() {
-                    bc.ensure_sov_token_contract();
+                    bc.insert_token_contract(
+                        sov_token_id,
+                        lib_blockchain::contracts::TokenContract::new_sov_native(),
+                    );
 
                     info!("🪙 SOV token contract initialized (persistence deferred to next block commit): {}", hex::encode(&sov_token_id[..8]));
                 }
@@ -2936,11 +2942,11 @@ impl RuntimeOrchestrator {
                                     let welcome_bonus = SOV_WELCOME_BONUS;
 
                                     // Update wallet registry balance
-                                    if let Some(wallet_entry) =
-                                        blockchain_ref.wallet_registry_entry_mut(&wallet_id_hex)
-                                    {
-                                        wallet_entry.initial_balance = welcome_bonus;
-                                    }
+                                    blockchain_ref
+                                        .update_wallet_shadow_initial_balance(
+                                            &wallet_id_hex,
+                                            welcome_bonus,
+                                        );
 
                                     // Create spendable UTXO for the welcome bonus
                                     let utxo_output =
@@ -3129,11 +3135,11 @@ impl RuntimeOrchestrator {
                                                 let welcome_bonus = SOV_WELCOME_BONUS;
 
                                                 // Update wallet registry balance
-                                                if let Some(wallet_entry) = blockchain_ref
-                                                    .wallet_registry_entry_mut(&wallet_id_hex)
-                                                {
-                                                    wallet_entry.initial_balance = welcome_bonus;
-                                                }
+                                                blockchain_ref
+                                                    .update_wallet_shadow_initial_balance(
+                                                        &wallet_id_hex,
+                                                        welcome_bonus,
+                                                    );
 
                                                 // Create spendable UTXO for the welcome bonus
                                                 let utxo_output = lib_blockchain::transaction::TransactionOutput {
@@ -3189,11 +3195,10 @@ impl RuntimeOrchestrator {
                                         let welcome_bonus = SOV_WELCOME_BONUS;
 
                                         // Update wallet registry
-                                        if let Some(wallet_mut) =
-                                            blockchain_ref.wallet_registry_entry_mut(&wallet_id_hex)
-                                        {
-                                            wallet_mut.initial_balance = welcome_bonus;
-                                        }
+                                        blockchain_ref.update_wallet_shadow_initial_balance(
+                                            &wallet_id_hex,
+                                            welcome_bonus,
+                                        );
 
                                         // Create spendable UTXO
                                         let utxo_output =
@@ -3291,11 +3296,11 @@ impl RuntimeOrchestrator {
                                                 let welcome_bonus = SOV_WELCOME_BONUS;
 
                                                 // Update wallet registry balance
-                                                if let Some(wallet_entry) = blockchain_ref
-                                                    .wallet_registry_entry_mut(&wallet_id_hex)
-                                                {
-                                                    wallet_entry.initial_balance = welcome_bonus;
-                                                }
+                                                blockchain_ref
+                                                    .update_wallet_shadow_initial_balance(
+                                                        &wallet_id_hex,
+                                                        welcome_bonus,
+                                                    );
 
                                                 // Create spendable UTXO for the welcome bonus
                                                 let utxo_output = lib_blockchain::transaction::TransactionOutput {

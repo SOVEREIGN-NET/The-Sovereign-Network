@@ -492,17 +492,10 @@ impl Blockchain {
     }
 
     /// Legacy in-memory shadow insert — genesis/bootstrap/tests (#2640).
+    /// `info.identity_id` is the map key; callers must keep it consistent.
     pub fn insert_validator_shadow(&mut self, info: ValidatorInfo) {
-        self.validator_registry.insert(info.identity_id.clone(), info);
-    }
-
-    /// Test/helper compat: ignores redundant `identity_id` key when it matches `info`.
-    #[doc(hidden)]
-    pub fn insert_validator_shadow_keyed(&mut self, identity_id: String, mut info: ValidatorInfo) {
-        if info.identity_id.is_empty() {
-            info.identity_id = identity_id.clone();
-        }
-        self.validator_registry.insert(identity_id, info);
+        self.validator_registry
+            .insert(info.identity_id.clone(), info);
     }
 
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {

@@ -426,7 +426,7 @@ fn identity_exists_union_inmem_or_sled() {
     let mut bc2 = Blockchain::new().unwrap();
     bc2.set_store(store);
     assert!(
-        bc2.get_identity(did).is_none(),
+        !bc2.identity_shadow_contains_key(did),
         "test premise: this DID is sled-only (absent from the in-mem shadow)"
     );
     assert!(bc2.identity_exists(did), "sled-only identity found via union");
@@ -996,7 +996,7 @@ fn did_by_public_key_reads_sled_metadata() {
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store.clone());
     assert!(
-        bc.get_identity(did).is_none(),
+        !bc.identity_shadow_contains_key(did) && !bc.identity_shadow_any_public_key(&pk),
         "test premise: this pubkey is sled-only (in-mem shadow empty, like after restart)"
     );
     assert_eq!(
@@ -1090,7 +1090,7 @@ fn identity_controlled_nodes_reads_sled_metadata() {
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store);
     assert!(
-        bc.get_identity(did).is_none(),
+        !bc.identity_shadow_contains_key(did),
         "test premise: DID is sled-only (in-mem shadow empty, like after restart)"
     );
     assert_eq!(
@@ -1149,7 +1149,7 @@ fn did_by_device_key_id_reads_sled_metadata() {
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store.clone());
     assert!(
-        bc.get_identity(did).is_none(),
+        !bc.identity_shadow_contains_key(did) && !bc.identity_shadow_any_public_key(&pk),
         "test premise: this identity is sled-only (absent from the in-mem shadow, like after restart)"
     );
 
@@ -1286,7 +1286,7 @@ fn validator_exists_union_inmem_or_sled() {
         governance_proposal_id: None,
         oracle_key_id: None,
     };
-    bc.insert_validator_shadow_keyed(info.identity_id.clone(), info);
+    bc.insert_validator_shadow(info);
     assert!(bc.validator_exists("did:zhtp:val-inmem"));
     assert!(!bc.validator_exists("did:zhtp:ghost"));
 
@@ -1359,7 +1359,7 @@ fn custom_token_balance_reads_sled_not_in_memory() {
     bc.set_store(store);
     // Simulate post-restart: no in-mem contract overlay.
     assert!(
-        !bc.get_all_token_contracts().contains_key(&token_id),
+        !bc.token_contract_shadow_contains_key(&token_id),
         "test premise: custom token exists only in sled"
     );
     assert_eq!(
@@ -1369,8 +1369,7 @@ fn custom_token_balance_reads_sled_not_in_memory() {
     );
     // In-mem-only read would wrongly return 0 — regression guard.
     assert_eq!(
-        bc.get_all_token_contracts()
-            .get(&token_id)
+        bc.token_contract_shadow(&token_id)
             .map(|c| c.balance_of(&crate::integration::crypto_integration::PublicKey::new(
                 [0u8; 2592]
             )))
@@ -1541,27 +1540,24 @@ fn validator_registry_snapshot_overlay_in_memory_wins() {
         .unwrap();
     let mut bc = Blockchain::new_runtime_state();
     bc.store = Some(store);
-    bc.insert_validator_shadow_keyed(
-did.to_string(),
-        ValidatorInfo {
-            identity_id: did.to_string(),
-            stake: 999_000,
-            storage_provided: 1 << 40,
-            consensus_key: [5u8; 2592],
-            networking_key: vec![],
-            rewards_key: vec![],
-            network_address: "overlay:1".to_string(),
-            commission_rate: 0,
-            status: "active".to_string(),
-            registered_at: 0,
-            last_activity: 0,
-            blocks_validated: 0,
-            slash_count: 0,
-            admission_source: "test".to_string(),
-            governance_proposal_id: None,
-            oracle_key_id: None,
-        },
-    );
+    bc.insert_validator_shadow(ValidatorInfo {
+        identity_id: did.to_string(),
+        stake: 999_000,
+        storage_provided: 1 << 40,
+        consensus_key: [5u8; 2592],
+        networking_key: vec![],
+        rewards_key: vec![],
+        network_address: "overlay:1".to_string(),
+        commission_rate: 0,
+        status: "active".to_string(),
+        registered_at: 0,
+        last_activity: 0,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    });
     let snap = bc.validator_registry_snapshot();
     assert_eq!(
         snap.get(did).map(|v| v.stake),
@@ -1761,27 +1757,24 @@ fn active_validator_infos_inmem_unregister_evicts_sled_active() {
 
     let mut bc = Blockchain::new_runtime_state();
     bc.store = Some(store);
-    bc.insert_validator_shadow_keyed(
-did.to_string(),
-        ValidatorInfo {
-            identity_id: did.to_string(),
-            stake: 100_000,
-            storage_provided: 1 << 40,
-            consensus_key: [5u8; 2592],
-            networking_key: vec![],
-            rewards_key: vec![],
-            network_address: "h:1".to_string(),
-            commission_rate: 0,
-            status: "inactive".to_string(),
-            registered_at: 1,
-            last_activity: 2,
-            blocks_validated: 0,
-            slash_count: 0,
-            admission_source: "test".to_string(),
-            governance_proposal_id: None,
-            oracle_key_id: None,
-        },
-    );
+    bc.insert_validator_shadow(ValidatorInfo {
+        identity_id: did.to_string(),
+        stake: 100_000,
+        storage_provided: 1 << 40,
+        consensus_key: [5u8; 2592],
+        networking_key: vec![],
+        rewards_key: vec![],
+        network_address: "h:1".to_string(),
+        commission_rate: 0,
+        status: "inactive".to_string(),
+        registered_at: 1,
+        last_activity: 2,
+        blocks_validated: 0,
+        slash_count: 0,
+        admission_source: "test".to_string(),
+        governance_proposal_id: None,
+        oracle_key_id: None,
+    });
 
     let active: Vec<_> = bc
         .active_validator_infos()

@@ -51,7 +51,7 @@ fn register_n_validators(blockchain: &mut Blockchain, n: usize) {
             governance_proposal_id: None,
             oracle_key_id: None,
         };
-        blockchain.insert_validator_shadow_keyed(id, info);
+        blockchain.insert_validator_shadow(info);
     }
 }
 

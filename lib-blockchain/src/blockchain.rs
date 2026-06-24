@@ -159,12 +159,14 @@ pub struct Blockchain {
     /// On-chain identity registry (DID -> Identity data). Legacy write shadow —
     /// external callers must use facades / `register_identity` (#2640).
     pub(crate) identity_registry: HashMap<String, IdentityTransactionData>,
-    /// Identity DID to block height mapping for verification
+    /// Identity DID → registration block height (height-index metadata, not
+    /// authoritative registry state). Privatization deferred past #2640.
     pub identity_blocks: HashMap<String, u64>,
     /// On-chain wallet registry (wallet_id -> Wallet data). Legacy write shadow —
     /// external callers must use facades / `register_wallet` (#2640).
     pub(crate) wallet_registry: HashMap<String, crate::transaction::WalletTransactionData>,
-    /// Wallet ID to block height mapping for verification
+    /// Wallet ID → registration block height (height-index metadata).
+    /// Privatization deferred past #2640.
     pub wallet_blocks: HashMap<String, u64>,
     /// Smart contract registry - Token contracts (contract_id -> TokenContract).
     /// Legacy write shadow — external callers must use facades / store APIs (#2640).
@@ -191,7 +193,8 @@ pub struct Blockchain {
     /// shadow — external callers must use facades / `register_validator` (#2640).
     #[serde(default)]
     pub(crate) validator_registry: HashMap<String, ValidatorInfo>,
-    /// Validator registration block heights (identity_id -> block_height)
+    /// Validator registration block heights (identity_id → block_height).
+    /// Height-index metadata; privatization deferred past #2640.
     #[serde(default)]
     pub validator_blocks: HashMap<String, u64>,
     /// Cached sled-first active set; invalidated by generation token or overlay fingerprint.

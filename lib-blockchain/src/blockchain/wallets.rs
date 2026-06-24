@@ -2,7 +2,7 @@ use super::*;
 
 impl Blockchain {
     /// Ensure the native SOV token contract exists in the in-memory shadow (#2640).
-    pub fn ensure_sov_token_contract(&mut self) {
+    pub(super) fn ensure_sov_token_contract(&mut self) {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         if !self.token_contracts.contains_key(&sov_token_id) {
             let sov_token = crate::contracts::TokenContract::new_sov_native();
@@ -671,22 +671,32 @@ impl Blockchain {
         self.wallet_registry.insert(wallet_id, data);
     }
 
-    /// Mutable access to the in-memory wallet shadow (welcome-bonus patch paths).
-    pub fn wallet_registry_entry_mut(
-        &mut self,
-        wallet_id: &str,
-    ) -> Option<&mut crate::transaction::WalletTransactionData> {
-        self.wallet_registry.get_mut(wallet_id)
+    /// Cardinality of the in-memory wallet shadow only (audit / divergence tooling).
+    pub fn wallet_registry_shadow_len(&self) -> usize {
+        self.wallet_registry.len()
     }
 
-    /// Wallets owned by an identity (in-memory shadow; sled union via snapshot).
+    /// Patch initial_balance on an in-memory wallet shadow entry (welcome-bonus warmup).
+    pub fn update_wallet_shadow_initial_balance(&mut self, wallet_id: &str, balance: u128) -> bool {
+        if let Some(entry) = self.wallet_registry.get_mut(wallet_id) {
+            entry.initial_balance = balance;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Wallets owned by an identity in the in-memory shadow only (O(N) over
+    /// `wallet_registry`, not sled). Do not call per-identity inside tight loops
+    /// on store-backed nodes with large wallet projections.
     pub fn wallets_for_owner(
         &self,
         owner_identity_id: &crate::types::Hash,
     ) -> Vec<(String, crate::transaction::WalletTransactionData)> {
-        self.wallet_registry_snapshot()
-            .into_iter()
-            .filter(|(_, w)| w.owner_identity_id.as_ref() == Some(owner_identity_id))
+        self.wallet_registry
+            .iter()
+            .filter(|(_, wallet)| wallet.owner_identity_id.as_ref() == Some(owner_identity_id))
+            .map(|(wallet_id, wallet)| (wallet_id.clone(), wallet.clone()))
             .collect()
     }
 

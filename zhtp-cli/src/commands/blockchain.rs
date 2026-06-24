@@ -222,7 +222,7 @@ fn audit_wallet_migration(
     let report = WalletMigrationAuditReport {
         dat_file: dat_path.display().to_string(),
         chain_height: blockchain.height,
-        total_wallets_in_local_state: blockchain.wallet_count(),
+        total_wallets_in_local_state: blockchain.wallet_registry_shadow_len(),
         noncanonical_wallet_count: blockchain.collect_noncanonical_wallets().len(),
         treasury_wallet_id: treasury_wallet_id_hex.clone(),
         treasury_wallet_present_in_local_state: blockchain
