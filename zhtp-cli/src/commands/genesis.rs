@@ -73,8 +73,8 @@ fn cmd_export_state(dat_file: Option<PathBuf>, output: PathBuf) -> Result<()> {
     println!(
         "Loaded blockchain: height={}, wallets={}, identities={}, web4={}",
         bc.height,
-        bc.wallet_registry.len(),
-        bc.identity_registry.len(),
+        bc.wallet_count(),
+        bc.identity_count(),
         bc.web4_contracts.len(),
     );
 

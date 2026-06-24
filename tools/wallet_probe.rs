@@ -38,8 +38,8 @@ fn main() -> Result<()> {
 
     println!(
         "Post-tx-replay (no genesis): identities={} wallets={}",
-        blockchain.identity_registry.len(),
-        blockchain.wallet_registry.len()
+        blockchain.identity_count(),
+        blockchain.wallet_count()
     );
 
     // load_from_store replays transactions only — genesis identities/wallets
@@ -55,13 +55,13 @@ fn main() -> Result<()> {
     }
 
     println!("Chain height: {}", blockchain.get_height());
-    println!("identity_registry entries: {}", blockchain.identity_registry.len());
-    println!("wallet_registry   entries: {}", blockchain.wallet_registry.len());
+    println!("identity_registry entries: {}", blockchain.identity_count());
+    println!("wallet_registry   entries: {}", blockchain.wallet_count());
     println!("target id/did: {}\n", target);
 
     // ── Locate the identity ────────────────────────────────────────────────
     let mut matched: Option<(String, [u8; 32], [u8; 32])> = None; // (did, dil_hash, combined_hash)
-    for (did, id) in blockchain.identity_registry.iter() {
+    for (did, id) in blockchain.identity_registry_snapshot() {
         if id.public_key.len() < 32 {
             continue;
         }
@@ -105,7 +105,7 @@ fn main() -> Result<()> {
     println!("\n=== WALLETS OWNED BY EITHER DERIVATION ===");
     let did_bytes = hex::decode(did.trim_start_matches("did:zhtp:")).unwrap_or_default();
     let mut hits = 0;
-    for (wallet_id_hex, w) in blockchain.wallet_registry.iter() {
+    for (wallet_id_hex, w) in blockchain.wallet_registry_snapshot() {
         let owner = match &w.owner_identity_id {
             Some(o) => o.as_bytes().to_vec(),
             None => continue,
@@ -137,7 +137,7 @@ fn main() -> Result<()> {
     // ── Also: every distinct owner_identity_id in the registry (sample) ────
     if hits == 0 {
         println!("\n=== SAMPLE: first 10 wallet owners in registry (for derivation comparison) ===");
-        for (wid, w) in blockchain.wallet_registry.iter().take(10) {
+        for (wid, w) in blockchain.wallet_registry_snapshot().into_iter().take(10) {
             println!(
                 "  wallet {} owner={:?}",
                 wid,

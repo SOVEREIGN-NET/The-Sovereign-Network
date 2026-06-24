@@ -56,14 +56,11 @@ impl GenesisFundingService {
 
         // Initialize SOV token contract FIRST so we can credit balances during genesis
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-        if !blockchain.token_contracts.contains_key(&sov_token_id) {
-            let sov_token = lib_blockchain::contracts::TokenContract::new_sov_native();
-            blockchain.token_contracts.insert(sov_token_id, sov_token);
-            info!(
-                "🪙 SOV token contract initialized: {}",
-                hex::encode(&sov_token_id[..8])
-            );
-        }
+        blockchain.ensure_sov_token_contract();
+        info!(
+            "🪙 SOV token contract initialized: {}",
+            hex::encode(&sov_token_id[..8])
+        );
 
         // DETERMINISM: Sort genesis validators by identity_id so that every node
         // produces the same genesis_tx output ordering regardless of the order
@@ -209,9 +206,7 @@ impl GenesisFundingService {
                 initial_balance: SOV_WELCOME_BONUS, // 5,000 SOV welcome bonus (atomic units)
             };
 
-            blockchain
-                .wallet_registry
-                .insert(hex::encode(&wallet_id.0), wallet_data);
+            blockchain.insert_wallet_shadow(hex::encode(&wallet_id.0), wallet_data);
             blockchain
                 .wallet_blocks
                 .insert(hex::encode(&wallet_id.0), 0);
@@ -232,19 +227,9 @@ impl GenesisFundingService {
                         anyhow::anyhow!("failed to read genesis wallet SOV balance: {e}")
                     })?;
                 if current_balance == 0 {
-                    if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                        let contract = blockchain
-                            .get_token_contract(&sov_token_id)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "SOV token contract missing from overlay for genesis mint"
-                                )
-                            })?;
-                        blockchain.token_contracts.insert(sov_token_id, contract);
-                    }
+                    blockchain.ensure_sov_token_contract();
                     let token = blockchain
-                        .token_contracts
-                        .get_mut(&sov_token_id)
+                        .get_token_contract_mut(&sov_token_id)
                         .ok_or_else(|| {
                             anyhow::anyhow!("SOV token contract missing for genesis mint")
                         })?;
@@ -380,7 +365,7 @@ impl GenesisFundingService {
             "   Genesis block finalized - Height: {}, UTXOs: {}, Identities: {}, Pending: {}",
             blockchain.height,
             blockchain.utxo_set.len(),
-            blockchain.identity_registry.len(),
+            blockchain.identity_count(),
             blockchain.pending_transactions.len()
         );
 
@@ -443,15 +428,13 @@ impl GenesisFundingService {
                 kyber_public_key: vec![],
             };
 
-            if blockchain.identity_registry.contains_key(&user_did) {
+            if blockchain.identity_exists(&user_did) {
                 warn!(
                     "  User identity {} already present in genesis state",
                     user_did
                 );
             } else {
-                blockchain
-                    .identity_registry
-                    .insert(user_did.clone(), user_identity_data);
+                blockchain.insert_identity_shadow(user_did.clone(), user_identity_data);
                 blockchain.identity_blocks.insert(user_did.clone(), 0);
                 info!(" Genesis USER identity registered directly in genesis state");
                 info!("   - DID: {}", user_did);
@@ -513,8 +496,8 @@ impl GenesisFundingService {
                 oracle_key_id: None,
             };
 
-            if !blockchain.identity_registry.contains_key(&validator_did) {
-                blockchain.identity_registry.insert(
+            if !blockchain.identity_exists(&validator_did) {
+                blockchain.insert_identity_shadow(
                     validator_did.clone(),
                     IdentityTransactionData {
                         did: validator_did.clone(),
@@ -540,9 +523,7 @@ impl GenesisFundingService {
                 blockchain.identity_blocks.insert(validator_did.clone(), 0);
             }
 
-            blockchain
-                .validator_registry
-                .insert(validator_did.clone(), validator_info);
+            blockchain.insert_validator_shadow(validator_info);
             blockchain.validator_blocks.insert(validator_did.clone(), 0);
             registered_validators += 1;
             info!(
@@ -569,7 +550,7 @@ impl GenesisFundingService {
         );
         info!(
             "   - Identities in registry: {}",
-            blockchain.identity_registry.len()
+            blockchain.identity_count()
         );
 
         Ok(())

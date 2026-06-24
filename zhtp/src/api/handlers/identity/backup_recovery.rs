@@ -630,14 +630,9 @@ async fn migrate_wallets_for_identity(
         let token_id_storage = lib_blockchain::storage::TokenId::new(sov_token_id);
 
         let owned: Vec<_> = blockchain
-            .wallet_registry
-            .values()
-            .filter(|w| {
-                w.owner_identity_id
-                    .map(|owner| owner.as_bytes() == identity_id.0.as_slice())
-                    .unwrap_or(false)
-            })
-            .cloned()
+            .wallets_for_owner(&lib_blockchain::Hash::from_slice(&identity_id.0))
+            .into_iter()
+            .map(|(_, w)| w)
             .collect();
 
         let any_wallet_exists = !owned.is_empty();
@@ -791,9 +786,7 @@ async fn create_fallback_wallet(
 
     match blockchain.add_system_transaction(reg_tx, "recovery_fallback_wallet") {
         Ok(_) => {
-            blockchain
-                .wallet_registry
-                .insert(wallet_id_hex.clone(), wallet_data);
+            blockchain.insert_wallet_shadow(wallet_id_hex.clone(), wallet_data);
             tracing::info!(
                 "Recovery: created fallback wallet {} ({} SOV)",
                 &wallet_id_hex[..16.min(wallet_id_hex.len())],
@@ -1931,9 +1924,7 @@ pub async fn handle_migrate_identity(
                         );
                     } else {
                         // Update in-memory view immediately (the block will make it durable).
-                        blockchain
-                            .wallet_registry
-                            .insert(wallet_id_str.clone(), updated);
+                        blockchain.insert_wallet_shadow(wallet_id_str.clone(), updated);
                     }
                 } else {
                     tracing::warn!(
@@ -2611,9 +2602,7 @@ mod tests {
         rewards_key_arr.iter_mut().for_each(|b| *b = b.wrapping_add(1)); // distinct from others
         let rewards_key = rewards_key_arr.to_vec();
         // Test scaffold: direct insert for test setup (not production code)
-        bc.validator_registry.insert(
-            validator_did.clone(),
-            lib_blockchain::ValidatorInfo {
+        bc.insert_validator_shadow(lib_blockchain::ValidatorInfo {
                 identity_id: validator_did,
                 stake: 1_000,
                 storage_provided: 0,
@@ -2633,8 +2622,7 @@ mod tests {
                     .to_string(),
                 governance_proposal_id: None,
                 oracle_key_id: None,
-            },
-        );
+            });
 
         for (wid, wtype, name, alias, pk, created_at, balance) in &wallet_summaries {
             let wallet_id_hex = hex::encode(wid.0);
@@ -2644,7 +2632,7 @@ mod tests {
                 format!("seed_commitment:{}", wallet_id_hex).as_bytes(),
             );
             // Test scaffold: direct insert for test setup (not production code)
-            bc.wallet_registry.insert(
+            bc.insert_wallet_shadow(
                 wallet_id_hex,
                 lib_blockchain::transaction::WalletTransactionData {
                     wallet_id: wallet_hash,

@@ -55,8 +55,8 @@ fn create_block_with_txs(
 }
 
 fn insert_active_validator(blockchain: &mut Blockchain, identity: &str, key_id: [u8; 32]) {
-    blockchain.validator_registry.insert(
-        identity.to_string(),
+    blockchain.insert_validator_shadow_keyed(
+identity.to_string(),
         ValidatorInfo {
             identity_id: identity.to_string(),
             stake: 10_000,

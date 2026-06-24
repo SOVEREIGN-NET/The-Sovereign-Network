@@ -1,7 +1,8 @@
 use super::*;
 
 impl Blockchain {
-    pub(super) fn ensure_sov_token_contract(&mut self) {
+    /// Ensure the native SOV token contract exists in the in-memory shadow (#2640).
+    pub fn ensure_sov_token_contract(&mut self) {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         if !self.token_contracts.contains_key(&sov_token_id) {
             let sov_token = crate::contracts::TokenContract::new_sov_native();
@@ -659,6 +660,34 @@ impl Blockchain {
             }
         }
         count
+    }
+
+    /// Legacy in-memory shadow insert — genesis/bootstrap only (#2640).
+    pub fn insert_wallet_shadow(
+        &mut self,
+        wallet_id: String,
+        data: crate::transaction::WalletTransactionData,
+    ) {
+        self.wallet_registry.insert(wallet_id, data);
+    }
+
+    /// Mutable access to the in-memory wallet shadow (welcome-bonus patch paths).
+    pub fn wallet_registry_entry_mut(
+        &mut self,
+        wallet_id: &str,
+    ) -> Option<&mut crate::transaction::WalletTransactionData> {
+        self.wallet_registry.get_mut(wallet_id)
+    }
+
+    /// Wallets owned by an identity (in-memory shadow; sled union via snapshot).
+    pub fn wallets_for_owner(
+        &self,
+        owner_identity_id: &crate::types::Hash,
+    ) -> Vec<(String, crate::transaction::WalletTransactionData)> {
+        self.wallet_registry_snapshot()
+            .into_iter()
+            .filter(|(_, w)| w.owner_identity_id.as_ref() == Some(owner_identity_id))
+            .collect()
     }
 
     pub fn register_wallet(

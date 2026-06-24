@@ -166,7 +166,7 @@ impl BlockchainComponent {
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(blockchain_arc) => {
                 let mut blockchain = blockchain_arc.write().await;
-                if let Some(identity_data) = blockchain.identity_registry.get_mut(&user_did) {
+                if let Some(identity_data) = blockchain.identity_registry_entry_mut(&user_did) {
                     if !identity_data.controlled_nodes.contains(&node_id_hex) {
                         identity_data.controlled_nodes.push(node_id_hex.clone());
                         info!(

@@ -12,10 +12,10 @@ mod tests {
 
         // Fresh v2 genesis seeds identity allocations for API/query surfaces
         // (mirrors test_wallet_registry_structure below).
-        assert!(!blockchain.identity_registry.is_empty());
+        assert!(blockchain.identity_count() > 0);
 
-        let identity = blockchain
-            .identity_registry
+        let identity_snapshot = blockchain.identity_registry_snapshot();
+        let identity = identity_snapshot
             .values()
             .next()
             .expect("Expected seeded identity allocation");
@@ -28,10 +28,10 @@ mod tests {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
         // Fresh genesis seeds wallet allocations for API/query surfaces.
-        assert!(!blockchain.wallet_registry.is_empty());
+        let wallet_snapshot = blockchain.wallet_registry_snapshot();
+        assert!(!wallet_snapshot.is_empty());
 
-        let wallet = blockchain
-            .wallet_registry
+        let wallet = wallet_snapshot
             .values()
             .next()
             .expect("Expected seeded wallet allocation");
@@ -112,8 +112,8 @@ mod tests {
         // Fresh v2 genesis seeds identities; verify a seeded record carries
         // the fields the API/query layer depends on. Structural check only —
         // actual data querying happens in the API layer.
-        let identity = blockchain
-            .identity_registry
+        let identity_snapshot = blockchain.identity_registry_snapshot();
+        let identity = identity_snapshot
             .values()
             .next()
             .expect("Expected seeded identity allocation");
@@ -135,8 +135,8 @@ mod tests {
         // - capabilities
         // - created_at
 
-        let wallet = blockchain
-            .wallet_registry
+        let wallet_snapshot = blockchain.wallet_registry_snapshot();
+        let wallet = wallet_snapshot
             .values()
             .next()
             .expect("Expected seeded wallet allocation");

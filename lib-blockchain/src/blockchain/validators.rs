@@ -491,6 +491,20 @@ impl Blockchain {
         Ok(written)
     }
 
+    /// Legacy in-memory shadow insert — genesis/bootstrap/tests (#2640).
+    pub fn insert_validator_shadow(&mut self, info: ValidatorInfo) {
+        self.validator_registry.insert(info.identity_id.clone(), info);
+    }
+
+    /// Test/helper compat: ignores redundant `identity_id` key when it matches `info`.
+    #[doc(hidden)]
+    pub fn insert_validator_shadow_keyed(&mut self, identity_id: String, mut info: ValidatorInfo) {
+        if info.identity_id.is_empty() {
+            info.identity_id = identity_id.clone();
+        }
+        self.validator_registry.insert(identity_id, info);
+    }
+
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
         if self.validator_exists(&validator_info.identity_id) {
             return Err(anyhow::anyhow!(

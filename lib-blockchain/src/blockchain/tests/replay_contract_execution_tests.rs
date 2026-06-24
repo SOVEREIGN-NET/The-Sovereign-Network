@@ -100,11 +100,11 @@ fn contract_execution_is_deterministic() {
     }
 
     let direct_token = direct
-        .token_contracts
+        .get_all_token_contracts()
         .get(&token_id)
         .expect("token should exist in direct path");
     let replayed_token = replayed
-        .token_contracts
+        .get_all_token_contracts()
         .get(&token_id)
         .expect("token should exist in replay path");
 
@@ -157,7 +157,7 @@ fn contract_blocks_populated_during_replay() {
         .expect("contract execution should succeed");
 
     assert!(
-        blockchain.token_contracts.contains_key(&token_id),
+        blockchain.get_token_contract(&token_id).is_some(),
         "Token contract should exist"
     );
     assert_eq!(

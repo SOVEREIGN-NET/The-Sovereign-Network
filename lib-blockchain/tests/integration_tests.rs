@@ -469,9 +469,7 @@ fn test_full_integration_workflow() -> Result<()> {
                 e
             );
             // Manually add to registry for the rest of the test
-            blockchain
-                .identity_registry
-                .insert(identity_data.did.clone(), identity_data.clone());
+            blockchain.insert_identity_shadow(identity_data.did.clone(), identity_data.clone());
             blockchain
                 .identity_blocks
                 .insert(identity_data.did.clone(), blockchain.height + 1);
@@ -554,8 +552,8 @@ fn test_full_integration_workflow() -> Result<()> {
     let deserialized_state = storage_integration::deserialize_blockchain_state(&serialized_state)?;
 
     assert_eq!(
-        deserialized_state.identity_registry.len(),
-        blockchain.identity_registry.len()
+        deserialized_state.identity_count(),
+        blockchain.identity_count()
     );
     println!("Successfully serialized and deserialized blockchain state");
 

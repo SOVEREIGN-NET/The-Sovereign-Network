@@ -1,6 +1,19 @@
 use super::*;
 
 impl Blockchain {
+    /// Legacy in-memory shadow insert — genesis/bootstrap only (#2640).
+    pub fn insert_identity_shadow(&mut self, did: String, data: IdentityTransactionData) {
+        self.identity_registry.insert(did, data);
+    }
+
+    /// Mutable access to the in-memory identity shadow (same-block / cache warmup).
+    pub fn identity_registry_entry_mut(
+        &mut self,
+        did: &str,
+    ) -> Option<&mut IdentityTransactionData> {
+        self.identity_registry.get_mut(did)
+    }
+
     pub fn register_identity(&mut self, identity_data: IdentityTransactionData) -> Result<Hash> {
         // #2639: union check — also catches a DID already committed to sled but
         // absent from the in-memory shadow after a restart, which the bare

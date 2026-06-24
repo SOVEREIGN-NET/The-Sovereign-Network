@@ -50,11 +50,13 @@ fn test_treasury_wallet_initialized_on_new_blockchain() {
 
     // Registry entry must exist
     assert!(
-        blockchain.wallet_registry.contains_key(wallet_id),
+        blockchain.wallet_exists(wallet_id),
         "Treasury wallet must be present in wallet_registry"
     );
 
-    let entry = &blockchain.wallet_registry[wallet_id];
+    let entry = blockchain
+        .wallet_transaction_data(wallet_id)
+        .expect("treasury wallet entry");
     // The treasury wallet is either created fresh by `ensure_treasury_wallet`
     // ("DAO Treasury", initial_balance 0) OR pre-seeded by v2 genesis as a
     // migrated, pre-funded allocation — `ensure_treasury_wallet`'s
@@ -90,7 +92,7 @@ fn test_treasury_wallet_idempotent() {
     let wallet_id = blockchain.dao_treasury_wallet_id.as_ref().unwrap().clone();
 
     let count = blockchain
-        .wallet_registry
+        .wallet_registry_snapshot()
         .keys()
         .filter(|k| *k == &wallet_id)
         .count();
@@ -115,7 +117,7 @@ fn test_treasury_wallet_idempotent() {
     let loaded = Blockchain::load_from_file(&path).expect("load_from_file");
 
     let reloaded_count = loaded
-        .wallet_registry
+        .wallet_registry_snapshot()
         .keys()
         .filter(|k| *k == &wallet_id)
         .count();
@@ -136,12 +138,7 @@ fn test_treasury_wallet_survives_round_trip() {
     let mut blockchain = Blockchain::default();
 
     // Ensure SOV token contract is present (needed for persistence tests).
-    let sov_token_id = generate_lib_token_id();
-    if !blockchain.token_contracts.contains_key(&sov_token_id) {
-        blockchain
-            .token_contracts
-            .insert(sov_token_id, TokenContract::new_sov_native());
-    }
+    blockchain.ensure_sov_token_contract();
 
     let original_id = blockchain.dao_treasury_wallet_id.clone().unwrap();
 
@@ -164,7 +161,7 @@ fn test_treasury_wallet_survives_round_trip() {
 
     // Registry entry must also survive.
     assert!(
-        loaded.wallet_registry.contains_key(&original_id),
+        loaded.wallet_exists(&original_id),
         "Treasury wallet registry entry must survive persistence round-trip"
     );
 }
@@ -185,11 +182,8 @@ fn test_block_fees_credited_to_treasury() {
     treasury_id.copy_from_slice(&treasury_id_bytes);
 
     // Ensure SOV token contract exists.
+    blockchain.ensure_sov_token_contract();
     let sov_token_id = generate_lib_token_id();
-    blockchain
-        .token_contracts
-        .entry(sov_token_id)
-        .or_insert_with(TokenContract::new_sov_native);
 
     // v2 genesis may pre-fund the treasury, so capture the starting balance
     // rather than assuming zero — the invariant under test is that a credited
@@ -201,7 +195,7 @@ fn test_block_fees_credited_to_treasury() {
     // Simulate what process_token_transactions does: credit fees via wallet_key_for_sov.
     let fee_amount: u128 = 42_000_000;
     let treasury_key = wallet_key_for_sov(&treasury_id);
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         let current = token.balance_of(&treasury_key);
         token
             .set_balance(&treasury_key, current.saturating_add(fee_amount));

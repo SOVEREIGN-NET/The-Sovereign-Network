@@ -1624,15 +1624,13 @@ impl IdentityHandler {
             let mut blockchain = blockchain_arc.write().await;
 
             // Update in-memory immediately (cache warmup)
-            if let Some(id) = blockchain.identity_registry.get_mut(&req.did) {
+            if let Some(id) = blockchain.identity_registry_entry_mut(&req.did) {
                 id.kyber_public_key = kyber_pk.clone();
             }
 
             // Submit IdentityUpdate system transaction for block persistence
             let mut identity_data = blockchain
-                .identity_registry
-                .get(&req.did)
-                .cloned()
+                .identity_transaction_data(&req.did)
                 .unwrap_or_else(|| lib_blockchain::transaction::IdentityTransactionData::new(
                     req.did.clone(), String::new(), identity_pk.clone(),
                     vec![], "human".to_string(),
@@ -1824,7 +1822,7 @@ impl IdentityHandler {
             blockchain
                 .did_to_username
                 .insert(did.clone(), username.clone());
-            if let Some(id) = blockchain.identity_registry.get_mut(&did) {
+            if let Some(id) = blockchain.identity_registry_entry_mut(&did) {
                 id.display_name = username.clone();
             }
         }
@@ -2031,10 +2029,7 @@ impl IdentityHandler {
             {
                 let blockchain = blockchain_arc.read().await;
                 let id_hash = lib_blockchain::Hash::from_slice(&identity_id.0);
-                blockchain
-                    .wallet_registry
-                    .values()
-                    .any(|w| w.owner_identity_id.as_ref() == Some(&id_hash))
+                !blockchain.wallets_for_owner(&id_hash).is_empty()
             } else {
                 false
             };

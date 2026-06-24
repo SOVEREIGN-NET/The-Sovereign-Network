@@ -1299,6 +1299,40 @@ impl Blockchain {
         &self.token_contracts
     }
 
+    /// Number of in-memory token contract entries (metadata shadow; use
+    /// `iter_token_contract_entries` for sled-first listing).
+    pub fn token_contract_count(&self) -> usize {
+        self.token_contracts.len()
+    }
+
+    pub fn token_contracts_is_empty(&self) -> bool {
+        self.token_contracts.is_empty()
+    }
+
+    /// Legacy in-memory shadow insert — genesis/bootstrap only (#2640).
+    pub fn insert_token_contract(
+        &mut self,
+        contract_id: [u8; 32],
+        contract: crate::contracts::TokenContract,
+    ) {
+        self.token_contracts.insert(contract_id, contract);
+    }
+
+    /// Legacy in-memory shadow insert — genesis/bootstrap/tests (#2640).
+    pub fn insert_token_nonce_shadow(
+        &mut self,
+        token_id: [u8; 32],
+        sender: [u8; 32],
+        nonce: u64,
+    ) {
+        self.token_nonces.insert((token_id, sender), nonce);
+    }
+
+    /// Snapshot of in-memory token nonces (tests / persistence parity; reads use `token_nonce`).
+    pub fn token_nonces_snapshot(&self) -> HashMap<([u8; 32], [u8; 32]), u64> {
+        self.token_nonces.clone()
+    }
+
     pub fn get_all_web4_contracts(
         &self,
     ) -> &HashMap<[u8; 32], crate::contracts::web4::Web4Contract> {

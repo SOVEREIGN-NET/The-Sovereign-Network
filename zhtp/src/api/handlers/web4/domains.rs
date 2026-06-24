@@ -416,13 +416,10 @@ impl Web4Handler {
                     ));
                 }
                 let wallet_id = blockchain
-                    .wallet_registry
-                    .values()
-                    .find(|wallet| {
-                        wallet.owner_identity_id.as_ref() == Some(&owner_identity_hash)
-                            && wallet.wallet_type == "Primary"
-                    })
-                    .map(|wallet| wallet.wallet_id)
+                    .wallets_for_owner(&owner_identity_hash)
+                    .into_iter()
+                    .find(|(_, wallet)| wallet.wallet_type == "Primary")
+                    .map(|(_, wallet)| wallet.wallet_id)
                     .ok_or_else(|| anyhow!("Primary wallet not found for identity"))?;
                 let mut bytes = [0u8; 32];
                 bytes.copy_from_slice(wallet_id.as_bytes());
@@ -1061,13 +1058,10 @@ impl Web4Handler {
                 let owner_wallet_id_bytes: [u8; 32] = {
                     let bc = self.blockchain.read().await;
                     let wallet_id = bc
-                        .wallet_registry
-                        .values()
-                        .find(|w| {
-                            w.owner_identity_id.as_ref() == Some(&owner_identity_hash)
-                                && w.wallet_type == "Primary"
-                        })
-                        .map(|w| w.wallet_id)
+                        .wallets_for_owner(&owner_identity_hash)
+                        .into_iter()
+                        .find(|(_, w)| w.wallet_type == "Primary")
+                        .map(|(_, w)| w.wallet_id)
                         .ok_or_else(|| {
                             anyhow!("Primary wallet not found for identity (manifest path)")
                         })?;
@@ -2374,7 +2368,7 @@ mod tests {
         // Set wallet public key deterministically for fee tx signer check.
         let owner_wallet_pk = owner_identity.public_key.dilithium_pk.clone();
         // Test scaffold: direct insert for test setup (not production code)
-        blockchain.wallet_registry.insert(
+        blockchain.insert_wallet_shadow(
             hex::encode(owner_wallet_id),
             wallet_data(
                 owner_wallet_id,
@@ -2384,7 +2378,7 @@ mod tests {
             ),
         );
         // Test scaffold: direct insert for test setup (not production code)
-        blockchain.wallet_registry.insert(
+        blockchain.insert_wallet_shadow(
             hex::encode(treasury_wallet_id),
             wallet_data(treasury_wallet_id, "Treasury", None, vec![8u8; 32]),
         );
@@ -2399,9 +2393,7 @@ mod tests {
         };
         // 11 SOV — enough to cover the 10 SOV domain registration fee (atoms).
         sov.mint(&owner_wallet_key, lib_types::sov::atoms(11)).unwrap();
-        blockchain
-            .token_contracts
-            .insert(generate_lib_token_id(), sov);
+        blockchain.insert_token_contract(generate_lib_token_id(), sov);
 
         let blockchain = Arc::new(RwLock::new(blockchain));
         let owner_private = owner_identity
@@ -2610,7 +2602,7 @@ mod tests {
         {
             let mut bc = blockchain.write().await;
             let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-            let token = bc.token_contracts.get_mut(&sov_token_id).unwrap();
+            let token = bc.get_token_contract_mut(&sov_token_id).unwrap();
             let sender_key = BcPublicKey {
                 dilithium_pk: [0u8; 2592],
                 kyber_pk: [0u8; 1568],
@@ -2665,7 +2657,7 @@ mod tests {
         {
             let mut bc = blockchain.write().await;
             let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-            let token = bc.token_contracts.get_mut(&sov_token_id).unwrap();
+            let token = bc.get_token_contract_mut(&sov_token_id).unwrap();
             let sender_key = BcPublicKey {
                 dilithium_pk: [0u8; 2592],
                 kyber_pk: [0u8; 1568],

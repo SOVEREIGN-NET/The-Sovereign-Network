@@ -222,16 +222,15 @@ fn audit_wallet_migration(
     let report = WalletMigrationAuditReport {
         dat_file: dat_path.display().to_string(),
         chain_height: blockchain.height,
-        total_wallets_in_local_state: blockchain.wallet_registry.len(),
+        total_wallets_in_local_state: blockchain.wallet_count(),
         noncanonical_wallet_count: blockchain.collect_noncanonical_wallets().len(),
         treasury_wallet_id: treasury_wallet_id_hex.clone(),
         treasury_wallet_present_in_local_state: blockchain
-            .wallet_registry
-            .contains_key(&treasury_wallet_id_hex),
+            .wallet_exists(&treasury_wallet_id_hex),
         treasury_wallet_canonical_in_history: blockchain.dao_treasury_wallet_is_canonical(),
         treasury_wallet_requires_schema_change: blockchain
-            .wallet_registry
-            .get(&treasury_wallet_id_hex)
+            .wallet_transaction_data(&treasury_wallet_id_hex)
+            .as_ref()
             .map(|wallet| build_wallet_migration_tx(wallet).is_none())
             .unwrap_or(false),
         candidates,

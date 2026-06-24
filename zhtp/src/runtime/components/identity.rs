@@ -970,7 +970,7 @@ async fn bootstrap_identities_from_dht(
 
                             // Migrate primary wallet if missing
                             if let Some(wid) = primary_wallet_id {
-                                if !bc.wallet_registry.contains_key(wid) {
+                                if !bc.wallet_exists(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
                                         const WELCOME_BONUS: u128 = SOV_WELCOME_BONUS;
@@ -1012,7 +1012,7 @@ async fn bootstrap_identities_from_dht(
 
                             // Migrate UBI wallet if missing
                             if let Some(wid) = ubi_wallet_id {
-                                if !bc.wallet_registry.contains_key(wid) {
+                                if !bc.wallet_exists(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
                                         let wallet_data =
@@ -1045,7 +1045,7 @@ async fn bootstrap_identities_from_dht(
 
                             // Migrate savings wallet if missing
                             if let Some(wid) = savings_wallet_id {
-                                if !bc.wallet_registry.contains_key(wid) {
+                                if !bc.wallet_exists(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
                                         let wallet_data =

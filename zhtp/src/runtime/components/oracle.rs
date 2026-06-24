@@ -750,9 +750,7 @@ mod tests {
 
         // Register the validator in the registry so the stateful validator can look it up
         let validator_info = make_validator_info("test-validator", dilithium_pk);
-        blockchain
-            .validator_registry
-            .insert("test-validator".to_string(), validator_info);
+        blockchain.insert_validator_shadow(validator_info);
 
         // Initialize oracle committee with only this validator's pubkey hash
         blockchain

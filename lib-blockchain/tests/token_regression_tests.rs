@@ -174,7 +174,7 @@ fn register_wallet(
     initial_balance: u128,
 ) {
     let wallet_id_hex = hex::encode(wallet_id);
-    blockchain.wallet_registry.insert(
+    blockchain.insert_wallet_shadow(
         wallet_id_hex.clone(),
         WalletTransactionData {
             wallet_id: Hash::new(wallet_id),
@@ -196,7 +196,7 @@ fn register_wallet(
 /// Register an identity directly in the blockchain state.
 fn register_identity(blockchain: &mut Blockchain, identity_id: &str, pubkey: &PublicKey) {
     use lib_blockchain::transaction::IdentityTransactionData;
-    blockchain.identity_registry.insert(
+    blockchain.insert_identity_shadow(
         identity_id.to_string(),
         IdentityTransactionData {
             did: identity_id.to_string(),
@@ -228,10 +228,7 @@ fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
 /// Insert the native SOV token contract into the blockchain (replaces private ensure_sov_token_contract).
 fn insert_sov_token(blockchain: &mut Blockchain) {
     let sov_token_id = generate_lib_token_id();
-    if !blockchain.token_contracts.contains_key(&sov_token_id) {
-        let sov_token = TokenContract::new_sov_native();
-        blockchain.token_contracts.insert(sov_token_id, sov_token);
-    }
+    blockchain.ensure_sov_token_contract();
 }
 
 // ============================================================================
@@ -269,8 +266,7 @@ fn test_create_custom_token() {
     // Verify token was created
     let token_id = generate_custom_token_id("CarbonBlue", "CBE");
     let token = blockchain
-        .token_contracts
-        .get(&token_id)
+        .get_token_contract(&token_id)
         .expect("Token should exist after creation");
 
     assert_eq!(token.name, "CarbonBlue");
@@ -301,7 +297,7 @@ fn test_mint_custom_token_by_creator() {
         creator.clone(),
     );
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     // Build TokenMint transaction signed by creator
     let tx = token_mint_tx(&creator, token_id, recipient.key_id, 500_000);
@@ -309,7 +305,7 @@ fn test_mint_custom_token_by_creator() {
 
     blockchain.process_token_transactions(&block).unwrap();
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.balance_of(&recipient),
         500_000,
@@ -340,7 +336,7 @@ fn test_mint_custom_token_unauthorized_rejected() {
         creator.clone(),
     );
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     // Attacker signs a TokenMint — must be rejected
     let tx = token_mint_tx(&attacker, token_id, recipient.key_id, 999_999);
@@ -351,7 +347,7 @@ fn test_mint_custom_token_unauthorized_rejected() {
     assert!(result.unwrap_err().to_string().contains("unauthorized"));
 
     // Verify no tokens were minted
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.balance_of(&recipient),
         0,
@@ -379,7 +375,7 @@ fn test_kernel_controlled_tokenmint_bypass_rejected() {
     );
     token.kernel_mint_authority = Some(kernel_authority.clone());
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     let tx = token_mint_tx(&attacker, token_id, recipient.key_id, 1_000);
     let block = test_block(1, vec![tx]);
@@ -410,14 +406,14 @@ fn test_kernel_controlled_tokenmint_via_kernel_authority_succeeds() {
     );
     token.kernel_mint_authority = Some(kernel_authority.clone());
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     let tx = token_mint_tx(&kernel_authority, token_id, recipient.key_id, 1_000);
     let block = test_block(1, vec![tx]);
 
     blockchain.process_token_transactions(&block).unwrap();
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(token.balance_of(&recipient), 1_000);
 }
 
@@ -442,7 +438,7 @@ fn test_sov_wallet_transfer() {
 
     // Mint SOV to sender wallet (using synthetic wallet key)
     let sender_wallet_key = wallet_key(&sender_wallet_id);
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.mint(&sender_wallet_key, 10_000).unwrap();
     }
 
@@ -459,7 +455,7 @@ fn test_sov_wallet_transfer() {
 
     blockchain.process_token_transactions(&block).unwrap();
 
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.get_token_contract(&sov_token_id).unwrap();
     let sender_balance = token.balance_of(&wallet_key(&sender_wallet_id));
     let recipient_balance = token.balance_of(&wallet_key(&recipient_wallet_id));
 
@@ -493,7 +489,7 @@ fn test_custom_token_transfer() {
         creator.clone(),
     );
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     // Transfer using key_id addressing (not wallet_id — this is a custom token)
     let tx = token_transfer_tx(
@@ -508,7 +504,7 @@ fn test_custom_token_transfer() {
 
     blockchain.process_token_transactions(&block).unwrap();
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.balance_of(&creator),
         750_000,
@@ -537,7 +533,7 @@ fn test_contract_execution_burn_rejected() {
     );
     let token_id = token.token_id;
     let initial_supply = token.total_supply;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     // Burn via ContractExecution
     #[derive(serde::Serialize)]
@@ -559,7 +555,7 @@ fn test_contract_execution_burn_rejected() {
         "process_contract_transactions must not abort on a rejected ContractExecution"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.balance_of(&creator),
         1_000_000,
@@ -595,7 +591,7 @@ fn test_contract_execution_mint_rejected_for_kernel_controlled_token() {
     );
     token.kernel_mint_authority = Some(kernel_authority);
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     let params = MintParams {
         token_id,
@@ -611,7 +607,7 @@ fn test_contract_execution_mint_rejected_for_kernel_controlled_token() {
         "process_contract_transactions currently swallows contract-execution errors"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.balance_of(&recipient),
         0,
@@ -640,7 +636,7 @@ fn test_contract_execution_burn_rejected_for_kernel_controlled_token() {
     );
     token.kernel_mint_authority = Some(kernel_authority);
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     let params = BurnParams {
         token_id,
@@ -655,7 +651,7 @@ fn test_contract_execution_burn_rejected_for_kernel_controlled_token() {
         "process_contract_transactions currently swallows contract-execution errors"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.total_supply, 1_000_000,
         "Kernel-protected burn bypass must not mutate supply"
@@ -676,7 +672,7 @@ fn test_contract_execution_transfer_rejected() {
         creator.clone(),
     );
     let token_id = token.token_id;
-    blockchain.token_contracts.insert(token_id, token);
+    blockchain.insert_token_contract(token_id, token);
 
     #[derive(serde::Serialize)]
     struct TransferParams {
@@ -698,7 +694,7 @@ fn test_contract_execution_transfer_rejected() {
         "ContractExecution token transfer must be rejected"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.get_token_contract(&token_id).unwrap();
     assert_eq!(
         token.balance_of(&creator),
         1_000_000,
@@ -728,7 +724,7 @@ fn test_balance_queries_after_operations() {
 
     // Mint SOV to wallet A
     let wallet_a_key = wallet_key(&wallet_a);
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.mint(&wallet_a_key, 50_000).unwrap();
     }
 
@@ -742,7 +738,7 @@ fn test_balance_queries_after_operations() {
     let block2 = test_block(2, vec![tx2]);
     blockchain.process_token_transactions(&block2).unwrap();
 
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.get_token_contract(&sov_token_id).unwrap();
     assert_eq!(
         token.balance_of(&wallet_key(&wallet_a)),
         25_000,
@@ -772,11 +768,11 @@ fn test_token_list() {
         TokenContract::new_custom("Beta".to_string(), "BET".to_string(), 200, creator.clone());
     let id1 = token1.token_id;
     let id2 = token2.token_id;
-    blockchain.token_contracts.insert(id1, token1);
-    blockchain.token_contracts.insert(id2, token2);
+    blockchain.insert_token_contract(id1, token1);
+    blockchain.insert_token_contract(id2, token2);
 
     // Verify all tokens are listed
-    let contracts = &blockchain.token_contracts;
+    let contracts = blockchain.get_all_token_contracts();
     assert!(
         contracts.contains_key(&generate_lib_token_id()),
         "SOV should be in list"
@@ -809,7 +805,7 @@ fn test_wallet_registration_mints_initial_balance() {
 
     blockchain.process_wallet_transactions(&block).unwrap();
 
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.get_token_contract(&sov_token_id).unwrap();
     let balance = token.balance_of(&wallet_key(&wallet_id));
     assert_eq!(
         balance, initial_balance,
@@ -834,7 +830,7 @@ fn test_transfer_insufficient_balance() {
 
     // Mint only 100 SOV to sender
     let sender_key = wallet_key(&sender_wallet);
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.mint(&sender_key, 100).unwrap();
     }
 
@@ -870,7 +866,7 @@ fn test_transfer_to_nonexistent_wallet_fails() {
     register_wallet(&mut blockchain, sender_wallet, &sender_pk, 0);
 
     let sender_key = wallet_key(&sender_wallet);
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.mint(&sender_key, 10_000).unwrap();
     }
 
@@ -904,7 +900,7 @@ fn test_duplicate_symbol_rejected() {
         1000,
         creator.clone(),
     );
-    blockchain.token_contracts.insert(token.token_id, token);
+    blockchain.insert_token_contract(token.token_id, token);
 
     // Try creating another token with same symbol via ContractExecution
     #[derive(serde::Serialize)]
@@ -932,7 +928,7 @@ fn test_duplicate_symbol_rejected() {
 
     // Verify only the original token exists (no duplicate created)
     let count = blockchain
-        .token_contracts
+        .get_all_token_contracts()
         .values()
         .filter(|t| t.symbol.to_uppercase() == "CBE")
         .count();
@@ -961,8 +957,7 @@ fn test_replay_protection_rejects_duplicate_nonce() {
     // Mint SOV to sender
     let sender_key = wallet_key(&sender_wid);
     blockchain
-        .token_contracts
-        .get_mut(&sov_token_id)
+        .get_token_contract_mut(&sov_token_id)
         .unwrap()
         .mint(&sender_key, 1_000_000)
         .unwrap();
@@ -1016,8 +1011,7 @@ fn test_sequential_nonces() {
     // Mint SOV to sender
     let sender_key = wallet_key(&sender_wid);
     blockchain
-        .token_contracts
-        .get_mut(&sov_token_id)
+        .get_token_contract_mut(&sov_token_id)
         .unwrap()
         .mint(&sender_key, 1_000_000)
         .unwrap();
@@ -1042,7 +1036,7 @@ fn test_sequential_nonces() {
     }
 
     // Verify final balances
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.get_token_contract(&sov_token_id).unwrap();
     assert_eq!(
         token.balance_of(&wallet_key(&sender_wid)),
         1_000_000 - 30_000
@@ -1074,12 +1068,9 @@ fn test_nonces_are_per_token() {
         sender_pk.clone(),
     );
     let custom_token_id = custom_token.token_id;
+    blockchain.insert_token_contract(custom_token_id, custom_token);
     blockchain
-        .token_contracts
-        .insert(custom_token_id, custom_token);
-    blockchain
-        .token_contracts
-        .get_mut(&custom_token_id)
+        .get_token_contract_mut(&custom_token_id)
         .unwrap()
         .mint(&sender_pk, 500_000)
         .unwrap();
@@ -1087,8 +1078,7 @@ fn test_nonces_are_per_token() {
     // Mint SOV to sender wallet
     let sender_key = wallet_key(&sender_wid);
     blockchain
-        .token_contracts
-        .get_mut(&sov_token_id)
+        .get_token_contract_mut(&sov_token_id)
         .unwrap()
         .mint(&sender_key, 1_000_000)
         .unwrap();

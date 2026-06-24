@@ -15,12 +15,12 @@ fn test_sov_wallet_registration_deficit_minting() {
     wallet_id_bytes[..13].copy_from_slice(b"test-wallet-1");
     let recipient_pk = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
 
-    if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+    if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
         token.mint(&recipient_pk, 3000).expect("Pre-mint should succeed");
     }
 
     let current_balance = blockchain
-        .token_contracts
+        .get_all_token_contracts()
         .get(&sov_token_id)
         .map(|token| token.balance_of(&recipient_pk))
         .unwrap_or(0);
@@ -60,7 +60,7 @@ fn test_sov_wallet_registration_deficit_minting() {
         .expect("Should process successfully");
 
     let final_balance = blockchain
-        .token_contracts
+        .get_all_token_contracts()
         .get(&sov_token_id)
         .map(|token| token.balance_of(&recipient_pk))
         .unwrap_or(0);
