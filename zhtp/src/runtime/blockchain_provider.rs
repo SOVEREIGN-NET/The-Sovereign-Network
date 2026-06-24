@@ -56,14 +56,23 @@ impl BlockchainProvider {
         self.blockchain.read().await.is_some()
     }
 
-    /// Non-blocking, read-only council membership check for sync contexts.
-    /// Returns None if the lock is contended or blockchain isn't initialized.
-    /// Does NOT expose the blockchain Arc — callers cannot take a write lock.
-    pub fn is_council_member_sync(&self, did: &str) -> Option<bool> {
-        let outer = self.blockchain.try_read().ok()?;
+    /// Read-only council membership check. Awaits the blockchain read lock so
+    /// transient writer contention (e.g. block commit) does not masquerade as
+    /// "not council". Returns `None` only when the provider has no blockchain.
+    pub async fn is_council_member(&self, did: &str) -> Option<bool> {
+        let outer = self.blockchain.read().await;
         let arc = outer.as_ref()?;
-        let bc = arc.try_read().ok()?;
+        let bc = arc.read().await;
         Some(bc.is_council_member(did))
+    }
+
+    /// Sync wrapper for handler principal extraction. Must run on a tokio
+    /// runtime (API handlers do). Awaits read locks — never maps contention to
+    /// `None`.
+    pub fn is_council_member_sync(&self, did: &str) -> Option<bool> {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.is_council_member(did))
+        })
     }
 
     /// Resolve a 32-byte QUIC device key (the `request.requester` blob set by
@@ -625,6 +634,95 @@ mod tests {
             .await
             .unwrap();
         storage
+    }
+
+    #[tokio::test]
+    async fn is_council_member_awaits_write_lock_instead_of_failing_try_read() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
+
+        let council_did = "did:zhtp:alice";
+        let mut bc = Blockchain::new().expect("genesis");
+        bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+            members: vec![CouncilBootstrapEntry {
+                identity_id: council_did.to_string(),
+                wallet_id: "aaaa".to_string(),
+                stake_amount: 1_000_000,
+            }],
+            threshold: 1,
+        });
+
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+
+        // Simulate block-commit writer hold: try_read would return Err here.
+        let write_guard = bc_arc.write().await;
+
+        let provider_for_check = provider.clone();
+        let did = council_did.to_string();
+        let membership_check = tokio::spawn(async move {
+            provider_for_check.is_council_member(&did).await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !membership_check.is_finished(),
+            "council check must await the write lock, not fail on try_read contention"
+        );
+
+        drop(write_guard);
+        assert_eq!(
+            membership_check.await.expect("join"),
+            Some(true),
+            "council DID must resolve after the write lock is released"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn is_council_member_sync_resolves_council_under_write_contention() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
+
+        let council_did = "did:zhtp:bob";
+        let mut bc = Blockchain::new().expect("genesis");
+        bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+            members: vec![CouncilBootstrapEntry {
+                identity_id: council_did.to_string(),
+                wallet_id: "bbbb".to_string(),
+                stake_amount: 1_000_000,
+            }],
+            threshold: 1,
+        });
+
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+
+        let bc_for_writer = bc_arc.clone();
+        let write_holder = tokio::spawn(async move {
+            let _guard = bc_for_writer.write().await;
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let provider_for_sync = provider.clone();
+        let did = council_did.to_string();
+        let sync_check = tokio::spawn(async move {
+            provider_for_sync.is_council_member_sync(&did)
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !sync_check.is_finished(),
+            "sync wrapper must await the write lock, not return None under contention"
+        );
+
+        write_holder.await.expect("write holder join");
+        assert_eq!(
+            sync_check.await.expect("sync check join"),
+            Some(true),
+            "sync council check must succeed once write lock releases"
+        );
     }
 
     #[tokio::test]

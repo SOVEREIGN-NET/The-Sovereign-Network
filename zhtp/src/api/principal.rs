@@ -8,8 +8,10 @@ use lib_types::NodeType;
 ///
 /// This is the canonical integration point used across all API handlers.
 /// Authenticated DIDs are checked against the on-chain council member list
-/// to assign `Role::Council` vs `Role::Citizen`. If the blockchain lock is
-/// contended, defaults to `Role::Citizen` (safe: never elevates on failure).
+/// to assign `Role::Council` vs `Role::Citizen`. The membership read awaits
+/// the blockchain lock (writer contention during block commit must not
+/// downgrade Council to Citizen). Defaults to `Role::Citizen` only when the
+/// provider is uninitialized or the DID is not on the council list.
 ///
 /// Mobile clients sign QUIC bytes with a per-device Dilithium key
 /// (`53c47662…`) which is *different by design* from the user's canonical
@@ -57,8 +59,8 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 /// Determine the role for an authenticated DID by checking on-chain state.
 ///
 /// Council members get `Role::Council`, everyone else gets `Role::Citizen`.
-/// Uses non-blocking read — if the lock is contended, returns `Role::Citizen`
-/// (never elevates privileges on failure).
+/// Awaits the blockchain read lock via `is_council_member_sync` so block-commit
+/// writer contention cannot be mistaken for a non-council DID.
 fn resolve_role_for_did(did: &str) -> Role {
     let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
         Some(p) => p,
@@ -67,7 +69,7 @@ fn resolve_role_for_did(did: &str) -> Role {
 
     match provider.is_council_member_sync(did) {
         Some(true) => Role::Council,
-        _ => Role::Citizen, // Not council, not initialized, or lock contended
+        Some(false) | None => Role::Citizen, // not on council, or blockchain unavailable
     }
 }
 
