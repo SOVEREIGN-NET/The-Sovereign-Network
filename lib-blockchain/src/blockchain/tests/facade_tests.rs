@@ -121,6 +121,70 @@ fn token_nonce_reads_sled_when_store_attached() {
 }
 
 #[test]
+fn is_nonce_current_reads_sled_nonce_not_stale_in_memory() {
+    use crate::transaction::{TokenTransferData, Transaction, TransactionPayload};
+    use crate::types::TransactionType;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("nonce_gate_store")).unwrap());
+    let token_id = [0xDDu8; 32];
+    let sender = [0xEEu8; 32];
+    let token = TokenId::new(token_id);
+    let addr = Address::new(sender);
+    store.begin_block(0).unwrap();
+    store.set_token_nonce(&token, &addr, 5).unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    bc.token_nonces.insert((token_id, sender), 0);
+
+    let current_tx = Transaction {
+        version: 2,
+        chain_id: 0x03,
+        transaction_type: TransactionType::TokenTransfer,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: crate::integration::crypto_integration::Signature::default(),
+        memo: vec![],
+        payload: TransactionPayload::TokenTransfer(TokenTransferData {
+            token_id,
+            from: sender,
+            to: [0x11; 32],
+            amount: 1,
+            nonce: 5,
+        }),
+    };
+    let stale_tx = Transaction {
+        version: 2,
+        chain_id: 0x03,
+        transaction_type: TransactionType::TokenTransfer,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: crate::integration::crypto_integration::Signature::default(),
+        memo: vec![],
+        payload: TransactionPayload::TokenTransfer(TokenTransferData {
+            token_id,
+            from: sender,
+            to: [0x11; 32],
+            amount: 1,
+            nonce: 0,
+        }),
+    };
+
+    assert!(
+        bc.is_nonce_current(&current_tx),
+        "nonce matching sled value must be accepted"
+    );
+    assert!(
+        !bc.is_nonce_current(&stale_tx),
+        "stale in-memory nonce-0 must be rejected when sled expects 5"
+    );
+}
+
+#[test]
 fn token_balance_reads_sled_when_store_attached() {
     let temp = tempfile::tempdir().unwrap();
     let store = Arc::new(SledStore::open(&temp.path().join("facade_bal_store")).unwrap());

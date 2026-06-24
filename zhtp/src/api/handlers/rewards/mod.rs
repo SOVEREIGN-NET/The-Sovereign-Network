@@ -465,7 +465,7 @@ impl RewardsHandler {
         let nonce = {
             let bc = self.blockchain.read().await;
             bc.token_nonce(&treasury.bubl_token_id, &treasury.signer_key_id)
-                .unwrap_or(0)
+                .map_err(|e| anyhow!("nonce lookup failed: {e}"))?
         };
 
         let data = TokenTransferData {
