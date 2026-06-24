@@ -669,7 +669,7 @@ impl TokenHandler {
         use lib_blockchain::contracts::utils::generate_lib_token_id;
 
         let blockchain = self.blockchain.read().await;
-        let target_key_id = if let Some(wallet) = blockchain.query_wallet(address) {
+        let target_key_id = if let Some(wallet) = blockchain.wallet_transaction_data(address) {
             let wallet_pk = PublicKey::new(
                 wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
             );
@@ -850,7 +850,7 @@ impl TokenHandler {
 
         // Otherwise treat it as identity_id and try to find the Primary wallet.
         let identity_hash = lib_blockchain::Hash::from_slice(&bytes);
-        let primary_wallet = blockchain.query_all_wallets().into_iter().find(|(_, wallet)| {
+        let primary_wallet = blockchain.wallet_registry_snapshot().into_iter().find(|(_, wallet)| {
             wallet.owner_identity_id.as_ref() == Some(&identity_hash)
                 && wallet.wallet_type == "Primary"
         })?;

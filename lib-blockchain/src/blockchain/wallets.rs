@@ -185,9 +185,9 @@ impl Blockchain {
 
         if let Some(owner) = owner_identity_id {
             let did = format!("did:zhtp:{}", hex::encode(owner.as_bytes()));
-            if let Some(identity) = self.identity_registry.get(&did) {
-                if identity.public_key.len() >= Self::MIN_DILITHIUM_PK_LEN {
-                    return Some(identity.public_key.clone());
+            if let Some(pk) = self.identity_public_key(&did) {
+                if pk.len() >= Self::MIN_DILITHIUM_PK_LEN {
+                    return Some(pk);
                 }
             }
         }
@@ -666,7 +666,7 @@ impl Blockchain {
         wallet_data: crate::transaction::WalletTransactionData,
     ) -> Result<Hash> {
         let wallet_id_str = hex::encode(wallet_data.wallet_id.as_bytes());
-        if self.wallet_registry.contains_key(&wallet_id_str) {
+        if self.wallet_exists(&wallet_id_str) {
             return Err(anyhow::anyhow!(
                 "Wallet {} already exists on blockchain",
                 wallet_id_str
@@ -757,8 +757,109 @@ impl Blockchain {
         self.wallet_registry.get(wallet_id)
     }
 
+    fn wallet_id_bytes_from_hex(wallet_id_hex: &str) -> Option<[u8; 32]> {
+        let bytes = hex::decode(wallet_id_hex).ok()?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Some(arr)
+    }
+
+    /// Union existence check across the in-memory shadow and durable sled (#2639).
+    ///
+    /// Checks the in-memory `wallet_registry` FIRST, then sled wallet projections.
+    /// Same ordering rationale as `identity_exists`: same-block / mempool wallets
+    /// are visible in-mem before commit; sled catches post-restart durable state.
     pub fn wallet_exists(&self, wallet_id: &str) -> bool {
-        self.wallet_registry.contains_key(wallet_id)
+        if self.wallet_registry.contains_key(wallet_id) {
+            return true;
+        }
+        if let Some(store) = self.get_store() {
+            let Some(wallet_id_bytes) = Self::wallet_id_bytes_from_hex(wallet_id) else {
+                tracing::warn!(
+                    wallet_id = %wallet_id,
+                    "wallet_exists: invalid wallet_id hex; treating as absent"
+                );
+                return false;
+            };
+            match store.get_wallet_projection(&wallet_id_bytes) {
+                Ok(found) => return found.is_some(),
+                Err(e) => {
+                    tracing::warn!(
+                        wallet_id = %wallet_id,
+                        error = %e,
+                        "wallet_exists: sled read failed; treating as not-in-sled"
+                    );
+                }
+            }
+        }
+        false
+    }
+
+    /// Sled-first wallet record for handlers needing full `WalletTransactionData` (#2639).
+    ///
+    /// Returns an owned record from durable wallet projections when the store
+    /// is attached, with the in-memory shadow as the pre-commit / store-less fallback.
+    pub fn wallet_transaction_data(
+        &self,
+        wallet_id_hex: &str,
+    ) -> Option<crate::transaction::WalletTransactionData> {
+        if let Some(store) = self.get_store() {
+            if let Some(wallet_id_bytes) = Self::wallet_id_bytes_from_hex(wallet_id_hex) {
+                if let Ok(Some(record)) = store.get_wallet_projection(&wallet_id_bytes) {
+                    return Some(record.wallet_data);
+                }
+            }
+        }
+        self.wallet_registry.get(wallet_id_hex).cloned()
+    }
+
+    /// Sled-first snapshot for backfill / iteration (#2639).
+    ///
+    /// Builds a map from durable wallet projections, then overlays the in-memory
+    /// shadow (pending / same-block registrations win).
+    pub fn wallet_registry_snapshot(
+        &self,
+    ) -> HashMap<String, crate::transaction::WalletTransactionData> {
+        let mut out = HashMap::new();
+        if let Some(store) = self.get_store() {
+            match store.iter_wallet_projections() {
+                Ok(iter) => {
+                    for (wallet_id, record) in iter {
+                        out.insert(hex::encode(wallet_id), record.wallet_data);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "wallet_registry_snapshot: sled iter failed; using in-memory shadow only"
+                    );
+                }
+            }
+        }
+        for (wallet_id_hex, data) in &self.wallet_registry {
+            out.insert(wallet_id_hex.clone(), data.clone());
+        }
+        out
+    }
+
+    /// Authoritative wallet count from sled when attached (#2639).
+    ///
+    /// Returns durable sled cardinality only — NOT a union with the in-memory
+    /// shadow (unlike [`wallet_registry_snapshot`].len()). Pending same-block
+    /// wallets are visible via the snapshot, not this count.
+    pub fn wallet_count(&self) -> usize {
+        if let Some(store) = self.get_store() {
+            match store.count_wallet_projections() {
+                Ok(n) => return n,
+                Err(e) => {
+                    tracing::warn!(error = %e, "wallet_count: sled count failed; using in-memory shadow");
+                }
+            }
+        }
+        self.wallet_registry.len()
     }
 
     pub fn list_all_wallets(&self) -> Vec<&crate::transaction::WalletTransactionData> {

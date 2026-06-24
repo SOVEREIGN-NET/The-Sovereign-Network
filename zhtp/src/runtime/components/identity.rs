@@ -568,7 +568,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
         // Check if already on blockchain
         {
             let bc = blockchain_arc.read().await;
-            if bc.identity_registry.contains_key(did) {
+            if bc.identity_exists(did) {
                 debug!("Identity {} already on blockchain, skipping", id_preview);
                 skipped += 1;
                 continue;
@@ -1087,7 +1087,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1106,7 +1106,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1124,7 +1124,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1223,8 +1223,8 @@ async fn backfill_identities_from_blockchain(
     };
 
     let bc = blockchain_arc.read().await;
-    let identity_registry = bc.identity_registry.clone();
-    let wallet_registry = bc.wallet_registry.clone();
+    let identity_registry = bc.identity_registry_snapshot();
+    let wallet_registry = bc.wallet_registry_snapshot();
     drop(bc);
 
     if identity_registry.is_empty() {

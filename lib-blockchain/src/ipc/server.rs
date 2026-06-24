@@ -151,14 +151,13 @@ async fn dispatch_request(
         }
         IpcRequest::QueryIdentity { did } => {
             let bc = blockchain.read().await;
-            IpcResponse::Identity(bc.query_identity(did).cloned())
+            IpcResponse::Identity(bc.identity_transaction_data(did))
         }
         IpcRequest::QueryAllIdentities => {
             let bc = blockchain.read().await;
             let owned: Vec<(String, crate::transaction::IdentityTransactionData)> = bc
-                .query_all_identities()
+                .identity_registry_snapshot()
                 .into_iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             IpcResponse::AllIdentities(owned)
         }
@@ -168,11 +167,11 @@ async fn dispatch_request(
         }
         IpcRequest::QueryWallet { wallet_id } => {
             let bc = blockchain.read().await;
-            IpcResponse::Wallet(bc.query_wallet(wallet_id).cloned())
+            IpcResponse::Wallet(bc.wallet_transaction_data(wallet_id))
         }
         IpcRequest::QueryValidator { did } => {
             let bc = blockchain.read().await;
-            IpcResponse::Validator(bc.query_validator(did).cloned())
+            IpcResponse::Validator(bc.validator_info_by_did(did))
         }
         IpcRequest::QueryIsCouncilMember { did } => {
             let bc = blockchain.read().await;

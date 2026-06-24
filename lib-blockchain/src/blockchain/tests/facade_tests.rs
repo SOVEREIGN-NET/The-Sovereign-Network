@@ -536,6 +536,422 @@ fn identity_public_key_pins_to_consensus() {
     );
 }
 
+#[test]
+fn identity_transaction_data_reads_sled_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_tx_data")).unwrap());
+    let did = "did:zhtp:tx-data";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0xAB; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                public_key_hash: pk_hash,
+                created_at: 42,
+                registration_fee: 7,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "Sled User".to_string(),
+                public_key: pk,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let got = bc
+        .identity_transaction_data(did)
+        .expect("sled-backed identity");
+    assert_eq!(got.display_name, "Sled User");
+    assert_eq!(got.created_at, 42);
+    assert_eq!(got.registration_fee, 7);
+}
+
+#[test]
+fn identity_registry_snapshot_includes_sled_without_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_snapshot")).unwrap());
+    let did = "did:zhtp:snapshot-only";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0xCD; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                public_key_hash: pk_hash,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "Only Sled".to_string(),
+                public_key: pk,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let snap = bc.identity_registry_snapshot();
+    assert_eq!(snap.get(did).map(|d| d.display_name.as_str()), Some("Only Sled"));
+}
+
+#[test]
+fn identity_display_name_taken_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_name_taken")).unwrap());
+    let did = "did:zhtp:name-taken";
+    let did_hash = crate::storage::did_to_hash(did);
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "UniqueName".to_string(),
+                public_key: vec![0xEF; 2592],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    assert!(bc.identity_display_name_taken("uniquename"));
+    assert!(!bc.identity_display_name_taken("available"));
+}
+
+#[test]
+fn identity_display_name_taken_sees_in_memory_pending_registration() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let did = "did:zhtp:pending-name";
+    bc.identity_registry.insert(
+        did.to_string(),
+        crate::transaction::IdentityTransactionData {
+            did: did.to_string(),
+            display_name: "PendingUser".to_string(),
+            public_key: vec![0x11; 2592],
+            ownership_proof: vec![],
+            identity_type: "human".to_string(),
+            did_document_hash: crate::types::hash::Hash::zero(),
+            created_at: 1,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: vec![],
+        },
+    );
+    assert!(bc.identity_display_name_taken("pendinguser"));
+}
+
+#[test]
+fn identity_transaction_data_skips_metadata_without_consensus() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_meta_only")).unwrap());
+    let did = "did:zhtp:meta-only";
+    let did_hash = crate::storage::did_to_hash(did);
+    store.begin_block(0).unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "Broken".to_string(),
+                public_key: vec![0xAB; 2592],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    assert!(
+        bc.identity_transaction_data(did).is_none(),
+        "metadata without consensus must not surface as zero-filled record"
+    );
+    assert!(
+        bc.identity_registry_snapshot().get(did).is_none(),
+        "snapshot must skip half-broken sled rows"
+    );
+}
+
+#[test]
+fn identity_registry_snapshot_overlay_in_memory_wins() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("id_overlay")).unwrap());
+    let did = "did:zhtp:overlay";
+    let did_hash = crate::storage::did_to_hash(did);
+    let pk = vec![0xCD; 2592];
+    let pk_hash = crate::types::hash::blake3_hash(&pk).as_array();
+    store.begin_block(0).unwrap();
+    store
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                public_key_hash: pk_hash,
+                created_at: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .put_identity_metadata(
+            &did_hash,
+            &crate::storage::IdentityMetadata {
+                did: did.to_string(),
+                display_name: "From Sled".to_string(),
+                public_key: pk,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    bc.identity_registry.insert(
+        did.to_string(),
+        crate::transaction::IdentityTransactionData {
+            did: did.to_string(),
+            display_name: "From InMem".to_string(),
+            public_key: vec![0xCD; 2592],
+            ownership_proof: vec![],
+            identity_type: "human".to_string(),
+            did_document_hash: crate::types::hash::Hash::zero(),
+            created_at: 99,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: vec![],
+        },
+    );
+    let snap = bc.identity_registry_snapshot();
+    assert_eq!(
+        snap.get(did).map(|d| d.display_name.as_str()),
+        Some("From InMem"),
+        "in-memory overlay must win over sled"
+    );
+}
+
+fn test_wallet_data(wallet_id: [u8; 32], name: &str) -> crate::transaction::WalletTransactionData {
+    crate::transaction::WalletTransactionData {
+        wallet_id: crate::types::hash::Hash::new(wallet_id),
+        wallet_type: "Primary".to_string(),
+        wallet_name: name.to_string(),
+        alias: None,
+        public_key: vec![],
+        owner_identity_id: None,
+        seed_commitment: crate::types::hash::Hash::zero(),
+        created_at: 0,
+        registration_fee: 0,
+        capabilities: 0,
+        initial_balance: 0,
+    }
+}
+
+#[test]
+fn wallet_exists_union_inmem_or_sled() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let wallet_id = [0x77u8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    bc.wallet_registry.insert(
+        wallet_id_hex.clone(),
+        test_wallet_data(wallet_id, "In-Mem"),
+    );
+    assert!(bc.wallet_exists(&wallet_id_hex), "in-mem present -> true");
+    assert!(!bc.wallet_exists("00000000000000000000000000000000000000000000000000000000000000ab"));
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_exists")).unwrap());
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Sled Only"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc2 = Blockchain::new().expect("blockchain construct");
+    bc2.set_store(store);
+    assert!(bc2.wallet_exists(&wallet_id_hex), "sled-only wallet found via union");
+}
+
+#[test]
+fn wallet_transaction_data_reads_sled_projection() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_tx_data")).unwrap());
+    let wallet_id = [0x88u8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Projection Wallet"),
+                committed_at_height: 3,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let got = bc
+        .wallet_transaction_data(&wallet_id_hex)
+        .expect("sled-backed wallet");
+    assert_eq!(got.wallet_name, "Projection Wallet");
+    assert_eq!(got.wallet_type, "Primary");
+}
+
+#[test]
+fn wallet_registry_snapshot_includes_sled_without_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_snapshot")).unwrap());
+    let wallet_id = [0x99u8; 32];
+    let did_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Only Sled"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let snap = bc.wallet_registry_snapshot();
+    assert_eq!(snap.get(&did_hex).map(|w| w.wallet_name.as_str()), Some("Only Sled"));
+}
+
+#[test]
+fn wallet_count_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_count")).unwrap());
+    store.begin_block(0).unwrap();
+    for i in 0..3u8 {
+        let wallet_id = [i; 32];
+        store
+            .put_wallet_projection(
+                &wallet_id,
+                &crate::storage::WalletProjectionRecord {
+                    wallet_data: test_wallet_data(wallet_id, &format!("Wallet{}", i)),
+                    committed_at_height: 0,
+                },
+            )
+            .unwrap();
+    }
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store);
+    assert_eq!(bc.wallet_count(), 3, "count comes from sled, not the in-mem shadow");
+}
+
+#[test]
+fn wallet_count_ignores_in_memory_only_entries() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_count_union")).unwrap());
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &[1u8; 32],
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data([1u8; 32], "Sled"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new_runtime_state();
+    bc.set_store(store);
+    let sled_hex = hex::encode([1u8; 32]);
+    let inmem_hex = hex::encode([2u8; 32]);
+    bc.wallet_registry
+        .insert(inmem_hex.clone(), test_wallet_data([2u8; 32], "InMemOnly"));
+    assert_eq!(bc.wallet_count(), 1, "count is sled cardinality, not union");
+    let snap = bc.wallet_registry_snapshot();
+    assert_eq!(
+        snap.get(&sled_hex).map(|w| w.wallet_name.as_str()),
+        Some("Sled")
+    );
+    assert_eq!(
+        snap.get(&inmem_hex).map(|w| w.wallet_name.as_str()),
+        Some("InMemOnly"),
+        "snapshot is sled ∪ in-memory overlay"
+    );
+}
+
+#[test]
+fn wallet_registry_snapshot_overlay_in_memory_wins() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_overlay")).unwrap());
+    let wallet_id = [0xAAu8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "From Sled"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    bc.wallet_registry.insert(
+        wallet_id_hex.clone(),
+        test_wallet_data(wallet_id, "From InMem"),
+    );
+    let snap = bc.wallet_registry_snapshot();
+    assert_eq!(
+        snap.get(&wallet_id_hex).map(|w| w.wallet_name.as_str()),
+        Some("From InMem"),
+        "in-memory overlay must win over sled"
+    );
+}
+
 /// did_by_public_key() resolves a DID from a public key by scanning sled
 /// metadata even when the in-memory shadow is empty (restart case) — the read
 /// that lets council-membership / dedup checks work on a store-backed node
@@ -1065,6 +1481,127 @@ fn legacy_fee_deduction_syncs_sled_balance() {
             .unwrap(),
         expected
     );
+}
+
+#[test]
+fn validator_registry_snapshot_includes_sled_without_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val_snapshot")).unwrap());
+    let did = "did:zhtp:val-snapshot";
+    let did_hash = crate::storage::did_to_hash(did);
+    store
+        .put_validator_record_direct(
+            &did_hash,
+            &crate::storage::StoredValidatorRecord {
+                consensus: crate::storage::ValidatorConsensusRecord {
+                    identity_id: did.to_string(),
+                    consensus_key: [5u8; 2592],
+                    stake: 300_000,
+                    storage_provided: 1 << 40,
+                    status: "active".to_string(),
+                    oracle_key_id: None,
+                },
+                metadata: crate::storage::ValidatorMetadata {
+                    networking_key: vec![],
+                    rewards_key: vec![],
+                    network_address: "snap:1".to_string(),
+                    commission_rate: 0,
+                    registered_at: 0,
+                    last_activity: 0,
+                    blocks_validated: 0,
+                    slash_count: 0,
+                    admission_source: "test".to_string(),
+                    governance_proposal_id: None,
+                },
+            },
+        )
+        .unwrap();
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    let snap = bc.validator_registry_snapshot();
+    assert_eq!(snap.get(did).map(|v| v.stake), Some(300_000));
+}
+
+#[test]
+fn validator_registry_snapshot_overlay_in_memory_wins() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val_overlay")).unwrap());
+    let did = "did:zhtp:val-overlay";
+    let did_hash = crate::storage::did_to_hash(did);
+    store
+        .put_validator_record_direct(
+            &did_hash,
+            &crate::storage::StoredValidatorRecord {
+                consensus: crate::storage::ValidatorConsensusRecord {
+                    identity_id: did.to_string(),
+                    consensus_key: [5u8; 2592],
+                    stake: 100_000,
+                    storage_provided: 1 << 40,
+                    status: "active".to_string(),
+                    oracle_key_id: None,
+                },
+                metadata: crate::storage::ValidatorMetadata::default(),
+            },
+        )
+        .unwrap();
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    bc.validator_registry.insert(
+        did.to_string(),
+        ValidatorInfo {
+            identity_id: did.to_string(),
+            stake: 999_000,
+            storage_provided: 1 << 40,
+            consensus_key: [5u8; 2592],
+            networking_key: vec![],
+            rewards_key: vec![],
+            network_address: "overlay:1".to_string(),
+            commission_rate: 0,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        },
+    );
+    let snap = bc.validator_registry_snapshot();
+    assert_eq!(
+        snap.get(did).map(|v| v.stake),
+        Some(999_000),
+        "in-memory overlay must win over sled"
+    );
+}
+
+#[test]
+fn validator_count_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SledStore::open(&temp.path().join("val_count")).unwrap());
+    for i in 0..3u8 {
+        let did = format!("did:zhtp:val-count{}", i);
+        let did_hash = crate::storage::did_to_hash(&did);
+        store
+            .put_validator_record_direct(
+                &did_hash,
+                &crate::storage::StoredValidatorRecord {
+                    consensus: crate::storage::ValidatorConsensusRecord {
+                        identity_id: did,
+                        consensus_key: [i; 2592],
+                        stake: 100_000,
+                        storage_provided: 1 << 40,
+                        status: "active".to_string(),
+                        oracle_key_id: None,
+                    },
+                    metadata: crate::storage::ValidatorMetadata::default(),
+                },
+            )
+            .unwrap();
+    }
+    let mut bc = Blockchain::new_runtime_state();
+    bc.store = Some(store);
+    assert_eq!(bc.validator_count(), 3, "count comes from sled, not the in-mem shadow");
 }
 
 /// iter_token_contract_entries returns sled ids + metadata (#2637).

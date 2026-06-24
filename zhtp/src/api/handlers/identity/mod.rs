@@ -1110,10 +1110,7 @@ impl IdentityHandler {
             let blockchain_arc =
                 crate::runtime::blockchain_provider::get_global_blockchain().await?;
             let blockchain = blockchain_arc.read().await;
-            blockchain
-                .identity_registry
-                .values()
-                .any(|id| id.display_name.to_lowercase() == username_lower)
+            blockchain.identity_display_name_taken(&username_lower)
         };
 
         let response_body = json!({

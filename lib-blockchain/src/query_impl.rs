@@ -47,10 +47,12 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_identity(&self, did: &str) -> Option<&IdentityTransactionData> {
+        // In-memory ref only — sled-backed identities use identity_transaction_data().
         self.identity_registry.get(did)
     }
 
     fn query_all_identities(&self) -> Vec<(&String, &IdentityTransactionData)> {
+        // Legacy ref iterator — IPC uses identity_registry_snapshot() instead (#2639).
         self.identity_registry.iter().collect()
     }
 
@@ -60,33 +62,28 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_wallet_exists(&self, wallet_id: &str) -> bool {
-        self.wallet_registry.contains_key(wallet_id)
+        // #2639: sled-first union — in-memory shadow can be empty after restart.
+        self.wallet_exists(wallet_id)
     }
 
     fn query_wallet(&self, wallet_id: &str) -> Option<&WalletTransactionData> {
+        // In-memory ref only — sled-backed wallets use wallet_transaction_data().
         self.wallet_registry.get(wallet_id)
     }
 
     fn query_wallet_count(&self) -> usize {
-        self.wallet_registry.len()
+        // #2639: authoritative sled count (in-memory shadow is non-durable).
+        self.wallet_count()
     }
 
     fn query_validator(&self, did: &str) -> Option<&ValidatorInfo> {
-        // #56: sled-first path returns owned data; query surface still serves
-        // in-memory refs when present (same-block overlay).
+        // In-memory ref only — sled-backed validators use validator_info_by_did().
         self.validator_registry.get(did)
     }
 
     fn query_validator_count(&self) -> usize {
-        if let Some(store) = self.get_store() {
-            match store.count_validator_records() {
-                Ok(n) => return n,
-                Err(e) => {
-                    tracing::warn!(error = %e, "query_validator_count: sled count failed; using in-memory shadow");
-                }
-            }
-        }
-        self.validator_registry.len()
+        // #2639: authoritative sled count (in-memory shadow is non-durable).
+        self.validator_count()
     }
 
     fn query_is_council_member(&self, did: &str) -> bool {
@@ -130,10 +127,12 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_all_wallets(&self) -> Vec<(&String, &WalletTransactionData)> {
+        // Legacy ref iterator — handlers use wallet_registry_snapshot() instead (#2639).
         self.wallet_registry.iter().collect()
     }
 
     fn query_all_validators(&self) -> Vec<(&String, &crate::blockchain::ValidatorInfo)> {
+        // Legacy ref iterator — handlers use validator_registry_snapshot() instead (#2639).
         self.validator_registry.iter().collect()
     }
 

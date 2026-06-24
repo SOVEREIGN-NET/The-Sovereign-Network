@@ -1322,7 +1322,7 @@ impl BlockchainHandler {
         };
 
         let resolve_wallet = |wallet_id: &str| -> Option<serde_json::Value> {
-            let wallet = blockchain.query_wallet(wallet_id)?;
+            let wallet = blockchain.wallet_transaction_data(wallet_id)?;
             Some(serde_json::json!({
                 "wallet_id": wallet_id,
                 "wallet_name": wallet.wallet_name,
@@ -1355,7 +1355,7 @@ impl BlockchainHandler {
                     }
                 }
                 "did" => {
-                    if let Some(identity) = blockchain.query_identity(&value.to_string()) {
+                    if let Some(identity) = blockchain.identity_transaction_data(&value) {
                         let identity_mgr = self.identity_manager.read().await;
                         let view = identity_mgr.get_identity_view_by_did(&principal, &identity.did);
                         let (controlled_nodes, owned_wallets) = match view {
@@ -1694,8 +1694,8 @@ impl BlockchainHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
-        // Get validators directly from blockchain validator_registry
-        let all_validators = blockchain.get_all_validators();
+        // Sled-first validator snapshot (#2639).
+        let all_validators = blockchain.validator_registry_snapshot();
 
         // Map validator info to API format
         let validators: Vec<ValidatorInfo> = all_validators
@@ -3101,7 +3101,7 @@ impl BlockchainHandler {
         let blockchain = blockchain_arc.read().await;
 
         // Query identity from registry
-        if let Some(identity) = blockchain.query_identity(&did.to_string()) {
+        if let Some(identity) = blockchain.identity_transaction_data(did) {
             let response_data = match view {
                 Some(lib_identity::types::IdentityView::Public(_)) => {
                     serde_json::json!({
@@ -3218,7 +3218,7 @@ impl BlockchainHandler {
 
         // Collect wallets, optionally filtering by owner_identity_id
         let wallets: Vec<serde_json::Value> = blockchain
-            .wallet_registry
+            .wallet_registry_snapshot()
             .iter()
             .filter(|(_, wallet)| {
                 if let Some(ref owner_id) = owner_filter {

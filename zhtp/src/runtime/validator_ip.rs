@@ -74,7 +74,7 @@ pub async fn update_validator_ips(own_did: Option<&str>, stun_ip: Option<Ipv4Add
 
         // 1. Own entry with STUN-discovered IP
         if let (Some(did), Some(ip)) = (own_did, stun_ip) {
-            if let Some(validator) = blockchain.validator_registry.get(did) {
+            if let Some(validator) = blockchain.validator_info_by_did(did) {
                 let port = validator
                     .network_address
                     .split(':')
@@ -94,7 +94,7 @@ pub async fn update_validator_ips(own_did: Option<&str>, stun_ip: Option<Ipv4Add
 
         // 2. Collect hostname-based entries that need resolution
         blockchain
-            .validator_registry
+            .validator_registry_snapshot()
             .iter()
             .filter(|(did, _)| own_did.map_or(true, |own| *did != own))
             .filter(|(_, v)| {

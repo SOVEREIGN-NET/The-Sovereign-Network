@@ -1221,7 +1221,7 @@ impl Blockchain {
         validator_dids: Vec<String>,
         _reason: String,
     ) -> Result<()> {
-        let validator_count = self.validator_registry.len();
+        let validator_count = self.validator_count();
         if validator_count == 0 {
             return Err(anyhow::anyhow!(
                 "Insufficient validator signatures: got 0, need at least 1 validator"
@@ -1241,7 +1241,7 @@ impl Blockchain {
         }
 
         for did in &unique_validator_dids {
-            match self.validator_registry.get(did) {
+            match self.validator_info_by_did(did) {
                 Some(v) if v.status == "active" => continue,
                 _ => return Err(anyhow::anyhow!("Invalid or inactive validator: {}", did)),
             }

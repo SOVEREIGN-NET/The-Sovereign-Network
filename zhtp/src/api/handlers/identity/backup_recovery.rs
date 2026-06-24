@@ -1527,7 +1527,7 @@ pub async fn handle_migrate_identity(
                 let token_opt = blockchain.query_token_contract(&sov_token_id);
                 _has_token_contract = token_opt.is_some();
 
-                for (wallet_id_str, wallet_data) in blockchain.query_all_wallets() {
+                for (wallet_id_str, wallet_data) in blockchain.wallet_registry_snapshot() {
                     if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
                         registry_owned_count += 1;
                         wallet_ids_all.insert(wallet_id_str.clone());
@@ -1762,7 +1762,7 @@ pub async fn handle_migrate_identity(
                 .iter()
                 .map(|(wid, _, _)| hex::encode(wid.0))
                 .collect();
-            for (wallet_id_str, wallet_data) in blockchain.query_all_wallets() {
+            for (wallet_id_str, wallet_data) in blockchain.wallet_registry_snapshot() {
                 if wallet_data.owner_identity_id == Some(old_identity_id_chain.clone()) {
                     wallet_ids_all.insert(wallet_id_str.clone());
                 }
@@ -1816,7 +1816,7 @@ pub async fn handle_migrate_identity(
                     key_id: wallet_id_bytes,
                 };
 
-                if let Some(existing) = blockchain.query_wallet(wallet_id_str).cloned() {
+                if let Some(existing) = blockchain.wallet_transaction_data(wallet_id_str) {
                     let wallet_type = existing.wallet_type.clone();
                     let old_public_key = existing.public_key.clone();
                     let old_pk_is_short = old_public_key.len() < MIN_DILITHIUM_PK_LEN;

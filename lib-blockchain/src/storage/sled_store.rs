@@ -588,6 +588,11 @@ impl SledStore {
         Ok(())
     }
 
+    /// Count wallet projection entries.
+    pub fn count_wallet_projections(&self) -> StorageResult<usize> {
+        Ok(self.wallets.len())
+    }
+
     /// Iterate all wallet projection entries.
     pub fn iter_wallet_projections(&self) -> StorageResult<Vec<([u8; 32], WalletProjectionRecord)>> {
         let mut entries = Vec::new();
@@ -1736,6 +1741,10 @@ impl BlockchainStore for SledStore {
 
     fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()> {
         SledStore::delete_wallet_projection(self, wallet_id)
+    }
+
+    fn count_wallet_projections(&self) -> StorageResult<usize> {
+        SledStore::count_wallet_projections(self)
     }
 
     fn iter_wallet_projections(

@@ -466,9 +466,8 @@ impl Component for ProtocolsComponent {
                         Ok(bc) => bc,
                         Err(_) => return fallback_ips.clone(),
                     };
-                    let ips: Vec<std::net::Ipv4Addr> = bc.validator_registry
-                        .values()
-                        .filter(|v| v.status == "active")
+                    let ips: Vec<std::net::Ipv4Addr> = bc.active_validator_infos()
+                        .into_iter()
                         .filter_map(|v| {
                             let host = v.network_address.split(':').next()?;
                             host.parse::<std::net::Ipv4Addr>().ok()

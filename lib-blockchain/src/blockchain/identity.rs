@@ -444,6 +444,161 @@ impl Blockchain {
             .map(|id| id.controlled_nodes.clone())
     }
 
+    /// Reconstruct `IdentityTransactionData` from durable sled metadata + consensus (#2639).
+    ///
+    /// Returns `None` when consensus is missing — metadata without a consensus
+    /// row is a half-broken store state and must not surface as plausible zeros
+    /// (`created_at: 0`, `registration_fee: 0`, etc.).
+    fn identity_transaction_data_from_sled(
+        meta: &crate::storage::IdentityMetadata,
+        consensus: Option<&crate::storage::IdentityConsensus>,
+    ) -> Option<IdentityTransactionData> {
+        let consensus = match consensus {
+            Some(c) => c,
+            None => {
+                tracing::warn!(
+                    did = %meta.did,
+                    "identity_transaction_data_from_sled: metadata without consensus; skipping"
+                );
+                return None;
+            }
+        };
+        if crate::types::hash::blake3_hash(&meta.public_key).as_array() != consensus.public_key_hash
+        {
+            tracing::warn!(
+                did = %meta.did,
+                "identity_transaction_data_from_sled: metadata key hash != consensus public_key_hash; refusing drifted key"
+            );
+            return None;
+        }
+        Some(IdentityTransactionData {
+            did: meta.did.clone(),
+            display_name: meta.display_name.clone(),
+            public_key: meta.public_key.clone(),
+            ownership_proof: meta.ownership_proof.clone(),
+            identity_type: consensus.identity_type.as_str().to_string(),
+            did_document_hash: crate::types::hash::Hash::new(consensus.did_document_hash),
+            created_at: consensus.created_at,
+            registration_fee: consensus.registration_fee,
+            dao_fee: consensus.dao_fee,
+            controlled_nodes: meta.controlled_nodes.clone(),
+            owned_wallets: meta.owned_wallets.clone(),
+            kyber_public_key: meta.kyber_public_key.clone(),
+        })
+    }
+
+    /// Sled-first identity record for handlers needing full `IdentityTransactionData` (#2639).
+    ///
+    /// Returns an owned record from durable metadata + consensus when the store
+    /// is attached, with the in-memory shadow as the pre-commit / store-less fallback.
+    pub fn identity_transaction_data(&self, did: &str) -> Option<IdentityTransactionData> {
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            match store.get_identity_metadata(&did_hash) {
+                Ok(Some(meta)) => {
+                    let consensus = match store.get_identity(&did_hash) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                did = %did,
+                                "identity_transaction_data: consensus read failed"
+                            );
+                            return self.identity_registry.get(did).cloned();
+                        }
+                    };
+                    if let Some(data) =
+                        Self::identity_transaction_data_from_sled(&meta, consensus.as_ref())
+                    {
+                        return Some(data);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        did = %did,
+                        "identity_transaction_data: metadata read failed"
+                    );
+                }
+            }
+        }
+        self.identity_registry.get(did).cloned()
+    }
+
+    /// Sled-first snapshot for backfill / iteration (#2639).
+    ///
+    /// Builds a map from durable sled metadata, then overlays the in-memory shadow
+    /// (pending / same-block registrations win).
+    pub fn identity_registry_snapshot(&self) -> HashMap<String, IdentityTransactionData> {
+        let mut out = HashMap::new();
+        if let Some(store) = self.get_store() {
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    for meta in iter {
+                        let did_hash = crate::storage::did_to_hash(&meta.did);
+                        let consensus = match store.get_identity(&did_hash) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    did = %meta.did,
+                                    "identity_registry_snapshot: consensus read failed; skipping entry"
+                                );
+                                continue;
+                            }
+                        };
+                        if let Some(data) =
+                            Self::identity_transaction_data_from_sled(&meta, consensus.as_ref())
+                        {
+                            out.insert(meta.did.clone(), data);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "identity_registry_snapshot: sled iter failed; using in-memory shadow only"
+                    );
+                }
+            }
+        }
+        for (did, data) in &self.identity_registry {
+            out.insert(did.clone(), data.clone());
+        }
+        out
+    }
+
+    /// Case-insensitive display-name collision check, sled-first (#2639).
+    ///
+    /// TODO(#2639): O(N) sled scan per check — add a `display_name_lower → did_hash`
+    /// secondary index before scale.
+    /// TODO(#2639): Unicode normalization — `.to_lowercase()` only; fullwidth
+    /// homoglyphs (e.g. `ＵｓｅｒＡ` vs `userA`) do not collide today.
+    pub fn identity_display_name_taken(&self, display_name_lower: &str) -> bool {
+        if let Some(store) = self.get_store() {
+            match store.iter_identity_metadata() {
+                Ok(iter) => {
+                    if iter.into_iter().any(|m| {
+                        m.display_name.to_lowercase() == display_name_lower
+                    }) {
+                        return true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "identity_display_name_taken: sled iter failed; failing closed (treat as taken)"
+                    );
+                    return true;
+                }
+            }
+        }
+        self.identity_registry.values().any(|id| {
+            id.display_name.to_lowercase() == display_name_lower
+        })
+    }
+
     pub fn update_identity(
         &mut self,
         did: &str,
