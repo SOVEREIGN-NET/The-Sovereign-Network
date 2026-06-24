@@ -114,6 +114,7 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_token_balance(&self, token_id: &[u8; 32], key_id: &[u8; 32]) -> u128 {
+        // Trait API returns u128 — sled errors surface as 0 (parity with pre-#2637).
         self.token_balance(token_id, key_id).unwrap_or(0)
     }
 

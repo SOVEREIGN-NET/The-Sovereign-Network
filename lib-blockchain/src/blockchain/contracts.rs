@@ -1250,8 +1250,14 @@ impl Blockchain {
     /// Sled-first `(token_id, metadata)` pairs for listing (#2637).
     pub fn iter_token_contract_entries(&self) -> Vec<([u8; 32], crate::contracts::TokenContract)> {
         if let Some(store) = self.get_store() {
-            if let Ok(iter) = store.iter_token_contracts() {
-                return iter.map(|(id, c)| (id.0, c)).collect();
+            match store.iter_token_contracts() {
+                Ok(iter) => return iter.map(|(id, c)| (id.0, c)).collect(),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "iter_token_contract_entries: sled iter failed — falling back to in-memory map"
+                    );
+                }
             }
         }
         self.token_contracts

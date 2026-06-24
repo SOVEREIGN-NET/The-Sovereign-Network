@@ -848,6 +848,161 @@ fn validator_exists_union_inmem_or_sled() {
     assert_eq!(got.stake, 200_000);
 }
 
+/// Custom tokens (BUBL class): executor writes balances to the sled
+/// `token_balances` tree only — in-mem `TokenContract.balances` stays empty.
+/// sled-first `token_balance()` must return the sled value, not 0 from in-mem.
+#[test]
+fn custom_token_balance_reads_sled_not_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("bubl_bal_store")).unwrap());
+    let token_id = [0xBB; 32];
+    let holder = [0x42; 32];
+    let creator = crate::integration::crypto_integration::PublicKey::new([1u8; 2592]);
+    let contract = crate::contracts::TokenContract::new(
+        token_id,
+        "Bubble".to_string(),
+        "BUBL".to_string(),
+        8,
+        1_000_000,
+        false,
+        0,
+        creator,
+    );
+    store.begin_block(0).unwrap();
+    store.put_token_contract(&contract).unwrap();
+    store
+        .set_token_balance(
+            &TokenId::new(token_id),
+            &Address::new(holder),
+            5_000,
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    // Simulate post-restart: no in-mem contract overlay.
+    assert!(
+        !bc.token_contracts.contains_key(&token_id),
+        "test premise: custom token exists only in sled"
+    );
+    assert_eq!(
+        bc.token_balance(&token_id, &holder).unwrap(),
+        5_000,
+        "facade must read sled balance for custom token (BUBL class)"
+    );
+    // In-mem-only read would wrongly return 0 — regression guard.
+    assert_eq!(
+        bc.token_contracts
+            .get(&token_id)
+            .map(|c| c.balance_of(&crate::integration::crypto_integration::PublicKey::new(
+                [0u8; 2592]
+            )))
+            .unwrap_or(0),
+        0,
+        "in-mem path absent/empty — the bug #2637 fixed"
+    );
+}
+
+/// Legacy fee path debits in-mem; sled must be updated so token_balance() agrees.
+#[test]
+fn legacy_fee_deduction_syncs_sled_balance() {
+    use crate::block::{Block, BlockHeader};
+    use crate::contracts::utils::generate_lib_token_id;
+    use crate::transaction::{
+        Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+    };
+    use crate::types::TransactionType;
+    use lib_crypto::types::keys::PublicKey;
+    use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("fee_sled_sync")).unwrap());
+    let sov_id = generate_lib_token_id();
+    let sender_id = [0x11u8; 32];
+    let sender = PublicKey {
+        dilithium_pk: [0u8; 2592],
+        kyber_pk: [0u8; 1568],
+        key_id: sender_id,
+    };
+    let initial: u128 = 10_000;
+    let fee: u64 = 250;
+
+    store
+        .force_set_token_balances(&[(
+            TokenId::new(sov_id),
+            Address::new(sender_id),
+            initial,
+        )])
+        .unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store.clone());
+    let sov = crate::contracts::TokenContract::new_sov_native();
+    bc.token_contracts.insert(sov_id, sov);
+    bc.token_contracts
+        .get_mut(&sov_id)
+        .unwrap()
+        .set_balance(&sender, initial);
+
+    let tx = Transaction {
+        version: 1,
+        chain_id: 0x03,
+        transaction_type: TransactionType::Transfer,
+        inputs: vec![TransactionInput {
+            previous_output: crate::types::hash::Hash::new([1u8; 32]),
+            output_index: 0,
+            nullifier: crate::types::hash::Hash::new([2u8; 32]),
+            zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
+        }],
+        outputs: vec![TransactionOutput {
+            commitment: crate::types::hash::Hash::new([3u8; 32]),
+            note: crate::types::hash::Hash::new([4u8; 32]),
+            recipient: PublicKey::new([5u8; 2592]),
+            merkle_leaf: crate::types::hash::Hash::default(),
+        }],
+        fee,
+        signature: Signature {
+            signature: vec![0u8; 64],
+            public_key: sender.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+        memo: vec![],
+        payload: TransactionPayload::None,
+    };
+    let block = Block::new(
+        BlockHeader {
+            version: 1,
+            previous_hash: crate::types::hash::Hash::zero().into(),
+            data_helix_root: crate::types::hash::Hash::zero().into(),
+            timestamp: 0,
+            height: 1,
+            verification_helix_root: [0u8; 32],
+            state_root: crate::types::hash::Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: crate::types::hash::Hash::zero(),
+        },
+        vec![tx],
+    );
+
+    let collected = bc.deduct_transaction_fees(&block).unwrap();
+    assert_eq!(collected, fee);
+
+    let expected = initial - fee as u128;
+    assert_eq!(
+        bc.token_balance(&sov_id, &sender_id).unwrap(),
+        expected,
+        "sled-first read must see legacy fee debit"
+    );
+    assert_eq!(
+        store
+            .get_token_balance(&TokenId::new(sov_id), &Address::new(sender_id))
+            .unwrap(),
+        expected
+    );
+}
+
 /// iter_token_contract_entries returns sled ids + metadata (#2637).
 #[test]
 fn iter_token_contract_entries_lists_sled_ids() {
