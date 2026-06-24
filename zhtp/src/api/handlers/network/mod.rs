@@ -911,7 +911,7 @@ impl NetworkHandler {
                 Ok(owner_bytes) => {
                     let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
 
-                    let wallet = blockchain.query_all_wallets().into_iter().find(|(_, w)| {
+                    let wallet = blockchain.wallet_registry_snapshot().into_iter().find(|(_, w)| {
                         w.owner_identity_id
                             .as_ref()
                             .map(|id| id.as_bytes() == owner_bytes.as_slice())

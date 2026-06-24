@@ -1087,7 +1087,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1106,7 +1106,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {
@@ -1124,7 +1124,7 @@ async fn bootstrap_identities_from_dht(
                                 ) {
                                     if let Some(ref bc_arc) = blockchain_arc {
                                         let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_registry.get(wid) {
+                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
                                             if let Some(wallet) =
                                                 identity.wallet_manager.get_wallet_mut(&wallet_id)
                                             {

@@ -167,7 +167,7 @@ async fn dispatch_request(
         }
         IpcRequest::QueryWallet { wallet_id } => {
             let bc = blockchain.read().await;
-            IpcResponse::Wallet(bc.query_wallet(wallet_id).cloned())
+            IpcResponse::Wallet(bc.wallet_transaction_data(wallet_id))
         }
         IpcRequest::QueryValidator { did } => {
             let bc = blockchain.read().await;

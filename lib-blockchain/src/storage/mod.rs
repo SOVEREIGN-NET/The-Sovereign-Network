@@ -1191,6 +1191,11 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST be called within begin_block/commit_block
     fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()>;
 
+    /// Count wallet projection entries (authoritative sled cardinality).
+    fn count_wallet_projections(&self) -> StorageResult<usize> {
+        Ok(self.iter_wallet_projections()?.count())
+    }
+
     /// Iterate all wallet projection entries.
     fn iter_wallet_projections(
         &self,

@@ -635,6 +635,128 @@ fn identity_display_name_taken_reads_sled() {
     assert!(!bc.identity_display_name_taken("available"));
 }
 
+fn test_wallet_data(wallet_id: [u8; 32], name: &str) -> crate::transaction::WalletTransactionData {
+    crate::transaction::WalletTransactionData {
+        wallet_id: crate::types::hash::Hash::new(wallet_id),
+        wallet_type: "Primary".to_string(),
+        wallet_name: name.to_string(),
+        alias: None,
+        public_key: vec![],
+        owner_identity_id: None,
+        seed_commitment: crate::types::hash::Hash::zero(),
+        created_at: 0,
+        registration_fee: 0,
+        capabilities: 0,
+        initial_balance: 0,
+    }
+}
+
+#[test]
+fn wallet_exists_union_inmem_or_sled() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let wallet_id = [0x77u8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    bc.wallet_registry.insert(
+        wallet_id_hex.clone(),
+        test_wallet_data(wallet_id, "In-Mem"),
+    );
+    assert!(bc.wallet_exists(&wallet_id_hex), "in-mem present -> true");
+    assert!(!bc.wallet_exists("00000000000000000000000000000000000000000000000000000000000000ab"));
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_exists")).unwrap());
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Sled Only"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc2 = Blockchain::new().expect("blockchain construct");
+    bc2.set_store(store);
+    assert!(bc2.wallet_exists(&wallet_id_hex), "sled-only wallet found via union");
+}
+
+#[test]
+fn wallet_transaction_data_reads_sled_projection() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_tx_data")).unwrap());
+    let wallet_id = [0x88u8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Projection Wallet"),
+                committed_at_height: 3,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let got = bc
+        .wallet_transaction_data(&wallet_id_hex)
+        .expect("sled-backed wallet");
+    assert_eq!(got.wallet_name, "Projection Wallet");
+    assert_eq!(got.wallet_type, "Primary");
+}
+
+#[test]
+fn wallet_registry_snapshot_includes_sled_without_in_memory() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_snapshot")).unwrap());
+    let wallet_id = [0x99u8; 32];
+    let did_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Only Sled"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    let snap = bc.wallet_registry_snapshot();
+    assert_eq!(snap.get(&did_hex).map(|w| w.wallet_name.as_str()), Some("Only Sled"));
+}
+
+#[test]
+fn wallet_count_reads_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_count")).unwrap());
+    store.begin_block(0).unwrap();
+    for i in 0..3u8 {
+        let wallet_id = [i; 32];
+        store
+            .put_wallet_projection(
+                &wallet_id,
+                &crate::storage::WalletProjectionRecord {
+                    wallet_data: test_wallet_data(wallet_id, &format!("Wallet{}", i)),
+                    committed_at_height: 0,
+                },
+            )
+            .unwrap();
+    }
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_store(store);
+    assert_eq!(bc.wallet_count(), 3, "count comes from sled, not the in-mem shadow");
+}
+
 /// did_by_public_key() resolves a DID from a public key by scanning sled
 /// metadata even when the in-memory shadow is empty (restart case) — the read
 /// that lets council-membership / dedup checks work on a store-backed node

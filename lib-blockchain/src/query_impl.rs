@@ -62,15 +62,18 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_wallet_exists(&self, wallet_id: &str) -> bool {
-        self.wallet_registry.contains_key(wallet_id)
+        // #2639: sled-first union — in-memory shadow can be empty after restart.
+        self.wallet_exists(wallet_id)
     }
 
     fn query_wallet(&self, wallet_id: &str) -> Option<&WalletTransactionData> {
+        // In-memory ref only — sled-backed wallets use wallet_transaction_data().
         self.wallet_registry.get(wallet_id)
     }
 
     fn query_wallet_count(&self) -> usize {
-        self.wallet_registry.len()
+        // #2639: authoritative sled count (in-memory shadow is non-durable).
+        self.wallet_count()
     }
 
     fn query_validator(&self, did: &str) -> Option<&ValidatorInfo> {
@@ -132,6 +135,7 @@ impl BlockchainQuery for Blockchain {
     }
 
     fn query_all_wallets(&self) -> Vec<(&String, &WalletTransactionData)> {
+        // Legacy ref iterator — handlers use wallet_registry_snapshot() instead (#2639).
         self.wallet_registry.iter().collect()
     }
 

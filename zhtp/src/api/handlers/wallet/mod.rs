@@ -296,7 +296,7 @@ impl WalletHandler {
         if wallet_summaries.is_empty() {
             // Fallback: surface wallets from the on-chain registry that belong to this identity.
             let blockchain = self.blockchain.read().await;
-            for (wallet_id_hex, wallet_data) in blockchain.query_all_wallets() {
+            for (wallet_id_hex, wallet_data) in blockchain.wallet_registry_snapshot() {
                 let owned = wallet_data
                     .owner_identity_id
                     .map(|owner| owner.as_bytes() == identity_id_bytes.as_slice())
@@ -314,7 +314,7 @@ impl WalletHandler {
                 // here guarantees the mobile wallet displays the post-debit
                 // balance immediately after a domain registration fee_payment_tx
                 // commits.
-                let effective_balance = hex::decode(wallet_id_hex)
+                let effective_balance = hex::decode(&wallet_id_hex)
                     .ok()
                     .filter(|b| b.len() == 32)
                     .map(|bytes| {
@@ -525,7 +525,7 @@ impl WalletHandler {
                 // Prefer SOV token contract balance (live balance) for this wallet.
                 let blockchain = self.blockchain.read().await;
                 let wallet_id_hex = hex::encode(summary.id.0);
-                if let Some(wallet_data) = blockchain.query_wallet(&wallet_id_hex) {
+                if let Some(wallet_data) = blockchain.wallet_transaction_data(&wallet_id_hex) {
                     // #2637: sled-first SOV balance. Gate on the contract existing
                     // (preserves the prior "only override if SOV token present"
                     // behavior), then read via token_balance() keyed by key_id —
@@ -1303,7 +1303,7 @@ impl WalletHandler {
 
         // Include any wallet registry entries linked to this identity that may
         // not be present in the in-memory identity wallet manager.
-        for (wallet_id_hex, wallet_data) in blockchain.query_all_wallets() {
+        for (wallet_id_hex, wallet_data) in blockchain.wallet_registry_snapshot() {
             if wallet_data
                 .owner_identity_id
                 .as_ref()

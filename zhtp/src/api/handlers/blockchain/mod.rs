@@ -1322,7 +1322,7 @@ impl BlockchainHandler {
         };
 
         let resolve_wallet = |wallet_id: &str| -> Option<serde_json::Value> {
-            let wallet = blockchain.query_wallet(wallet_id)?;
+            let wallet = blockchain.wallet_transaction_data(wallet_id)?;
             Some(serde_json::json!({
                 "wallet_id": wallet_id,
                 "wallet_name": wallet.wallet_name,
@@ -3220,7 +3220,7 @@ impl BlockchainHandler {
 
         // Collect wallets, optionally filtering by owner_identity_id
         let wallets: Vec<serde_json::Value> = blockchain
-            .wallet_registry
+            .wallet_registry_snapshot()
             .iter()
             .filter(|(_, wallet)| {
                 if let Some(ref owner_id) = owner_filter {

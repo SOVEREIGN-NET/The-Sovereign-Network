@@ -3178,7 +3178,7 @@ impl RuntimeOrchestrator {
 
                                 // Check if wallet exists in registry
                                 if let Some(wallet_entry) =
-                                    blockchain_ref.wallet_registry.get(&wallet_id_hex)
+                                    blockchain_ref.wallet_transaction_data(&wallet_id_hex)
                                 {
                                     // Wallet exists - check if it needs funding
                                     if wallet_entry.initial_balance == 0
