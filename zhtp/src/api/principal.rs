@@ -36,8 +36,8 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
     // and set request.requester, use that DID directly.
     if let Some(ref identity_id) = request.requester {
         let raw_did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
-        let did = resolve_canonical_did(identity_id.0, raw_did);
-        let role = resolve_role_for_did(&did);
+        let did = resolve_canonical_did(identity_id.0, raw_did.clone());
+        let role = resolve_role_for_dids(&[did.as_str(), raw_did.as_str()]);
         return SecurityPrincipal::new(&did, role, NodeType::FullNode);
     }
 
@@ -68,19 +68,20 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 /// Determine the role for an authenticated DID by checking on-chain state.
 ///
 /// Council members get `Role::Council`, everyone else gets `Role::Citizen`.
-/// Uses `is_council_member_blocking` (cache → try_read → await). Performs two
-/// sequential `block_in_place` transitions when canonical DID resolution also
-/// hits the chain — acceptable overhead per authenticated request.
-fn resolve_role_for_did(did: &str) -> Role {
+/// Checks canonical and transport DIDs — council config uses `did:zhtp:…` while
+/// QUIC `requester` may encode only the 32-byte key id.
+fn resolve_role_for_dids(dids: &[&str]) -> Role {
     let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
         Some(p) => p,
         None => return Role::Citizen,
     };
 
-    match provider.is_council_member_blocking(did) {
-        Some(true) => Role::Council,
-        Some(false) | None => Role::Citizen, // not on council, or blockchain unavailable
+    for did in dids {
+        if provider.is_council_member_blocking(did) == Some(true) {
+            return Role::Council;
+        }
     }
+    Role::Citizen
 }
 
 /// Resolve a 32-byte device QUIC key to the canonical chain DID it was
