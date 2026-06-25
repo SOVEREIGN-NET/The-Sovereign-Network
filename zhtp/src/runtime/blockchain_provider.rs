@@ -48,17 +48,29 @@ impl BlockchainProvider {
         Ok(())
     }
 
-    async fn refresh_council_member_cache(&self) {
+    /// Refresh the sync council cache from live `blockchain.council_members`.
+    pub async fn refresh_council_member_cache(&self) {
         let outer = self.blockchain.read().await;
         let Some(arc) = outer.as_ref() else {
             return;
         };
         let bc = arc.read().await;
-        let members: HashSet<String> = bc
-            .get_council_members()
-            .iter()
-            .map(|m| m.identity_id.clone())
-            .collect();
+        self.store_council_member_cache(
+            bc.get_council_members()
+                .iter()
+                .map(|m| m.identity_id.clone()),
+        );
+    }
+
+    /// Seed the sync council cache from config (no blockchain lock). Call after
+    /// `ensure_council_bootstrap` — `set_global_blockchain` runs *before* bootstrap
+    /// and would otherwise leave an empty cache until the 15s refresh loop.
+    pub fn seed_council_member_cache(&self, identity_ids: impl IntoIterator<Item = String>) {
+        self.store_council_member_cache(identity_ids);
+    }
+
+    fn store_council_member_cache(&self, identity_ids: impl IntoIterator<Item = String>) {
+        let members: HashSet<String> = identity_ids.into_iter().collect();
         if let Ok(mut cache) = self.council_member_cache.write() {
             *cache = members;
         }
@@ -87,25 +99,31 @@ impl BlockchainProvider {
         let arc = outer.as_ref()?;
         let bc = arc.read().await;
         let is_member = bc.is_council_member(did);
-        if let Ok(mut cache) = self.council_member_cache.write() {
-            *cache = bc
-                .get_council_members()
+        self.store_council_member_cache(
+            bc.get_council_members()
                 .iter()
-                .map(|m| m.identity_id.clone())
-                .collect();
-        }
+                .map(|m| m.identity_id.clone()),
+        );
         Some(is_member)
     }
 
-    /// Callable from sync code; may block until the blockchain read lock is
-    /// available. **Not** a fast/non-blocking API despite the historical `_sync`
-    /// name — use the warmed [`Self::council_member_cache`] path when possible.
+    /// Callable from sync code. Prefer a warmed [`Self::council_member_cache`].
     ///
-    /// Lookup order:
+    /// Lookup order (per DID variant):
     /// 1. Sync council cache (deadlock-safe under an existing blockchain read guard)
-    /// 2. `try_read` chain snapshot (fixes writer-queue contention without awaiting)
-    /// 3. `block_in_place` + `read().await` on multi-thread runtimes only
+    /// 2. `try_read` chain snapshot (no await; populates cache on success)
+    /// 3. Fail closed (`None` → Citizen) when cache is cold and `try_read` is contended
     pub fn is_council_member_blocking(&self, did: &str) -> Option<bool> {
+        for candidate in Self::council_did_lookup_variants(did) {
+            if let Some(true) = self.is_council_member_blocking_one(&candidate) {
+                return Some(true);
+            }
+        }
+        // Definitive non-member once any path returned Some(false) with warm data.
+        self.is_council_member_blocking_one(did)
+    }
+
+    fn is_council_member_blocking_one(&self, did: &str) -> Option<bool> {
         if let Ok(cache) = self.council_member_cache.read() {
             if !cache.is_empty() {
                 return Some(cache.contains(did));
@@ -116,7 +134,12 @@ impl BlockchainProvider {
             return Some(is_member);
         }
 
-        self.await_council_membership_from_chain(did)
+        warn!(
+            "council membership for {} unresolved: cache cold and blockchain read lock \
+             contended; failing closed (Citizen). Seed council_member_cache at startup.",
+            did
+        );
+        None
     }
 
     fn try_read_council_membership(&self, did: &str) -> Option<bool> {
@@ -129,34 +152,8 @@ impl BlockchainProvider {
             .map(|m| m.identity_id.clone())
             .collect();
         let is_member = members.contains(did);
-        if let Ok(mut cache) = self.council_member_cache.write() {
-            *cache = members;
-        }
+        self.store_council_member_cache(members.into_iter());
         Some(is_member)
-    }
-
-    fn await_council_membership_from_chain(&self, did: &str) -> Option<bool> {
-        let handle = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                warn!(
-                    "council membership check for {} skipped: no tokio runtime",
-                    did
-                );
-                return None;
-            }
-        };
-
-        if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
-            warn!(
-                "council membership check for {} skipped on current_thread runtime \
-                 (block_in_place would panic; use multi-thread tokio in production)",
-                did
-            );
-            return None;
-        }
-
-        tokio::task::block_in_place(|| handle.block_on(self.is_council_member(did)))
     }
 
     /// Resolve a 32-byte QUIC device key (the `request.requester` blob set by
@@ -193,6 +190,18 @@ impl BlockchainProvider {
     pub async fn set_access_mode(&self, access_mode: BlockchainAccessMode) {
         *self.access_mode.write().await = access_mode;
         info!("Global blockchain access mode set to {:?}", access_mode);
+    }
+
+    fn council_did_lookup_variants(did: &str) -> Vec<String> {
+        let mut variants = vec![did.to_string()];
+        if let Some(hex) = did.strip_prefix("did:zhtp:") {
+            if hex.len() == 64 {
+                variants.push(hex.to_string());
+            }
+        } else if did.len() == 64 && did.chars().all(|c| c.is_ascii_hexdigit()) {
+            variants.push(format!("did:zhtp:{}", did));
+        }
+        variants
     }
 
     async fn ensure_write_access(&self, operation: &str) -> Result<()> {
@@ -778,7 +787,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn is_council_member_blocking_awaits_write_lock_on_cold_cache() {
+    async fn is_council_member_blocking_fails_closed_on_cold_cache_under_write_lock() {
         use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
 
         let council_did = "did:zhtp:bob";
@@ -796,38 +805,50 @@ mod tests {
         let provider = BlockchainProvider::new();
         provider.set_blockchain(bc_arc.clone()).await.unwrap();
 
-        let bc_for_writer = bc_arc.clone();
-        let write_holder = tokio::spawn(async move {
-            let _guard = bc_for_writer.write().await;
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        });
+        let _write_guard = bc_arc.write().await;
+        provider.council_member_cache.write().unwrap().clear();
 
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            provider.is_council_member_blocking(council_did),
+            None,
+            "cold cache + write contention must fail closed without blocking a runtime worker"
+        );
+    }
 
-        let provider_for_sync = provider.clone();
-        let did = council_did.to_string();
-        // Cold cache: force empty so tier-3 await path is exercised.
-        provider_for_sync
-            .council_member_cache
-            .write()
-            .unwrap()
-            .clear();
+    #[tokio::test]
+    async fn seed_council_cache_after_bootstrap_startup_order() {
+        use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
 
-        let sync_check = tokio::spawn(async move {
-            provider_for_sync.is_council_member_blocking(&did)
-        });
+        let council_did = "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut bc = Blockchain::new().expect("genesis");
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Mirrors runtime/mod.rs: set_global_blockchain before ensure_council_bootstrap.
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
         assert!(
-            !sync_check.is_finished(),
-            "sync wrapper must await the write lock, not return None under contention"
+            provider.is_council_member_blocking(council_did) != Some(true),
+            "council DID must not match before bootstrap + seed"
         );
 
-        write_holder.await.expect("write holder join");
+        {
+            let mut bc = bc_arc.write().await;
+            bc.ensure_council_bootstrap(&CouncilBootstrapConfig {
+                members: vec![CouncilBootstrapEntry {
+                    identity_id: council_did.to_string(),
+                    wallet_id: "aaaa".to_string(),
+                    stake_amount: 1_000_000,
+                }],
+                threshold: 1,
+            });
+        }
+        provider.seed_council_member_cache([council_did.to_string()]);
+        provider.refresh_council_member_cache().await;
+
         assert_eq!(
-            sync_check.await.expect("sync check join"),
+            provider.is_council_member_blocking(council_did),
             Some(true),
-            "sync council check must succeed once write lock releases"
+            "post-bootstrap seed must recognize council DID without try_read/await"
         );
     }
 
