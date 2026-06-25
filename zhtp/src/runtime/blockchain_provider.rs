@@ -107,13 +107,12 @@ impl BlockchainProvider {
         Some(is_member)
     }
 
-    /// Callable from sync code; may block until the blockchain read lock is
-    /// available on cache miss. Prefer a warmed [`Self::council_member_cache`].
+    /// Callable from sync code. Prefer a warmed [`Self::council_member_cache`].
     ///
     /// Lookup order (per DID variant):
     /// 1. Sync council cache (deadlock-safe under an existing blockchain read guard)
-    /// 2. `try_read` chain snapshot (fixes writer-queue contention without awaiting)
-    /// 3. Helper-thread `read().await` (avoids block_in_place inside async handlers)
+    /// 2. `try_read` chain snapshot (no await; populates cache on success)
+    /// 3. Fail closed (`None` → Citizen) when cache is cold and `try_read` is contended
     pub fn is_council_member_blocking(&self, did: &str) -> Option<bool> {
         for candidate in Self::council_did_lookup_variants(did) {
             if let Some(true) = self.is_council_member_blocking_one(&candidate) {
@@ -135,7 +134,12 @@ impl BlockchainProvider {
             return Some(is_member);
         }
 
-        self.await_council_membership_from_chain(did)
+        warn!(
+            "council membership for {} unresolved: cache cold and blockchain read lock \
+             contended; failing closed (Citizen). Seed council_member_cache at startup.",
+            did
+        );
+        None
     }
 
     fn try_read_council_membership(&self, did: &str) -> Option<bool> {
@@ -150,38 +154,6 @@ impl BlockchainProvider {
         let is_member = members.contains(did);
         self.store_council_member_cache(members.into_iter());
         Some(is_member)
-    }
-
-    fn await_council_membership_from_chain(&self, did: &str) -> Option<bool> {
-        let handle = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => {
-                warn!(
-                    "council membership check for {} skipped: no tokio runtime",
-                    did
-                );
-                return None;
-            }
-        };
-
-        if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
-            warn!(
-                "council membership check for {} skipped on current_thread runtime \
-                 (use multi-thread tokio in production)",
-                did
-            );
-            return None;
-        }
-
-        let provider = self.clone();
-        let did = did.to_string();
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| handle.block_on(provider.is_council_member(&did)))
-                .join()
-                .ok()
-                .flatten()
-        })
     }
 
     /// Resolve a 32-byte QUIC device key (the `request.requester` blob set by
@@ -815,7 +787,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn is_council_member_blocking_awaits_write_lock_on_cold_cache() {
+    async fn is_council_member_blocking_fails_closed_on_cold_cache_under_write_lock() {
         use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
 
         let council_did = "did:zhtp:bob";
@@ -833,38 +805,13 @@ mod tests {
         let provider = BlockchainProvider::new();
         provider.set_blockchain(bc_arc.clone()).await.unwrap();
 
-        let bc_for_writer = bc_arc.clone();
-        let write_holder = tokio::spawn(async move {
-            let _guard = bc_for_writer.write().await;
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        });
+        let _write_guard = bc_arc.write().await;
+        provider.council_member_cache.write().unwrap().clear();
 
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-
-        let provider_for_sync = provider.clone();
-        let did = council_did.to_string();
-        // Cold cache: force empty so tier-3 await path is exercised.
-        provider_for_sync
-            .council_member_cache
-            .write()
-            .unwrap()
-            .clear();
-
-        let sync_check = tokio::spawn(async move {
-            provider_for_sync.is_council_member_blocking(&did)
-        });
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(
-            !sync_check.is_finished(),
-            "sync wrapper must await the write lock, not return None under contention"
-        );
-
-        write_holder.await.expect("write holder join");
         assert_eq!(
-            sync_check.await.expect("sync check join"),
-            Some(true),
-            "sync council check must succeed once write lock releases"
+            provider.is_council_member_blocking(council_did),
+            None,
+            "cold cache + write contention must fail closed without blocking a runtime worker"
         );
     }
 
