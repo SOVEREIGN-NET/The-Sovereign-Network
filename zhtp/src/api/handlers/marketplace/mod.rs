@@ -441,10 +441,11 @@ impl MarketplaceHandler {
         let identity_private_key_bytes = private_key.dilithium_sk.clone();
         let identity_seed = [0u8; 32]; // TODO: P1-7 - seed not directly accessible, may need to be stored separately
         let wallet_pubkey = identity.public_key.dilithium_pk.clone();
+        let wallet_key_id = identity.public_key.key_id;
         drop(identity_mgr);
 
         // ========================================================================
-        // STEP 1: Scan blockchain.utxo_set for UTXOs owned by buyer's wallet
+        // STEP 1: Scan spendable outputs for UTXOs owned by buyer's wallet
         // ========================================================================
         info!(" Scanning blockchain UTXO set for buyer wallet's spendable outputs...");
 
@@ -452,22 +453,18 @@ impl MarketplaceHandler {
         let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u128)> = Vec::new();
 
         info!(
-            " Scanning {} UTXOs for wallet pubkey: {}",
-            blockchain.utxo_set.len(),
-            hex::encode(&wallet_pubkey[..8.min(wallet_pubkey.len())])
+            " Scanning {} UTXOs for wallet key_id: {}",
+            blockchain.utxo_count(),
+            hex::encode(&wallet_key_id[..8])
         );
 
-        for (utxo_hash, output) in &blockchain.utxo_set {
-            // Check if this UTXO belongs to buyer's wallet by comparing public keys
-            if output.recipient.as_bytes() == wallet_pubkey {
-                // NOTE: Amount is hidden in Pedersen commitment
-                // For genesis UTXOs, we know the amount is the welcome bonus
-                // In production, wallet would track amounts or decrypt notes
-                let utxo_amount = SOV_WELCOME_BONUS; // Genesis wallet funding amount (atomic units)
-
-                wallet_utxos.push((*utxo_hash, 0, utxo_amount));
-                info!("    Found UTXO: {}", hex::encode(utxo_hash.as_bytes()));
-            }
+        for view in blockchain.spendable_outputs_for_owner(&wallet_key_id) {
+            let utxo_amount = SOV_WELCOME_BONUS;
+            wallet_utxos.push((view.legacy_hash, view.output_index, utxo_amount));
+            info!(
+                "    Found UTXO: {}",
+                hex::encode(view.legacy_hash.as_bytes())
+            );
         }
 
         if wallet_utxos.is_empty() {
@@ -607,9 +604,9 @@ impl MarketplaceHandler {
                 commitment: change_commitment,
                 note: change_note,
                 recipient: lib_crypto::PublicKey {
-                    dilithium_pk: wallet_pubkey.as_slice().try_into().unwrap_or([0u8; 2592]),
+                    dilithium_pk: wallet_pubkey.clone(),
                     kyber_pk: [0u8; 1568],
-                    key_id: [0; 32],
+                    key_id: wallet_key_id,
                 },
                             merkle_leaf: lib_blockchain::Hash::default(),
 };
@@ -636,7 +633,7 @@ impl MarketplaceHandler {
 
         let private_key = PrivateKey {
             dilithium_sk: identity_private_key_bytes.as_slice().try_into().unwrap_or([0u8; 4896]),
-            dilithium_pk: wallet_pubkey.as_slice().try_into().unwrap_or([0u8; 2592]),
+            dilithium_pk: wallet_pubkey,
             kyber_sk: [0u8; 3168],
             master_seed: identity_seed.as_slice().try_into().unwrap_or([0u8; 64]),
         };

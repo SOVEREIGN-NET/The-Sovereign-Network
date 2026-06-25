@@ -1208,13 +1208,13 @@ impl RuntimeOrchestrator {
                 Ok(blockchain_arc) => {
                     let blockchain = blockchain_arc.read().await;
                     let has_data = blockchain.height > 0
-                        || !blockchain.utxo_set.is_empty()
+                        || !blockchain.utxo_set_is_empty()
                         || !blockchain.token_contracts_is_empty();
                     if has_data {
                         info!(
                             "✓ Global blockchain has data (height: {}, UTXOs: {}, tokens: {})",
                             blockchain.height,
-                            blockchain.utxo_set.len(),
+                            blockchain.utxo_count(),
                             blockchain.token_contract_count()
                         );
                     }
@@ -4779,26 +4779,33 @@ impl RuntimeOrchestrator {
         // Scan UTXO set for outputs owned by this wallet
         let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u128)> = Vec::new();
 
+        let owner_key_id = if wallet_pubkey.len() == 32 {
+            let mut id = [0u8; 32];
+            id.copy_from_slice(wallet_pubkey);
+            id
+        } else if wallet_pubkey.len() == 2592 {
+            let mut dilithium = [0u8; 2592];
+            dilithium.copy_from_slice(wallet_pubkey);
+            lib_crypto::hash_blake3(&dilithium)
+        } else {
+            return Err(anyhow::anyhow!(
+                "wallet_pubkey must be 32-byte key_id or 2592-byte Dilithium public key"
+            ));
+        };
+
         info!(
-            " Scanning {} UTXOs for wallet pubkey: {}",
-            blockchain.utxo_set.len(),
-            hex::encode(&wallet_pubkey[..8.min(wallet_pubkey.len())])
+            " Scanning {} UTXOs for wallet key_id: {}",
+            blockchain.utxo_count(),
+            hex::encode(&owner_key_id[..8])
         );
 
-        for (utxo_hash, output) in &blockchain.utxo_set {
-            // Check if this UTXO belongs to our wallet
-            // Compare recipient public key bytes with wallet pubkey
-            if output.recipient.as_bytes() == wallet_pubkey {
-                // NOTE: Amount is hidden in Pedersen commitment, so we need to get it from wallet_registry
-                // For genesis UTXOs, we know the amount from wallet_registry initial_balance
-                // In production, we'd need to decrypt the note or track amounts separately
-
-                // For now, use a placeholder amount - this would come from wallet's UTXO tracking
-                let utxo_amount = SOV_WELCOME_BONUS; // Genesis wallet funding amount
-
-                wallet_utxos.push((*utxo_hash, 0, utxo_amount));
-                info!("   Found UTXO: {}", hex::encode(utxo_hash.as_bytes()));
-            }
+        for view in blockchain.spendable_outputs_for_owner(&owner_key_id) {
+            let utxo_amount = SOV_WELCOME_BONUS;
+            wallet_utxos.push((view.legacy_hash, view.output_index, utxo_amount));
+            info!(
+                "   Found UTXO: {}",
+                hex::encode(view.legacy_hash.as_bytes())
+            );
         }
 
         if wallet_utxos.is_empty() {

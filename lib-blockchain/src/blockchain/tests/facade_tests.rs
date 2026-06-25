@@ -1786,3 +1786,61 @@ fn active_validator_infos_inmem_unregister_evicts_sled_active() {
         "inactive in-mem overlay must not leave sled-active in consensus set"
     );
 }
+
+/// #2662: utxo_count reads sled when a store is attached.
+#[test]
+fn utxo_count_reads_sled() {
+    use crate::storage::{OutPoint, TxHash, Utxo};
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("utxo_count_store")).unwrap());
+    let owner = Address::new([0xAB; 32]);
+    let op = OutPoint::new(TxHash::new([0x11; 32]), 0);
+
+    store.begin_block(0).unwrap();
+    store
+        .put_utxo(
+            &op,
+            &Utxo::native(1_000, owner, 0),
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+    assert_eq!(bc.utxo_count(), 1, "count comes from sled, not in-mem shadow");
+    assert!(!bc.utxo_set_is_empty());
+}
+
+/// #2662: collect_spendable_outputs is sled-first and maps OutPoint → legacy hash.
+#[test]
+fn collect_spendable_outputs_reads_sled() {
+    use crate::storage::{OutPoint, TxHash, Utxo};
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("utxo_scan_store")).unwrap());
+    let owner = Address::new([0xCD; 32]);
+    let tx = TxHash::new([0x22; 32]);
+    let op = OutPoint::new(tx, 1);
+
+    store.begin_block(0).unwrap();
+    store
+        .put_utxo(&op, &Utxo::native(500, owner, 0))
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    let tx_hash = Hash::from_slice(tx.as_bytes());
+    let expected_legacy = Blockchain::legacy_utxo_hash(&tx_hash, 1);
+    let views = bc.collect_spendable_outputs();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].legacy_hash, expected_legacy);
+    assert_eq!(views[0].output_index, 1);
+    assert_eq!(views[0].owner_key_id, [0xCD; 32]);
+
+    let owned = bc.spendable_outputs_for_owner(&[0xCD; 32]);
+    assert_eq!(owned.len(), 1);
+    assert!(bc.spendable_outputs_for_owner(&[0xEE; 32]).is_empty());
+}

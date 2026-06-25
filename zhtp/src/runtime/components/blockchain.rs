@@ -859,7 +859,7 @@ impl Component for BlockchainComponent {
                 "pending_transactions".to_string(),
                 blockchain.pending_transactions.len() as f64,
             );
-            metrics.insert("utxo_count".to_string(), blockchain.utxo_set.len() as f64);
+            metrics.insert("utxo_count".to_string(), blockchain.utxo_count() as f64);
             metrics.insert(
                 "identity_count".to_string(),
                 blockchain.identity_count() as f64, // #2639: sled-authoritative count
@@ -889,7 +889,7 @@ impl Component for BlockchainComponent {
                 "pending_transactions".to_string(),
                 blockchain.pending_transactions.len() as f64,
             );
-            metrics.insert("utxo_count".to_string(), blockchain.utxo_set.len() as f64);
+            metrics.insert("utxo_count".to_string(), blockchain.utxo_count() as f64);
             metrics.insert(
                 "identity_count".to_string(),
                 blockchain.identity_count() as f64, // #2639: sled-authoritative count
