@@ -72,7 +72,7 @@ impl BlockchainProvider {
                 }
             }
         }
-        self.store_council_member_cache(members);
+        self.replace_council_member_cache(members);
     }
 
     /// Seed the sync council cache from config (no blockchain lock). Call after
@@ -83,7 +83,10 @@ impl BlockchainProvider {
     }
 
     fn store_council_member_cache(&self, identity_ids: impl IntoIterator<Item = String>) {
-        let members: HashSet<String> = identity_ids.into_iter().collect();
+        self.replace_council_member_cache(identity_ids.into_iter().collect());
+    }
+
+    fn replace_council_member_cache(&self, members: HashSet<String>) {
         if let Ok(mut cache) = self.council_member_cache.write() {
             *cache = members;
         }

@@ -5602,16 +5602,10 @@ pub(super) fn try_restore_oracle_from_dat(
     }
 }
 
-/// Seed validators from bootstrap config when the authoritative active set is empty.
-///
-/// Bootstrap validators are not committed as on-chain transactions on testnet; this path
-/// installs them into the in-memory overlay **and** durable sled so consensus reads agree
-/// with the fleet (#2639).
-///
-/// Uses blake3 domain separation to derive distinct placeholder keys for the networking and
-/// rewards roles from the identity ID — these only need to be non-empty and mutually distinct
-/// for the in-memory registry; they are not used for actual signing.
 /// Idempotently bootstrap council members from config and warm the sync role cache.
+///
+/// Council membership is in-memory only (not sled-persisted). Must run after any
+/// `load_from_store` swap that replaces `*bc`, and after `set_user_wallet` on restart.
 pub(super) async fn ensure_council_bootstrap_and_cache(
     council_config: &lib_blockchain::dao::CouncilBootstrapConfig,
 ) -> Result<()> {
@@ -5633,6 +5627,15 @@ pub(super) async fn ensure_council_bootstrap_and_cache(
     Ok(())
 }
 
+/// Seed validators from bootstrap config when the authoritative active set is empty.
+///
+/// Bootstrap validators are not committed as on-chain transactions on testnet; this path
+/// installs them into the in-memory overlay **and** durable sled so consensus reads agree
+/// with the fleet (#2639).
+///
+/// Uses blake3 domain separation to derive distinct placeholder keys for the networking and
+/// rewards roles from the identity ID — these only need to be non-empty and mutually distinct
+/// for the in-memory registry; they are not used for actual signing.
 pub(super) fn seed_validators_from_bootstrap_config(
     bc: &mut lib_blockchain::Blockchain,
     bootstrap_validators: &[crate::config::aggregation::BootstrapValidator],
