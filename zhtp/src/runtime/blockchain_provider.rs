@@ -49,17 +49,30 @@ impl BlockchainProvider {
     }
 
     /// Refresh the sync council cache from live `blockchain.council_members`.
+    ///
+    /// Council membership is in-memory only (not sled-persisted). A
+    /// `load_from_store` swap can temporarily leave `council_members` empty while
+    /// a config-seeded cache is still valid — do not clobber a non-empty cache
+    /// with an empty chain read (the 15s background refresh loop).
     pub async fn refresh_council_member_cache(&self) {
         let outer = self.blockchain.read().await;
         let Some(arc) = outer.as_ref() else {
             return;
         };
         let bc = arc.read().await;
-        self.store_council_member_cache(
-            bc.get_council_members()
-                .iter()
-                .map(|m| m.identity_id.clone()),
-        );
+        let members: HashSet<String> = bc
+            .get_council_members()
+            .iter()
+            .map(|m| m.identity_id.clone())
+            .collect();
+        if members.is_empty() {
+            if let Ok(cache) = self.council_member_cache.read() {
+                if !cache.is_empty() {
+                    return;
+                }
+            }
+        }
+        self.store_council_member_cache(members);
     }
 
     /// Seed the sync council cache from config (no blockchain lock). Call after
@@ -816,6 +829,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_council_cache_does_not_clobber_seeded_cache_when_chain_empty() {
+        let council_did = "did:zhtp:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let mut bc = Blockchain::new().expect("genesis");
+        // load_from_store replaces bc; council_members is not sled-persisted.
+        bc.council_members.clear();
+        let bc_arc = Arc::new(RwLock::new(bc));
+        let provider = BlockchainProvider::new();
+        provider.set_blockchain(bc_arc.clone()).await.unwrap();
+        provider.seed_council_member_cache([council_did.to_string()]);
+        assert!(
+            provider
+                .council_member_cache
+                .read()
+                .expect("cache lock")
+                .contains(council_did),
+            "seed must populate cache before refresh"
+        );
+
+        // Simulate load_from_store replacing bc with empty council_members.
+        provider.refresh_council_member_cache().await;
+        assert_eq!(
+            provider.council_member_cache.read().expect("cache lock").len(),
+            1,
+            "refresh must not clobber config-seeded cache"
+        );
+
+        assert_eq!(
+            provider.is_council_member_blocking_one(council_did),
+            Some(true),
+            "cache hit must resolve council DID"
+        );
+        assert_eq!(
+            provider.is_council_member_blocking(council_did),
+            Some(true),
+            "periodic refresh must not wipe config-seeded cache when council_members is empty"
+        );
+    }
+
+    #[tokio::test]
     async fn seed_council_cache_after_bootstrap_startup_order() {
         use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
 
@@ -824,7 +876,7 @@ mod tests {
         let bc_arc = Arc::new(RwLock::new(bc));
         let provider = BlockchainProvider::new();
 
-        // Mirrors runtime/mod.rs: set_global_blockchain before ensure_council_bootstrap.
+        // Mirrors runtime/mod.rs: set_global_blockchain, then bootstrap after any reload.
         provider.set_blockchain(bc_arc.clone()).await.unwrap();
         assert!(
             provider.is_council_member_blocking(council_did) != Some(true),
