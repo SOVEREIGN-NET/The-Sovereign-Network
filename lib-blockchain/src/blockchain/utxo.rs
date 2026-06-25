@@ -6,7 +6,7 @@
 //! facades instead of reading `utxo_set` directly.
 
 use super::*;
-use crate::storage::{Address, BlockchainStore, OutPoint, StorageResult, Utxo};
+use crate::storage::{Address, OutPoint, StorageResult, Utxo};
 
 /// Normalized spendable output for handler scans (marketplace, wallet payments).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,8 +57,23 @@ impl Blockchain {
         self.utxo_set.len()
     }
 
+    /// Early-exit emptiness probe — does not deserialize every UTXO row.
     pub fn utxo_set_is_empty(&self) -> bool {
-        self.utxo_count() == 0
+        if let Some(store) = self.get_store() {
+            match store.iter_utxos() {
+                Ok(mut iter) => match iter.next() {
+                    None => return true,
+                    Some(Ok(_)) => return false,
+                    Some(Err(e)) => {
+                        tracing::warn!(error = %e, "utxo_set_is_empty: sled scan error; using in-memory shadow");
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "utxo_set_is_empty: sled iter failed; using in-memory shadow");
+                }
+            }
+        }
+        self.utxo_set.is_empty()
     }
 
     /// Sled-first single-UTXO lookup by canonical outpoint.
@@ -116,13 +131,66 @@ impl Blockchain {
     }
 
     /// Outputs owned by `owner_key_id` (`PublicKey::key_id` / wallet id bytes).
+    ///
+    /// Filters while iterating the sled store — does not materialize the full
+    /// UTXO set when a store is attached.
     pub fn spendable_outputs_for_owner(
         &self,
         owner_key_id: &[u8; 32],
     ) -> Vec<SpendableOutputView> {
-        self.collect_spendable_outputs()
-            .into_iter()
-            .filter(|v| v.owner_key_id == *owner_key_id)
+        if let Some(store) = self.get_store() {
+            match store.iter_utxos() {
+                Ok(iter) => {
+                    let mut out = Vec::new();
+                    for row in iter {
+                        let Ok((op, utxo)) = row else {
+                            tracing::warn!(
+                                "spendable_outputs_for_owner: sled row error; using in-memory shadow"
+                            );
+                            return self.spendable_outputs_for_owner_in_mem(owner_key_id);
+                        };
+                        if utxo.owner.0 != *owner_key_id {
+                            continue;
+                        }
+                        let tx_hash = Hash::from_slice(op.tx.as_bytes());
+                        out.push(SpendableOutputView {
+                            legacy_hash: Self::legacy_utxo_hash(
+                                &tx_hash,
+                                op.index as usize,
+                            ),
+                            output_index: op.index,
+                            owner_key_id: utxo.owner.0,
+                        });
+                    }
+                    return out;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "spendable_outputs_for_owner: sled iter failed; using in-memory shadow"
+                    );
+                }
+            }
+        }
+        self.spendable_outputs_for_owner_in_mem(owner_key_id)
+    }
+
+    fn spendable_outputs_for_owner_in_mem(
+        &self,
+        owner_key_id: &[u8; 32],
+    ) -> Vec<SpendableOutputView> {
+        self.utxo_set
+            .iter()
+            .filter_map(|(legacy_hash, output)| {
+                if output.recipient.key_id != *owner_key_id {
+                    return None;
+                }
+                Some(SpendableOutputView {
+                    legacy_hash: *legacy_hash,
+                    output_index: 0,
+                    owner_key_id: output.recipient.key_id,
+                })
+            })
             .collect()
     }
 

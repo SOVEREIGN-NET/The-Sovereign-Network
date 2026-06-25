@@ -1207,14 +1207,21 @@ impl RuntimeOrchestrator {
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(blockchain_arc) => {
                     let blockchain = blockchain_arc.read().await;
-                    let has_data = blockchain.height > 0
-                        || !blockchain.utxo_set_is_empty()
-                        || !blockchain.token_contracts_is_empty();
+                    let height = blockchain.height;
+                    let tokens_empty = blockchain.token_contracts_is_empty();
+                    let utxo_n = if height > 0 || !tokens_empty {
+                        blockchain.utxo_count()
+                    } else if blockchain.utxo_set_is_empty() {
+                        0
+                    } else {
+                        blockchain.utxo_count()
+                    };
+                    let has_data = height > 0 || utxo_n > 0 || !tokens_empty;
                     if has_data {
                         info!(
                             "✓ Global blockchain has data (height: {}, UTXOs: {}, tokens: {})",
-                            blockchain.height,
-                            blockchain.utxo_count(),
+                            height,
+                            utxo_n,
                             blockchain.token_contract_count()
                         );
                     }
@@ -4793,13 +4800,14 @@ impl RuntimeOrchestrator {
             ));
         };
 
+        let owned_outputs = blockchain.spendable_outputs_for_owner(&owner_key_id);
         info!(
-            " Scanning {} UTXOs for wallet key_id: {}",
-            blockchain.utxo_count(),
-            hex::encode(&owner_key_id[..8])
+            " Scanning spendable outputs for wallet key_id: {} ({} owned)",
+            hex::encode(&owner_key_id[..8]),
+            owned_outputs.len()
         );
 
-        for view in blockchain.spendable_outputs_for_owner(&owner_key_id) {
+        for view in owned_outputs {
             let utxo_amount = SOV_WELCOME_BONUS;
             wallet_utxos.push((view.legacy_hash, view.output_index, utxo_amount));
             info!(

@@ -452,13 +452,14 @@ impl MarketplaceHandler {
         let blockchain = self.blockchain.read().await;
         let mut wallet_utxos: Vec<(lib_blockchain::Hash, u32, u128)> = Vec::new();
 
+        let owned_outputs = blockchain.spendable_outputs_for_owner(&wallet_key_id);
         info!(
-            " Scanning {} UTXOs for wallet key_id: {}",
-            blockchain.utxo_count(),
-            hex::encode(&wallet_key_id[..8])
+            " Scanning spendable outputs for wallet key_id: {} ({} owned)",
+            hex::encode(&wallet_key_id[..8]),
+            owned_outputs.len()
         );
 
-        for view in blockchain.spendable_outputs_for_owner(&wallet_key_id) {
+        for view in owned_outputs {
             let utxo_amount = SOV_WELCOME_BONUS;
             wallet_utxos.push((view.legacy_hash, view.output_index, utxo_amount));
             info!(
