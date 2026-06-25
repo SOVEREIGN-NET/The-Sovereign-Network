@@ -2632,6 +2632,19 @@ impl RuntimeOrchestrator {
             let mut bc = blockchain_arc.write().await;
             bc.ensure_council_bootstrap(&self.config.consensus_config.council);
         }
+        // set_global_blockchain ran *before* bootstrap and warmed an empty cache.
+        if let Some(provider) = crate::runtime::blockchain_provider::get_global_blockchain_provider()
+        {
+            provider.seed_council_member_cache(
+                self.config
+                    .consensus_config
+                    .council
+                    .members
+                    .iter()
+                    .map(|m| m.identity_id.clone()),
+            );
+            provider.refresh_council_member_cache().await;
+        }
 
         if let Some(ref net_info) = network_info {
             info!(
