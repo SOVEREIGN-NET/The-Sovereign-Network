@@ -1295,7 +1295,7 @@ impl Blockchain {
             if using_executor {
                 warn!(
                     "process_validator_registration_transactions at height {}: {}",
-                    self.height, e
+                    block.header.height, e
                 );
             } else {
                 return Err(e);
