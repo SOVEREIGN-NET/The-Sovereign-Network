@@ -1270,6 +1270,7 @@ impl RuntimeOrchestrator {
                                 "Failed to seed bootstrap validators after load_from_store: {e}"
                             );
                         }
+                        bc.ensure_council_bootstrap(&self.config.consensus_config.council);
                         info!(
                             "Blockchain load complete: height={}, identities={}, validators={}, domains={}, credentials={}",
                             bc.height,
@@ -2638,25 +2639,6 @@ impl RuntimeOrchestrator {
             info!("✓ Blockchain provider initialized with fresh blockchain");
         }
 
-        // Bootstrap Council (dao-1): idempotently populate from config
-        {
-            let mut bc = blockchain_arc.write().await;
-            bc.ensure_council_bootstrap(&self.config.consensus_config.council);
-        }
-        // set_global_blockchain ran *before* bootstrap and warmed an empty cache.
-        if let Some(provider) = crate::runtime::blockchain_provider::get_global_blockchain_provider()
-        {
-            provider.seed_council_member_cache(
-                self.config
-                    .consensus_config
-                    .council
-                    .members
-                    .iter()
-                    .map(|m| m.identity_id.clone()),
-            );
-            provider.refresh_council_member_cache().await;
-        }
-
         if let Some(ref net_info) = network_info {
             info!(
                 "✓ Discovered network candidate with {} peers ({})",
@@ -2712,6 +2694,11 @@ impl RuntimeOrchestrator {
 
         // Store wallet result for blockchain component
         self.set_user_wallet(wallet_result.clone()).await?;
+
+        // Council membership is in-memory only. set_user_wallet may call
+        // load_from_store on restart (mod.rs ~1249), which replaces *bc and
+        // wipes council_members — bootstrap + cache seed must run AFTER that.
+        ensure_council_bootstrap_and_cache(&self.config.consensus_config.council).await?;
 
         // Derive deterministic NodeId from DID + device name and cache for runtime access
         let device_name = resolve_device_name(Some(&wallet_result.node_identity.primary_device))
@@ -5628,6 +5615,31 @@ pub(super) fn try_restore_oracle_from_dat(
         }
         None => Ok(false),
     }
+}
+
+/// Idempotently bootstrap council members from config and warm the sync role cache.
+///
+/// Council membership is in-memory only (not sled-persisted). Must run after any
+/// `load_from_store` swap that replaces `*bc`, and after `set_user_wallet` on restart.
+pub(super) async fn ensure_council_bootstrap_and_cache(
+    council_config: &lib_blockchain::dao::CouncilBootstrapConfig,
+) -> Result<()> {
+    let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+    {
+        let mut bc = blockchain_arc.write().await;
+        bc.ensure_council_bootstrap(council_config);
+    }
+    if let Some(provider) = crate::runtime::blockchain_provider::get_global_blockchain_provider()
+    {
+        provider.seed_council_member_cache(
+            council_config
+                .members
+                .iter()
+                .map(|m| m.identity_id.clone()),
+        );
+        provider.refresh_council_member_cache().await;
+    }
+    Ok(())
 }
 
 /// Seed validators from bootstrap config when the authoritative active set is empty.
