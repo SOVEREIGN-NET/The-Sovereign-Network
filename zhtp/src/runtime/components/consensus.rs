@@ -874,6 +874,32 @@ async fn catchup_sync_from_peer(
 /// 2. The signatures are valid and from known validators
 /// 3. The quorum threshold is met
 ///
+/// Build `validator_id → consensus_key` for [`verify_quorum_proof`].
+///
+/// Must source keys from [`Blockchain::active_validators_for_consensus`] (sled-first).
+/// [`Blockchain::get_all_validators`] is in-memory shadow only and is empty after
+/// `load_from_store` on nodes whose validators live in sled.
+fn consensus_keys_for_quorum_verify(
+    validators: &[lib_blockchain::ValidatorInfo],
+) -> HashMap<[u8; 32], [u8; 2592]> {
+    validators
+        .iter()
+        .filter_map(|info| {
+            let hex_part = info
+                .identity_id
+                .strip_prefix("did:zhtp:")
+                .unwrap_or(&info.identity_id);
+            let bytes = hex::decode(hex_part).ok()?;
+            if bytes.len() != 32 {
+                return None;
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Some((arr, info.consensus_key))
+        })
+        .collect()
+}
+
 async fn fetch_and_verify_quorum_proof(
     client: &mut lib_network::client::ZhtpClient,
     block: &lib_blockchain::Block,
@@ -915,29 +941,9 @@ async fn fetch_and_verify_quorum_proof(
         }
     };
 
-    // Build validator_id → consensus_key map from local registry.
-    //
-    // `validator_registry` keys are full DID strings (`"did:zhtp:<hex>"`)
-    // — both seeded-from-bootstrap entries (`seed_validators_from_bootstrap_config`)
-    // and on-chain registrations use that format. A bare `hex::decode` of the
-    // DID string fails and silently filters every validator out, leaving
-    // `validator_keys` empty and every quorum-proof verification to fail with
-    // "local validator set is empty" — blocking catch-up sync entirely.
+    // Sled-first active set — same source as API `query_validator_count` / BFT paths.
     let bc = blockchain_arc.read().await;
-    let validator_keys: std::collections::HashMap<[u8; 32], [u8; 2592]> = bc
-        .get_all_validators()
-        .iter()
-        .filter_map(|(id_str, info)| {
-            let hex_part = id_str.strip_prefix("did:zhtp:").unwrap_or(id_str);
-            let bytes = hex::decode(hex_part).ok()?;
-            if bytes.len() != 32 {
-                return None;
-            }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            Some((arr, info.consensus_key))
-        })
-        .collect();
+    let validator_keys = consensus_keys_for_quorum_verify(&bc.active_validators_for_consensus());
     drop(bc);
 
     if proof.height != height {
@@ -2842,6 +2848,81 @@ mod tests {
         assert_eq!(decode_bootstrap_consensus_key(""), None);
         assert_eq!(decode_bootstrap_consensus_key("0x"), None);
         assert_eq!(decode_bootstrap_consensus_key("not-hex"), None);
+    }
+
+    #[test]
+    fn consensus_keys_for_quorum_verify_reads_sled_backed_active_set() {
+        use lib_blockchain::storage::{BlockchainStore, SledStore, StoredValidatorRecord};
+        use std::sync::Arc;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let store = Arc::new(SledStore::open(dir.path().join("sled")).expect("open sled"));
+        let did = "did:zhtp:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let did_hash = lib_blockchain::storage::did_to_hash(did);
+        let mut id_bytes = [0u8; 32];
+        id_bytes.copy_from_slice(&hex::decode(&did["did:zhtp:".len()..]).expect("hex"));
+        let record = StoredValidatorRecord {
+            consensus: lib_blockchain::storage::ValidatorConsensusRecord {
+                identity_id: did.to_string(),
+                consensus_key: [0x55u8; 2592],
+                stake: 50_000,
+                storage_provided: 1 << 30,
+                status: "active".to_string(),
+                oracle_key_id: None,
+            },
+            metadata: lib_blockchain::storage::ValidatorMetadata {
+                networking_key: vec![1, 2],
+                rewards_key: vec![3, 4],
+                network_address: "10.0.0.1:9334".to_string(),
+                commission_rate: 5,
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: "bootstrap_genesis".to_string(),
+                governance_proposal_id: None,
+            },
+        };
+        store
+            .put_validator_record_direct(&did_hash, &record)
+            .expect("seed sled validator");
+
+        let mut bc = lib_blockchain::Blockchain::new().expect("blockchain");
+        bc.store = Some(store);
+        // Sled-only validator (not in in-memory shadow) — mimics post-load_from_store state.
+        assert!(
+            !bc.get_all_validators().contains_key(did),
+            "sled-only validator must not appear in in-memory shadow"
+        );
+        let active = bc.active_validators_for_consensus();
+        assert!(
+            active.iter().any(|v| v.identity_id == did),
+            "sled-backed validator must be in active set"
+        );
+        let keys = consensus_keys_for_quorum_verify(&active);
+        assert!(
+            keys.contains_key(&id_bytes),
+            "catch-up quorum verify must include sled-backed validator keys"
+        );
+        let legacy_keys: HashMap<[u8; 32], [u8; 2592]> = bc
+            .get_all_validators()
+            .iter()
+            .filter_map(|(id_str, info)| {
+                let hex_part = id_str.strip_prefix("did:zhtp:").unwrap_or(id_str);
+                let bytes = hex::decode(hex_part).ok()?;
+                if bytes.len() != 32 {
+                    return None;
+                }
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                Some((arr, info.consensus_key))
+            })
+            .collect();
+        assert!(
+            !legacy_keys.contains_key(&id_bytes),
+            "get_all_validators path must not see sled-only validators"
+        );
     }
 
     #[test]
