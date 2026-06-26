@@ -465,6 +465,41 @@ impl Blockchain {
         entries
     }
 
+    /// Idempotently persist in-memory genesis SOV mints to sled before the first
+    /// executor block apply (fresh-node import pins block 0 in-memory only).
+    pub fn persist_genesis_sov_allocations_to_store(&self) -> Result<()> {
+        let Some(store) = self.get_store() else {
+            return Ok(());
+        };
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let entries: Vec<([u8; 32], u128)> = self
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|token| {
+                token
+                    .balances_iter()
+                    .map(|(pk, &bal)| (pk.key_id, bal))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let token_id = crate::storage::TokenId::new(sov_token_id);
+        match store.backfill_token_balances_from_contract(&token_id, &entries) {
+            Ok(n) if n > 0 => info!(
+                "💰 Persisted {} genesis SOV balances to token_balances tree",
+                n
+            ),
+            Ok(_) => {}
+            Err(e) => warn!(
+                "⚠️ Failed to persist genesis SOV balances to sled: {}",
+                e
+            ),
+        }
+        Ok(())
+    }
+
     /// Zero out SOV balances that were incorrectly minted to UBI and Savings wallets
     /// by a bug in the recovery migration.  The bug set `initial_balance = 5 000 SOV`
     /// for every wallet whose sled balance was 0, regardless of wallet type.  Only

@@ -537,33 +537,28 @@ impl BlockExecutor {
     /// Uses a scope guard to ensure rollback_block is called on both errors
     /// AND panics after begin_block.
     pub fn apply_block(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
+        self.apply_block_committing_domain_fees(block, None, None)
+    }
+
+    /// Apply a block, optionally committing domain-registration SOV fees inside
+    /// the block transaction (before `append_block`/`commit_block`).
+    pub fn apply_block_committing_domain_fees(
+        &self,
+        block: &Block,
+        fee_floor_atoms: Option<u128>,
+        treasury_wallet_id_hex: Option<&str>,
+    ) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
 
-        // =====================================================================
-        // Step 1: validate_header
-        // =====================================================================
         self.validate_header(block)?;
-
-        // =====================================================================
-        // Step 2: validate_block_resources
-        // =====================================================================
         self.validate_block_resources(block)?;
-
-        // =====================================================================
-        // Step 3: begin_block
-        // =====================================================================
         self.store.begin_block(block_height)?;
 
-        // Create rollback guard for panic safety.
-        // The guard will call rollback_block on Drop unless disarmed.
         let guard = RollbackGuard::new(self.store.as_ref());
+        let outcome =
+            self.apply_block_inner(block, fee_floor_atoms, treasury_wallet_id_hex)?;
 
-        // Apply the block (steps 4-6)
-        let outcome = self.apply_block_inner(block)?;
-
-        // Success - disarm the guard so it won't rollback on drop
         guard.disarm();
-
         Ok(outcome)
     }
 
@@ -631,7 +626,12 @@ impl BlockExecutor {
     /// Steps 4-6: Apply transactions, append block, commit
     ///
     /// Called after begin_block. Guard ensures rollback on error.
-    fn apply_block_inner(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
+    fn apply_block_inner(
+        &self,
+        block: &Block,
+        fee_floor_atoms: Option<u128>,
+        treasury_wallet_id_hex: Option<&str>,
+    ) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
         let block_timestamp = block.header.timestamp;
         let block_hash = BlockHash::new(block.hash().as_array());
@@ -734,6 +734,20 @@ impl BlockExecutor {
                     "Genesis: 20B CBE treasury allocation credited (off-curve, S_c=0)"
                 );
             }
+
+            // Genesis [allocations.sov_balances] are direct inserts in build_block0(),
+            // not block transactions — replay must seed sled or executor balance checks
+            // diverge from the historical chain (g4 @ h=74010, #2641 replay gap).
+            let cfg = crate::genesis::GenesisConfig::from_embedded().map_err(|e| {
+                BlockApplyError::PersistFailed(format!(
+                    "embedded genesis config unavailable for SOV seeding: {}",
+                    e
+                ))
+            })?;
+            cfg.credit_sov_allocations_in_open_transaction(self.store.as_ref())
+                .map_err(|e| {
+                    BlockApplyError::PersistFailed(format!("genesis SOV allocations: {}", e))
+                })?;
 
             self.store
                 .append_block(block)
@@ -908,6 +922,17 @@ impl BlockExecutor {
                 })?;
 
             summary.utxos_created += coinbase_result.outputs_created;
+        }
+
+        // Domain registration fees must persist in the block transaction, not the
+        // post-commit metadata batch (token_balances are consensus state).
+        if let (Some(floor), Some(treasury)) = (fee_floor_atoms, treasury_wallet_id_hex) {
+            crate::Blockchain::apply_domain_registration_fees_to_store(
+                self.store.as_ref(),
+                block,
+                floor,
+                Some(treasury),
+            );
         }
 
         // =====================================================================
@@ -3962,6 +3987,111 @@ mod tests {
         assert_eq!(state.genesis_treasury_allocation, GENESIS_TREASURY_ALLOCATION);
         assert!(!state.graduated);
         assert!(!state.sell_enabled);
+    }
+
+    #[test]
+    fn test_genesis_persists_sov_allocations_to_sled() {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::{Address, TokenId};
+
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
+        let entries = cfg.sov_allocation_entries().expect("sov entries");
+        assert!(!entries.is_empty(), "test genesis must include sov_balances");
+
+        let token = TokenId::new(generate_lib_token_id());
+        let (wallet_id, expected_balance) = entries[0];
+        let bal = store
+            .get_token_balance(&token, &Address::new(wallet_id))
+            .expect("read sled balance");
+        assert_eq!(
+            bal, expected_balance,
+            "genesis replay must seed embedded sov_balances into sled"
+        );
+    }
+
+    #[test]
+    fn test_domain_registration_fee_committed_in_executor_block_tx() {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::{Address, TokenId};
+        use crate::transaction::domain::DomainRegistrationPayload;
+        use crate::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let payer_wallet_id = [0xab; 32];
+        let fee = DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+        let initial_balance = fee.saturating_mul(2);
+        let sov_token = TokenId::new(generate_lib_token_id());
+        store
+            .force_set_token_balances(&[(sov_token, Address::new(payer_wallet_id), initial_balance)])
+            .unwrap();
+
+        let treasury_id = crate::Blockchain::deterministic_treasury_wallet_id().as_array();
+        let treasury_hex = hex::encode(treasury_id);
+
+        let payload = DomainRegistrationPayload {
+            domain: "fee-test.sov".to_string(),
+            owner_did: "did:zhtp:fee-test".to_string(),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 365,
+            fee_tx_hash: String::new(),
+            fee_amount_atoms: fee,
+            fee_payer_wallet_id: payer_wallet_id,
+        };
+        let mut domain_tx = create_legacy_tx(TransactionType::DomainRegistration);
+        domain_tx.memo = payload.encode_memo().unwrap();
+        domain_tx.signature.public_key.key_id = payer_wallet_id;
+
+        let treasury_before = store
+            .get_token_balance(&sov_token, &Address::new(treasury_id))
+            .unwrap();
+
+        let block1 = Block::new(
+            BlockHeader {
+                version: 1,
+                previous_hash: genesis.header.block_hash.into(),
+                data_helix_root: Hash::default().into(),
+                timestamp: 1001,
+                height: 1,
+                verification_helix_root: [0u8; 32],
+                state_root: Hash::default().into(),
+                bft_quorum_root: [0u8; 32],
+                block_hash: Hash::new([0x02; 32]),
+            },
+            vec![domain_tx],
+        );
+
+        executor
+            .apply_block_committing_domain_fees(
+                &block1,
+                Some(fee),
+                Some(treasury_hex.as_str()),
+            )
+            .expect("domain fee must commit inside block transaction");
+
+        let payer_after = store
+            .get_token_balance(&sov_token, &Address::new(payer_wallet_id))
+            .unwrap();
+        let treasury_after = store
+            .get_token_balance(&sov_token, &Address::new(treasury_id))
+            .unwrap();
+        assert_eq!(payer_after, initial_balance - fee);
+        assert_eq!(treasury_after, treasury_before.saturating_add(fee));
     }
 
     #[test]

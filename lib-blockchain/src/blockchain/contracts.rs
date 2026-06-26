@@ -1723,6 +1723,140 @@ impl Blockchain {
             let _ = token.credit_balance(&payer_key, payload.fee_amount_atoms);
             return Err(anyhow!("credit treasury: {}", e));
         }
+
+        Ok(())
+    }
+
+    /// Apply V2 domain registration SOV fees to sled inside the executor's
+    /// `begin_block`/`commit_block` window. In-memory registry updates remain
+    /// in `process_domain_transactions` during `finish_block_processing`.
+    pub(crate) fn apply_domain_registration_fees_to_store(
+        store: &dyn crate::storage::BlockchainStore,
+        block: &Block,
+        fee_floor_atoms: u128,
+        treasury_wallet_id_hex: Option<&str>,
+    ) {
+        let block_height = block.height();
+        for tx in &block.transactions {
+            if tx.transaction_type != TransactionType::DomainRegistration {
+                continue;
+            }
+            let tx_signer_key_id = tx.signature.public_key.key_id;
+            match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
+                Ok(payload) => {
+                    let is_v2 = payload.fee_amount_atoms > 0
+                        || payload.fee_payer_wallet_id != [0u8; 32];
+                    if !is_v2 {
+                        continue;
+                    }
+                    if let Err(e) = Self::mirror_domain_registration_fee_to_store(
+                        store,
+                        &payload,
+                        tx_signer_key_id,
+                        fee_floor_atoms,
+                        treasury_wallet_id_hex,
+                        block_height,
+                    ) {
+                        warn!(
+                            "DomainRegistration {} at height {} sled fee skipped: {}",
+                            payload.domain, block_height, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to decode DomainRegistration memo at height {}: {}",
+                        block_height, e
+                    );
+                }
+            }
+        }
+    }
+
+    fn mirror_domain_registration_fee_to_store(
+        store: &dyn crate::storage::BlockchainStore,
+        payload: &crate::transaction::domain::DomainRegistrationPayload,
+        tx_signer_key_id: [u8; 32],
+        fee_floor_atoms: u128,
+        treasury_wallet_id_hex: Option<&str>,
+        block_height: u64,
+    ) -> Result<()> {
+        use anyhow::anyhow;
+
+        if payload.fee_amount_atoms < fee_floor_atoms {
+            return Err(anyhow!(
+                "fee below governance floor: payload {} < floor {} atoms",
+                payload.fee_amount_atoms,
+                fee_floor_atoms
+            ));
+        }
+        if payload.fee_payer_wallet_id != tx_signer_key_id {
+            return Err(anyhow!(
+                "fee payer mismatch at height {}: payload wallet does not derive from tx signer",
+                block_height
+            ));
+        }
+
+        let treasury_hex = treasury_wallet_id_hex
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+        let treasury_bytes = hex::decode(treasury_hex)
+            .map_err(|_| anyhow!("DAO treasury wallet id is malformed hex"))?;
+        if treasury_bytes.len() != 32 {
+            return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
+        }
+        let mut treasury_wallet_id = [0u8; 32];
+        treasury_wallet_id.copy_from_slice(&treasury_bytes);
+
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        Self::mirror_domain_fee_to_store(
+            store,
+            sov_id,
+            payload.fee_payer_wallet_id,
+            treasury_wallet_id,
+            payload.fee_amount_atoms,
+        )
+    }
+
+    /// Debit/credit domain registration SOV fees in the sled token_balances tree.
+    fn mirror_domain_fee_to_store(
+        store: &dyn crate::storage::BlockchainStore,
+        sov_token_id: [u8; 32],
+        payer_wallet_id: [u8; 32],
+        treasury_wallet_id: [u8; 32],
+        fee_atoms: u128,
+    ) -> Result<()> {
+        use anyhow::anyhow;
+        use crate::storage::{Address, TokenId};
+
+        let token = TokenId::new(sov_token_id);
+        let payer_addr = Address::new(payer_wallet_id);
+        let treasury_addr = Address::new(treasury_wallet_id);
+
+        let payer_bal = store
+            .get_token_balance(&token, &payer_addr)
+            .map_err(|e| anyhow!("read payer sled balance: {}", e))?;
+        let new_payer = payer_bal.checked_sub(fee_atoms).ok_or_else(|| {
+            anyhow!(
+                "sled payer balance insufficient: have {}, need {}",
+                payer_bal,
+                fee_atoms
+            )
+        })?;
+        store
+            .set_token_balance(&token, &payer_addr, new_payer)
+            .map_err(|e| anyhow!("debit payer sled balance: {}", e))?;
+
+        let treasury_bal = store
+            .get_token_balance(&token, &treasury_addr)
+            .map_err(|e| anyhow!("read treasury sled balance: {}", e))?;
+        store
+            .set_token_balance(
+                &token,
+                &treasury_addr,
+                treasury_bal.saturating_add(fee_atoms),
+            )
+            .map_err(|e| anyhow!("credit treasury sled balance: {}", e))?;
+
         Ok(())
     }
 }

@@ -225,6 +225,24 @@ impl ChainSync {
             });
         }
 
+        let expected_start = match self.store.latest_height() {
+            Ok(h) => h + 1,
+            Err(StorageError::NotInitialized) => 0,
+            Err(e) => return Err(SyncError::Storage(e)),
+        };
+
+        let first_block_height = blocks[0].header.height;
+        if first_block_height != expected_start {
+            return Err(SyncError::HeightMismatch {
+                expected: expected_start,
+                actual: first_block_height,
+            });
+        }
+
+        if expected_start == 0 {
+            return self.import_blocks_from_genesis_bootstrap(blocks, on_progress);
+        }
+
         if Self::requires_canonical_runtime_import(&blocks) {
             return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
         }
@@ -233,22 +251,6 @@ impl ChainSync {
             Arc::clone(&self.store),
             self.executor_config.clone(),
         );
-
-        // Determine expected starting height
-        let expected_start = match self.store.latest_height() {
-            Ok(h) => h + 1,
-            Err(StorageError::NotInitialized) => 0,
-            Err(e) => return Err(SyncError::Storage(e)),
-        };
-
-        // Validate first block height
-        let first_block_height = blocks[0].header.height;
-        if first_block_height != expected_start {
-            return Err(SyncError::HeightMismatch {
-                expected: expected_start,
-                actual: first_block_height,
-            });
-        }
 
         // Track last committed block hash for chain continuity validation.
         // The executor uses trusted replay (skip_prev_hash_validation=true),
@@ -303,7 +305,66 @@ impl ChainSync {
         })
     }
 
-    /// Contract/DAO variants currently execute through canonical `Blockchain` flow,
+    /// Fresh bootstrap from genesis: executor applies block 0 (seeds genesis SOV to
+    /// sled), then canonical `Blockchain` runtime replays blocks 1+ so
+    /// `finish_block_processing` hooks (domain fees, identity, wallet, …) match
+    /// the incremental live-validator path.
+    ///
+    /// Correctness over speed: canonical import is slower than executor-only (~225
+    /// blocks/sec observed) but required because live validators built state via
+    /// `process_and_commit_block`, not raw `BlockExecutor::apply_block` alone.
+    /// A 177k-block fresh sync is on the order of tens of minutes — acceptable for
+    /// wipe-and-recover, not the steady-state hot path.
+    fn import_blocks_from_genesis_bootstrap<F>(
+        &self,
+        blocks: Vec<Block>,
+        mut on_progress: F,
+    ) -> SyncResult<ImportResult>
+    where
+        F: FnMut(u64, usize),
+    {
+        let mut blocks = blocks;
+        if blocks[0].header.height != 0 {
+            return Err(SyncError::HeightMismatch {
+                expected: 0,
+                actual: blocks[0].header.height,
+            });
+        }
+
+        let genesis_block = blocks.remove(0);
+
+        let executor = BlockExecutor::from_config_trusted_replay(
+            Arc::clone(&self.store),
+            self.executor_config.clone(),
+        );
+        executor
+            .apply_block(&genesis_block)
+            .map_err(|e| SyncError::BlockApplyFailed {
+                height: 0,
+                error: e,
+            })?;
+        on_progress(0, 1);
+
+        let rest = blocks;
+        if rest.is_empty() {
+            return Ok(ImportResult {
+                blocks_imported: 1,
+                final_height: Some(0),
+            });
+        }
+
+        let canonical = self.run_canonical_import(rest)?;
+        for (offset, height) in canonical.heights.iter().enumerate() {
+            on_progress(*height, offset + 2);
+        }
+
+        Ok(ImportResult {
+            blocks_imported: 1 + canonical.blocks_imported,
+            final_height: canonical.final_height,
+        })
+    }
+
+    /// Contract/DAO/domain variants currently execute through canonical `Blockchain` flow,
     /// not `BlockExecutor`'s phase-2 transaction applicator.
     fn requires_canonical_runtime_import(blocks: &[Block]) -> bool {
         blocks.iter().any(Self::block_needs_canonical_runtime)
@@ -397,6 +458,9 @@ impl ChainSync {
                     // DaoStake/DaoUnstake: move SOV between accounts, must go through full executor
                     | TransactionType::DaoStake
                     | TransactionType::DaoUnstake
+                    // Domain lifecycle: executor no-op; fees applied in finish_block.
+                    | TransactionType::DomainRegistration
+                    | TransactionType::DomainUpdate
             )
         })
     }
@@ -559,6 +623,81 @@ mod tests {
             memo: vec![],
             payload: crate::transaction::TransactionPayload::None,
         }
+    }
+
+    #[test]
+    fn test_domain_registration_triggers_canonical_import_path() {
+        use crate::transaction::domain::DomainRegistrationPayload;
+        use crate::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+
+        let (_dir, store) = create_test_store();
+        let sync = ChainSync::new(Arc::clone(&store));
+
+        let genesis = create_genesis_block();
+        sync.import_blocks(vec![genesis.clone()]).unwrap();
+
+        let payer = [0xcd; 32];
+        let fee = DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+        let sov_token = crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+        store
+            .force_set_token_balances(&[(
+                sov_token,
+                crate::storage::Address::new(payer),
+                fee.saturating_mul(2),
+            )])
+            .unwrap();
+
+        let payload = DomainRegistrationPayload {
+            domain: "canonical-path.sov".to_string(),
+            owner_did: "did:zhtp:canonical".to_string(),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 30,
+            fee_tx_hash: String::new(),
+            fee_amount_atoms: fee,
+            fee_payer_wallet_id: payer,
+        };
+        let mut domain_tx = create_test_tx(TransactionType::DomainRegistration);
+        domain_tx.memo = payload.encode_memo().unwrap();
+        domain_tx.signature.public_key.key_id = payer;
+
+        let block1 = create_block_at_height(1, genesis.header.block_hash);
+        let block1 = Block::new(block1.header, vec![domain_tx]);
+
+        sync.import_blocks(vec![block1]).expect(
+            "DomainRegistration batch must route through canonical runtime import",
+        );
+        assert_eq!(store.latest_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_genesis_bootstrap_import_seeds_sov_balances() {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::genesis::GenesisConfig;
+        use crate::storage::{Address, TokenId};
+
+        let (_dir, store) = create_test_store();
+        let sync = ChainSync::new(Arc::clone(&store));
+
+        let genesis = create_genesis_block();
+        let block1 = create_block_at_height(1, genesis.header.block_hash);
+        sync.import_blocks(vec![genesis, block1]).unwrap();
+
+        let cfg = GenesisConfig::from_embedded().unwrap();
+        let entries = cfg.sov_allocation_entries().unwrap();
+        assert!(!entries.is_empty());
+
+        let token = TokenId::new(generate_lib_token_id());
+        let (wallet_id, expected_balance) = entries[0];
+        let bal = store
+            .get_token_balance(&token, &Address::new(wallet_id))
+            .unwrap();
+        assert_eq!(bal, expected_balance);
+        assert_eq!(store.latest_height().unwrap(), 1);
     }
 
     #[test]

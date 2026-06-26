@@ -1078,7 +1078,15 @@ impl Blockchain {
 
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
-            match executor.apply_block(&block) {
+            let fee_floor = self.tx_fee_config.domain_registration_fee_atoms;
+            let treasury_wallet = self
+                .get_dao_treasury_wallet_id()
+                .map(|id| id.as_str());
+            match executor.apply_block_committing_domain_fees(
+                &block,
+                Some(fee_floor),
+                treasury_wallet,
+            ) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor.
                     // Writes path: sync in-memory token_contracts from sled after apply
@@ -4635,6 +4643,9 @@ impl Blockchain {
             adopted.auto_persist_enabled = self.auto_persist_enabled;
             std::mem::swap(&mut self.event_publisher, &mut adopted.event_publisher);
             *self = adopted;
+
+            self.persist_genesis_sov_allocations_to_store()
+                .context("persisting genesis SOV allocations before verified import")?;
 
             // 3. Apply each imported block through the verified sync path.
             //    Continuity is checked explicitly; transaction validity and all
