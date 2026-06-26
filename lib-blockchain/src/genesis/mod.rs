@@ -735,7 +735,9 @@ impl GenesisConfig {
 
         for (wallet_id, balance) in entries {
             let addr = Address::new(wallet_id);
-            let current = store.get_token_balance(&token_id, &addr).unwrap_or(0);
+            let current = store
+                .get_token_balance(&token_id, &addr)
+                .map_err(|e| anyhow::anyhow!("genesis SOV balance read failed: {}", e))?;
             if current > 0 {
                 continue;
             }
@@ -747,7 +749,10 @@ impl GenesisConfig {
         }
 
         if supply_delta > 0 {
-            let current_supply = store.get_token_supply(&token_id).unwrap_or(None).unwrap_or(0);
+            let current_supply = store
+                .get_token_supply(&token_id)
+                .map_err(|e| anyhow::anyhow!("genesis SOV supply read failed: {}", e))?
+                .unwrap_or(0);
             store
                 .put_token_supply(&token_id, current_supply.saturating_add(supply_delta))
                 .map_err(|e| anyhow::anyhow!("genesis SOV supply update failed: {}", e))?;

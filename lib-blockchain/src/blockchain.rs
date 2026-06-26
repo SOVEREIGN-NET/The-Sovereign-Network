@@ -1078,7 +1078,15 @@ impl Blockchain {
 
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
-            match executor.apply_block(&block) {
+            let fee_floor = self.tx_fee_config.domain_registration_fee_atoms;
+            let treasury_wallet = self
+                .get_dao_treasury_wallet_id()
+                .map(|id| id.as_str());
+            match executor.apply_block_committing_domain_fees(
+                &block,
+                Some(fee_floor),
+                treasury_wallet,
+            ) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor.
                     // Writes path: sync in-memory token_contracts from sled after apply

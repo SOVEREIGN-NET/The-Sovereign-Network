@@ -317,13 +317,15 @@ impl ChainSync {
     where
         F: FnMut(u64, usize),
     {
-        let genesis_block = blocks[0].clone();
-        if genesis_block.header.height != 0 {
+        let mut blocks = blocks;
+        if blocks[0].header.height != 0 {
             return Err(SyncError::HeightMismatch {
                 expected: 0,
-                actual: genesis_block.header.height,
+                actual: blocks[0].header.height,
             });
         }
+
+        let genesis_block = blocks.remove(0);
 
         let executor = BlockExecutor::from_config_trusted_replay(
             Arc::clone(&self.store),
@@ -337,7 +339,7 @@ impl ChainSync {
             })?;
         on_progress(0, 1);
 
-        let rest: Vec<Block> = blocks.into_iter().skip(1).collect();
+        let rest = blocks;
         if rest.is_empty() {
             return Ok(ImportResult {
                 blocks_imported: 1,

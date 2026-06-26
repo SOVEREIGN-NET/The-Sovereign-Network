@@ -1701,7 +1701,6 @@ impl Blockchain {
             crate::contracts::utils::wallet_key_for_sov(payload.fee_payer_wallet_id);
         let treasury_key =
             crate::contracts::utils::wallet_key_for_sov(treasury_wallet_id);
-        let store = self.get_store().map(std::sync::Arc::clone);
 
         let token = self
             .token_contracts
@@ -1725,26 +1724,100 @@ impl Blockchain {
             return Err(anyhow!("credit treasury: {}", e));
         }
 
-        // Executor balance checks read sled (#2637). Mirror the in-memory fee
-        // movement so replay-from-genesis matches incremental live applies.
-        if let Some(store) = store {
-            if let Err(e) = Self::mirror_domain_fee_to_store(
-                store.as_ref(),
-                sov_id,
-                payload.fee_payer_wallet_id,
-                treasury_wallet_id,
-                payload.fee_amount_atoms,
-            ) {
-                let _ = token.credit_balance(&payer_key, payload.fee_amount_atoms);
-                let _ = token.debit_balance(&treasury_key, payload.fee_amount_atoms);
-                return Err(anyhow!("mirror domain fee to sled: {}", e));
-            }
-        }
-
         Ok(())
     }
 
-    /// Dual-write domain registration SOV fees to the sled token_balances tree.
+    /// Apply V2 domain registration SOV fees to sled inside the executor's
+    /// `begin_block`/`commit_block` window. In-memory registry updates remain
+    /// in `process_domain_transactions` during `finish_block_processing`.
+    pub(crate) fn apply_domain_registration_fees_to_store(
+        store: &dyn crate::storage::BlockchainStore,
+        block: &Block,
+        fee_floor_atoms: u128,
+        treasury_wallet_id_hex: Option<&str>,
+    ) {
+        let block_height = block.height();
+        for tx in &block.transactions {
+            if tx.transaction_type != TransactionType::DomainRegistration {
+                continue;
+            }
+            let tx_signer_key_id = tx.signature.public_key.key_id;
+            match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
+                Ok(payload) => {
+                    let is_v2 = payload.fee_amount_atoms > 0
+                        || payload.fee_payer_wallet_id != [0u8; 32];
+                    if !is_v2 {
+                        continue;
+                    }
+                    if let Err(e) = Self::mirror_domain_registration_fee_to_store(
+                        store,
+                        &payload,
+                        tx_signer_key_id,
+                        fee_floor_atoms,
+                        treasury_wallet_id_hex,
+                        block_height,
+                    ) {
+                        warn!(
+                            "DomainRegistration {} at height {} sled fee skipped: {}",
+                            payload.domain, block_height, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to decode DomainRegistration memo at height {}: {}",
+                        block_height, e
+                    );
+                }
+            }
+        }
+    }
+
+    fn mirror_domain_registration_fee_to_store(
+        store: &dyn crate::storage::BlockchainStore,
+        payload: &crate::transaction::domain::DomainRegistrationPayload,
+        tx_signer_key_id: [u8; 32],
+        fee_floor_atoms: u128,
+        treasury_wallet_id_hex: Option<&str>,
+        block_height: u64,
+    ) -> Result<()> {
+        use anyhow::anyhow;
+
+        if payload.fee_amount_atoms < fee_floor_atoms {
+            return Err(anyhow!(
+                "fee below governance floor: payload {} < floor {} atoms",
+                payload.fee_amount_atoms,
+                fee_floor_atoms
+            ));
+        }
+        if payload.fee_payer_wallet_id != tx_signer_key_id {
+            return Err(anyhow!(
+                "fee payer mismatch at height {}: payload wallet does not derive from tx signer",
+                block_height
+            ));
+        }
+
+        let treasury_hex = treasury_wallet_id_hex
+            .ok_or_else(|| anyhow!("DAO treasury wallet is not configured"))?;
+        let treasury_bytes = hex::decode(treasury_hex)
+            .map_err(|_| anyhow!("DAO treasury wallet id is malformed hex"))?;
+        if treasury_bytes.len() != 32 {
+            return Err(anyhow!("DAO treasury wallet id must be 32 bytes"));
+        }
+        let mut treasury_wallet_id = [0u8; 32];
+        treasury_wallet_id.copy_from_slice(&treasury_bytes);
+
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        Self::mirror_domain_fee_to_store(
+            store,
+            sov_id,
+            payload.fee_payer_wallet_id,
+            treasury_wallet_id,
+            payload.fee_amount_atoms,
+        )
+    }
+
+    /// Debit/credit domain registration SOV fees in the sled token_balances tree.
     fn mirror_domain_fee_to_store(
         store: &dyn crate::storage::BlockchainStore,
         sov_token_id: [u8; 32],
@@ -1775,7 +1848,7 @@ impl Blockchain {
 
         let treasury_bal = store
             .get_token_balance(&token, &treasury_addr)
-            .unwrap_or(0);
+            .map_err(|e| anyhow!("read treasury sled balance: {}", e))?;
         store
             .set_token_balance(
                 &token,

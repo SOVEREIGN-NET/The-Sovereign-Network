@@ -537,33 +537,28 @@ impl BlockExecutor {
     /// Uses a scope guard to ensure rollback_block is called on both errors
     /// AND panics after begin_block.
     pub fn apply_block(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
+        self.apply_block_committing_domain_fees(block, None, None)
+    }
+
+    /// Apply a block, optionally committing domain-registration SOV fees inside
+    /// the block transaction (before `append_block`/`commit_block`).
+    pub fn apply_block_committing_domain_fees(
+        &self,
+        block: &Block,
+        fee_floor_atoms: Option<u128>,
+        treasury_wallet_id_hex: Option<&str>,
+    ) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
 
-        // =====================================================================
-        // Step 1: validate_header
-        // =====================================================================
         self.validate_header(block)?;
-
-        // =====================================================================
-        // Step 2: validate_block_resources
-        // =====================================================================
         self.validate_block_resources(block)?;
-
-        // =====================================================================
-        // Step 3: begin_block
-        // =====================================================================
         self.store.begin_block(block_height)?;
 
-        // Create rollback guard for panic safety.
-        // The guard will call rollback_block on Drop unless disarmed.
         let guard = RollbackGuard::new(self.store.as_ref());
+        let outcome =
+            self.apply_block_inner(block, fee_floor_atoms, treasury_wallet_id_hex)?;
 
-        // Apply the block (steps 4-6)
-        let outcome = self.apply_block_inner(block)?;
-
-        // Success - disarm the guard so it won't rollback on drop
         guard.disarm();
-
         Ok(outcome)
     }
 
@@ -631,7 +626,12 @@ impl BlockExecutor {
     /// Steps 4-6: Apply transactions, append block, commit
     ///
     /// Called after begin_block. Guard ensures rollback on error.
-    fn apply_block_inner(&self, block: &Block) -> BlockApplyResult<ApplyOutcome> {
+    fn apply_block_inner(
+        &self,
+        block: &Block,
+        fee_floor_atoms: Option<u128>,
+        treasury_wallet_id_hex: Option<&str>,
+    ) -> BlockApplyResult<ApplyOutcome> {
         let block_height = block.header.height;
         let block_timestamp = block.header.timestamp;
         let block_hash = BlockHash::new(block.hash().as_array());
@@ -738,15 +738,16 @@ impl BlockExecutor {
             // Genesis [allocations.sov_balances] are direct inserts in build_block0(),
             // not block transactions — replay must seed sled or executor balance checks
             // diverge from the historical chain (g4 @ h=74010, #2641 replay gap).
-            if let Ok(cfg) = crate::genesis::GenesisConfig::from_embedded() {
-                if let Err(e) = cfg.credit_sov_allocations_in_open_transaction(self.store.as_ref())
-                {
-                    return Err(BlockApplyError::PersistFailed(format!(
-                        "genesis SOV allocations: {}",
-                        e
-                    )));
-                }
-            }
+            let cfg = crate::genesis::GenesisConfig::from_embedded().map_err(|e| {
+                BlockApplyError::PersistFailed(format!(
+                    "embedded genesis config unavailable for SOV seeding: {}",
+                    e
+                ))
+            })?;
+            cfg.credit_sov_allocations_in_open_transaction(self.store.as_ref())
+                .map_err(|e| {
+                    BlockApplyError::PersistFailed(format!("genesis SOV allocations: {}", e))
+                })?;
 
             self.store
                 .append_block(block)
@@ -921,6 +922,17 @@ impl BlockExecutor {
                 })?;
 
             summary.utxos_created += coinbase_result.outputs_created;
+        }
+
+        // Domain registration fees must persist in the block transaction, not the
+        // post-commit metadata batch (token_balances are consensus state).
+        if let (Some(floor), Some(treasury)) = (fee_floor_atoms, treasury_wallet_id_hex) {
+            crate::Blockchain::apply_domain_registration_fees_to_store(
+                self.store.as_ref(),
+                block,
+                floor,
+                Some(treasury),
+            );
         }
 
         // =====================================================================
