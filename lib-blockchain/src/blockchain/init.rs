@@ -1012,6 +1012,8 @@ impl Blockchain {
         // #56: backfill durable validators tree on normal startup (not replay-only).
         // Gated by schema version; regenerates from the loaded/replayed registry.
         blockchain.migrate_validator_records_schema();
+        blockchain.backfill_genesis_identities_to_store();
+        blockchain.migrate_identity_metadata_schema();
 
         // Genesis allocations are direct inserts in build_block0(), not block txs.
         // After executor-only block-0 import the in-memory registries are empty until

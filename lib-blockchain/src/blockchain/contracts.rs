@@ -132,40 +132,12 @@ impl Blockchain {
     /// Process token transfer and mint transactions from a block, with **full
     /// enforcement** — every error propagates. Used by the new-block commit
     /// paths (`process_and_commit_block`, `finish_block_processing`) and by
-    /// tests. For boot replay use [`Self::process_token_transactions_replay`].
+    /// tests. Legacy path only when no BlockExecutor is configured (#2641).
     pub fn process_token_transactions(&mut self, block: &Block) -> Result<()> {
-        self.process_token_transactions_inner(block, false)
+        self.process_token_transactions_inner(block)
     }
 
-    /// Boot-replay variant: tolerates non-integrity `TokenTransfer` errors.
-    ///
-    /// During boot-time block replay the in-memory state rebuilt here is
-    /// approximate (the sled-backed `BlockExecutor` is the source of truth and
-    /// is attached AFTER replay completes). Refusing to boot because a
-    /// historical transfer can't be reproduced against this approximate state
-    /// would let any live-committed edge case (unsignable mint address,
-    /// amount > u64, etc.) bring the node down on restart — so such errors are
-    /// downgraded to a warning and the transfer is skipped. Tolerance is scoped
-    /// to `TokenTransfer`; every other transaction type still halts replay.
-    ///
-    /// **Replay-protection (nonce-mismatch) errors are NEVER tolerated**, even
-    /// here: they are integrity violations, not approximate-state reproduction
-    /// issues, and a committed block can never legitimately carry a duplicate
-    /// nonce. Silently skipping one would accept a replayed transfer on boot.
-    ///
-    /// Tolerance keys off this explicit parameter, NOT `self.store.is_none()` —
-    /// unit tests construct store-less blockchains as a harness and must get
-    /// full enforcement, not boot-replay tolerance.
-    pub(crate) fn process_token_transactions_replay(&mut self, block: &Block) -> Result<()> {
-        self.process_token_transactions_inner(block, true)
-    }
-
-    fn process_token_transactions_inner(
-        &mut self,
-        block: &Block,
-        replay_tolerant: bool,
-    ) -> Result<()> {
-        let is_replay = replay_tolerant;
+    fn process_token_transactions_inner(&mut self, block: &Block) -> Result<()> {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
 
         'tx_loop: for transaction in &block.transactions {
@@ -799,52 +771,6 @@ impl Blockchain {
             Ok(())
             })();
             if let Err(e) = arm_result {
-                // Replay tolerance covers TokenTransfers that can't be
-                // reproduced against approximate in-memory state
-                // (insufficient balance, amount overflow, unsignable
-                // address, AND nonce-mismatched txes that earlier
-                // binaries committed under looser rules).
-                //
-                // In production (executor attached), the canonical nonce
-                // lives in sled — written by BlockExecutor on the live
-                // apply path. The read at the apply check
-                // (`get_token_nonce`) falls through to sled, so skipping
-                // a tx here has no consistency impact on subsequent
-                // checks.
-                //
-                // In legacy/store-less mode (tests, deprecated path),
-                // there is no sled. The in-memory map IS the nonce
-                // store, and a skipped tx that the chain committed must
-                // still advance the counter — otherwise the NEXT tx
-                // from the same sender shows up with nonce N+1 while
-                // our counter is still at N, cascading into bogus
-                // "nonce mismatch" errors that have nothing to do with
-                // replay protection (CR PR #2675).
-                if is_replay && tx_type == TransactionType::TokenTransfer {
-                    if !self.has_executor() {
-                        if let Some(transfer) = transaction.token_transfer_data() {
-                            let is_sov = Self::is_sov_token_id(&transfer.token_id);
-                            let token_id_key = if is_sov {
-                                sov_token_id
-                            } else {
-                                transfer.token_id
-                            };
-                            let nk = (token_id_key, transfer.from);
-                            let entry = self.token_nonces.entry(nk).or_insert(0);
-                            let target = transfer.nonce.saturating_add(1);
-                            if *entry < target {
-                                *entry = target;
-                            }
-                        }
-                    }
-                    warn!(
-                        "Replay: skipping TokenTransfer at height={} tx={}: {}",
-                        block.height(),
-                        hex::encode(&transaction.hash().as_bytes()[..4]),
-                        e,
-                    );
-                    continue 'tx_loop;
-                }
                 return Err(e);
             }
         }
