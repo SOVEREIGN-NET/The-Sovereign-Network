@@ -716,7 +716,12 @@ impl GenesisConfig {
     }
 
     /// Persist genesis SOV allocations during an open block/metadata transaction.
-    /// Idempotent: only credits addresses with zero sled balance.
+    ///
+    /// Idempotent for block-0 replay: skips any address whose sled balance is
+    /// already non-zero. That is correct because (a) a fresh wipe has zero
+    /// balances and receives the full genesis allocation set, and (b) a
+    /// non-zero balance means the address was already seeded or has had later
+    /// chain activity — re-crediting the genesis amount would double-mint.
     pub fn credit_sov_allocations_in_open_transaction(
         &self,
         store: &dyn crate::storage::BlockchainStore,

@@ -309,6 +309,12 @@ impl ChainSync {
     /// sled), then canonical `Blockchain` runtime replays blocks 1+ so
     /// `finish_block_processing` hooks (domain fees, identity, wallet, …) match
     /// the incremental live-validator path.
+    ///
+    /// Correctness over speed: canonical import is slower than executor-only (~225
+    /// blocks/sec observed) but required because live validators built state via
+    /// `process_and_commit_block`, not raw `BlockExecutor::apply_block` alone.
+    /// A 177k-block fresh sync is on the order of tens of minutes — acceptable for
+    /// wipe-and-recover, not the steady-state hot path.
     fn import_blocks_from_genesis_bootstrap<F>(
         &self,
         blocks: Vec<Block>,
@@ -617,6 +623,55 @@ mod tests {
             memo: vec![],
             payload: crate::transaction::TransactionPayload::None,
         }
+    }
+
+    #[test]
+    fn test_domain_registration_triggers_canonical_import_path() {
+        use crate::transaction::domain::DomainRegistrationPayload;
+        use crate::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+
+        let (_dir, store) = create_test_store();
+        let sync = ChainSync::new(Arc::clone(&store));
+
+        let genesis = create_genesis_block();
+        sync.import_blocks(vec![genesis.clone()]).unwrap();
+
+        let payer = [0xcd; 32];
+        let fee = DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+        let sov_token = crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+        store
+            .force_set_token_balances(&[(
+                sov_token,
+                crate::storage::Address::new(payer),
+                fee.saturating_mul(2),
+            )])
+            .unwrap();
+
+        let payload = DomainRegistrationPayload {
+            domain: "canonical-path.sov".to_string(),
+            owner_did: "did:zhtp:canonical".to_string(),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 30,
+            fee_tx_hash: String::new(),
+            fee_amount_atoms: fee,
+            fee_payer_wallet_id: payer,
+        };
+        let mut domain_tx = create_test_tx(TransactionType::DomainRegistration);
+        domain_tx.memo = payload.encode_memo().unwrap();
+        domain_tx.signature.public_key.key_id = payer;
+
+        let block1 = create_block_at_height(1, genesis.header.block_hash);
+        let block1 = Block::new(block1.header, vec![domain_tx]);
+
+        sync.import_blocks(vec![block1]).expect(
+            "DomainRegistration batch must route through canonical runtime import",
+        );
+        assert_eq!(store.latest_height().unwrap(), 1);
     }
 
     #[test]

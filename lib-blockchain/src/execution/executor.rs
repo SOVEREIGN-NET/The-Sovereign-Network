@@ -4016,6 +4016,85 @@ mod tests {
     }
 
     #[test]
+    fn test_domain_registration_fee_committed_in_executor_block_tx() {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::{Address, TokenId};
+        use crate::transaction::domain::DomainRegistrationPayload;
+        use crate::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+
+        let store = create_test_store();
+        let executor = create_trusted_replay_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let payer_wallet_id = [0xab; 32];
+        let fee = DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+        let initial_balance = fee.saturating_mul(2);
+        let sov_token = TokenId::new(generate_lib_token_id());
+        store
+            .force_set_token_balances(&[(sov_token, Address::new(payer_wallet_id), initial_balance)])
+            .unwrap();
+
+        let treasury_id = crate::Blockchain::deterministic_treasury_wallet_id().as_array();
+        let treasury_hex = hex::encode(treasury_id);
+
+        let payload = DomainRegistrationPayload {
+            domain: "fee-test.sov".to_string(),
+            owner_did: "did:zhtp:fee-test".to_string(),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 365,
+            fee_tx_hash: String::new(),
+            fee_amount_atoms: fee,
+            fee_payer_wallet_id: payer_wallet_id,
+        };
+        let mut domain_tx = create_legacy_tx(TransactionType::DomainRegistration);
+        domain_tx.memo = payload.encode_memo().unwrap();
+        domain_tx.signature.public_key.key_id = payer_wallet_id;
+
+        let treasury_before = store
+            .get_token_balance(&sov_token, &Address::new(treasury_id))
+            .unwrap();
+
+        let block1 = Block::new(
+            BlockHeader {
+                version: 1,
+                previous_hash: genesis.header.block_hash.into(),
+                data_helix_root: Hash::default().into(),
+                timestamp: 1001,
+                height: 1,
+                verification_helix_root: [0u8; 32],
+                state_root: Hash::default().into(),
+                bft_quorum_root: [0u8; 32],
+                block_hash: Hash::new([0x02; 32]),
+            },
+            vec![domain_tx],
+        );
+
+        executor
+            .apply_block_committing_domain_fees(
+                &block1,
+                Some(fee),
+                Some(treasury_hex.as_str()),
+            )
+            .expect("domain fee must commit inside block transaction");
+
+        let payer_after = store
+            .get_token_balance(&sov_token, &Address::new(payer_wallet_id))
+            .unwrap();
+        let treasury_after = store
+            .get_token_balance(&sov_token, &Address::new(treasury_id))
+            .unwrap();
+        assert_eq!(payer_after, initial_balance - fee);
+        assert_eq!(treasury_after, treasury_before.saturating_add(fee));
+    }
+
+    #[test]
     fn test_apply_sequential_blocks() {
         let store = create_test_store();
         let executor = BlockExecutor::with_store(store.clone());

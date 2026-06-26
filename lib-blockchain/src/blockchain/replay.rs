@@ -184,7 +184,7 @@ impl Blockchain {
     /// Idempotent: the persisted version gate makes repeat boots a no-op, and
     /// the rebuild itself is a clear + deterministic rewrite. A mid-way failure
     /// leaves the version behind so the next boot retries.
-    fn migrate_identity_metadata_schema(&self) {
+    pub(crate) fn migrate_identity_metadata_schema(&self) {
         let Some(ref store) = self.store else {
             return;
         };
@@ -337,7 +337,7 @@ impl Blockchain {
     /// Ensure every in-memory genesis identity is also present in the sled
     /// identity store. Idempotent — overwrites existing entries with the
     /// genesis-derived consensus + metadata.
-    fn backfill_genesis_identities_to_store(&self) {
+    pub(crate) fn backfill_genesis_identities_to_store(&self) {
         let Some(ref store) = self.store else {
             return;
         };
