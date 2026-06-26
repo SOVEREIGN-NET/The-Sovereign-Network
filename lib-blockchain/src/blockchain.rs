@@ -4636,6 +4636,9 @@ impl Blockchain {
             std::mem::swap(&mut self.event_publisher, &mut adopted.event_publisher);
             *self = adopted;
 
+            self.persist_genesis_sov_allocations_to_store()
+                .context("persisting genesis SOV allocations before verified import")?;
+
             // 3. Apply each imported block through the verified sync path.
             //    Continuity is checked explicitly; transaction validity and all
             //    state derivation are handled by `apply_block_trusted_for_sync`.

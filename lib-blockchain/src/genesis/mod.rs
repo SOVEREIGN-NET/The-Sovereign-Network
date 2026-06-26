@@ -664,6 +664,104 @@ impl GenesisConfig {
         Ok(())
     }
 
+    /// Parsed `(wallet_id_bytes, balance_atoms)` pairs from `[allocations.sov_balances]`.
+    pub fn sov_allocation_entries(&self) -> Result<Vec<([u8; 32], u128)>> {
+        let mut entries = Vec::new();
+        for entry in &self.allocations.sov_balances {
+            let wallet_id_bytes = hex::decode(&entry.wallet_id).map_err(|e| {
+                anyhow::anyhow!(
+                    "invalid hex in sov_balance wallet_id '{}': {}",
+                    entry.wallet_id,
+                    e
+                )
+            })?;
+            if wallet_id_bytes.len() != 32 {
+                warn!(
+                    "Skipping sov_balance with invalid wallet_id length: {}",
+                    entry.wallet_id
+                );
+                continue;
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&wallet_id_bytes);
+            if entry.balance > 0 {
+                entries.push((arr, entry.balance));
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Persist genesis SOV allocations into sled (startup / no active tx).
+    /// Idempotent: only fills addresses missing from `token_balances`.
+    pub fn credit_sov_allocations_to_store(
+        &self,
+        store: &dyn crate::storage::BlockchainStore,
+    ) -> Result<usize> {
+        let entries = self.sov_allocation_entries()?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        use crate::contracts::utils::generate_lib_token_id;
+        let token_id = crate::storage::TokenId::new(generate_lib_token_id());
+        let written = store
+            .backfill_token_balances_from_contract(&token_id, &entries)
+            .map_err(|e| anyhow::anyhow!("genesis SOV backfill failed: {}", e))?;
+        if written > 0 {
+            info!(
+                "Genesis: persisted {} SOV allocation balances to token_balances tree",
+                written
+            );
+        }
+        Ok(written)
+    }
+
+    /// Persist genesis SOV allocations during an open block/metadata transaction.
+    /// Idempotent: only credits addresses with zero sled balance.
+    pub fn credit_sov_allocations_in_open_transaction(
+        &self,
+        store: &dyn crate::storage::BlockchainStore,
+    ) -> Result<usize> {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::{Address, TokenId};
+
+        let entries = self.sov_allocation_entries()?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        let token_id = TokenId::new(generate_lib_token_id());
+        let mut credited = 0usize;
+        let mut supply_delta = 0u128;
+
+        for (wallet_id, balance) in entries {
+            let addr = Address::new(wallet_id);
+            let current = store.get_token_balance(&token_id, &addr).unwrap_or(0);
+            if current > 0 {
+                continue;
+            }
+            store
+                .set_token_balance(&token_id, &addr, balance)
+                .map_err(|e| anyhow::anyhow!("genesis SOV credit failed: {}", e))?;
+            supply_delta = supply_delta.saturating_add(balance);
+            credited += 1;
+        }
+
+        if supply_delta > 0 {
+            let current_supply = store.get_token_supply(&token_id).unwrap_or(None).unwrap_or(0);
+            store
+                .put_token_supply(&token_id, current_supply.saturating_add(supply_delta))
+                .map_err(|e| anyhow::anyhow!("genesis SOV supply update failed: {}", e))?;
+        }
+
+        if credited > 0 {
+            info!(
+                "Genesis: credited {} SOV allocation balances in block transaction",
+                credited
+            );
+        }
+        Ok(credited)
+    }
+
     /// Resolve the OPAQUE server-setup bytes from this config, if the
     /// `[opaque]` section is present. Pulled out into its own helper so
     /// every Blockchain construction path (apply_genesis_state, load_from_store)

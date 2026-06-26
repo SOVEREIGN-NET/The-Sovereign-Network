@@ -1701,6 +1701,7 @@ impl Blockchain {
             crate::contracts::utils::wallet_key_for_sov(payload.fee_payer_wallet_id);
         let treasury_key =
             crate::contracts::utils::wallet_key_for_sov(treasury_wallet_id);
+        let store = self.get_store().map(std::sync::Arc::clone);
 
         let token = self
             .token_contracts
@@ -1723,6 +1724,66 @@ impl Blockchain {
             let _ = token.credit_balance(&payer_key, payload.fee_amount_atoms);
             return Err(anyhow!("credit treasury: {}", e));
         }
+
+        // Executor balance checks read sled (#2637). Mirror the in-memory fee
+        // movement so replay-from-genesis matches incremental live applies.
+        if let Some(store) = store {
+            if let Err(e) = Self::mirror_domain_fee_to_store(
+                store.as_ref(),
+                sov_id,
+                payload.fee_payer_wallet_id,
+                treasury_wallet_id,
+                payload.fee_amount_atoms,
+            ) {
+                let _ = token.credit_balance(&payer_key, payload.fee_amount_atoms);
+                let _ = token.debit_balance(&treasury_key, payload.fee_amount_atoms);
+                return Err(anyhow!("mirror domain fee to sled: {}", e));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Dual-write domain registration SOV fees to the sled token_balances tree.
+    fn mirror_domain_fee_to_store(
+        store: &dyn crate::storage::BlockchainStore,
+        sov_token_id: [u8; 32],
+        payer_wallet_id: [u8; 32],
+        treasury_wallet_id: [u8; 32],
+        fee_atoms: u128,
+    ) -> Result<()> {
+        use anyhow::anyhow;
+        use crate::storage::{Address, TokenId};
+
+        let token = TokenId::new(sov_token_id);
+        let payer_addr = Address::new(payer_wallet_id);
+        let treasury_addr = Address::new(treasury_wallet_id);
+
+        let payer_bal = store
+            .get_token_balance(&token, &payer_addr)
+            .map_err(|e| anyhow!("read payer sled balance: {}", e))?;
+        let new_payer = payer_bal.checked_sub(fee_atoms).ok_or_else(|| {
+            anyhow!(
+                "sled payer balance insufficient: have {}, need {}",
+                payer_bal,
+                fee_atoms
+            )
+        })?;
+        store
+            .set_token_balance(&token, &payer_addr, new_payer)
+            .map_err(|e| anyhow!("debit payer sled balance: {}", e))?;
+
+        let treasury_bal = store
+            .get_token_balance(&token, &treasury_addr)
+            .unwrap_or(0);
+        store
+            .set_token_balance(
+                &token,
+                &treasury_addr,
+                treasury_bal.saturating_add(fee_atoms),
+            )
+            .map_err(|e| anyhow!("credit treasury sled balance: {}", e))?;
+
         Ok(())
     }
 }

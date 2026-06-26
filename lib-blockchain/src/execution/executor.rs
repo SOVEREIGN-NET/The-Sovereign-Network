@@ -735,6 +735,19 @@ impl BlockExecutor {
                 );
             }
 
+            // Genesis [allocations.sov_balances] are direct inserts in build_block0(),
+            // not block transactions — replay must seed sled or executor balance checks
+            // diverge from the historical chain (g4 @ h=74010, #2641 replay gap).
+            if let Ok(cfg) = crate::genesis::GenesisConfig::from_embedded() {
+                if let Err(e) = cfg.credit_sov_allocations_in_open_transaction(self.store.as_ref())
+                {
+                    return Err(BlockApplyError::PersistFailed(format!(
+                        "genesis SOV allocations: {}",
+                        e
+                    )));
+                }
+            }
+
             self.store
                 .append_block(block)
                 .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
@@ -3962,6 +3975,32 @@ mod tests {
         assert_eq!(state.genesis_treasury_allocation, GENESIS_TREASURY_ALLOCATION);
         assert!(!state.graduated);
         assert!(!state.sell_enabled);
+    }
+
+    #[test]
+    fn test_genesis_persists_sov_allocations_to_sled() {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::{Address, TokenId};
+
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
+        let entries = cfg.sov_allocation_entries().expect("sov entries");
+        assert!(!entries.is_empty(), "test genesis must include sov_balances");
+
+        let token = TokenId::new(generate_lib_token_id());
+        let (wallet_id, expected_balance) = entries[0];
+        let bal = store
+            .get_token_balance(&token, &Address::new(wallet_id))
+            .expect("read sled balance");
+        assert_eq!(
+            bal, expected_balance,
+            "genesis replay must seed embedded sov_balances into sled"
+        );
     }
 
     #[test]
