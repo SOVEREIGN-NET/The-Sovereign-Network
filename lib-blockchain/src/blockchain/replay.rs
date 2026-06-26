@@ -11,12 +11,13 @@ use crate::block::Block;
 use crate::blockchain::Blockchain;
 
 impl Blockchain {
-    /// Replay a single block's transactions to rebuild in-memory state.
+    /// Advance replay metadata for a block (genesis registries, oracle epochs,
+    /// governance). Does **not** replay transaction state — use
+    /// [`load_from_store`] / executor apply for balance reconstruction.
     ///
-    /// **Deprecated (#2641):** live chains hydrate from sled via
-    /// `load_from_store`. This path only advances chain metadata and applies
-    /// genesis/oracle/governance side-effects that are not yet executor-backed.
-    pub fn replay_block_state(&mut self, block: &Block) -> Result<()> {
+    /// Kept as `replay_block_state` for call-site compatibility; prefer
+    /// [`Self::advance_replay_metadata`] for new code.
+    pub fn advance_replay_metadata(&mut self, block: &Block) -> Result<()> {
         let height = block.height();
 
         if height == 0 {
@@ -47,6 +48,12 @@ impl Blockchain {
 
         self.height = height;
         Ok(())
+    }
+
+    /// Deprecated alias for [`Self::advance_replay_metadata`].
+    #[deprecated(note = "use advance_replay_metadata — this no longer replays tx state")]
+    pub fn replay_block_state(&mut self, block: &Block) -> Result<()> {
+        self.advance_replay_metadata(block)
     }
 
     /// Compatibility wrapper — delegates to [`load_from_store`].
@@ -257,16 +264,6 @@ impl Blockchain {
             .or_insert_with(crate::contracts::TokenContract::new_sov_native);
     }
 
-    /// Ensure treasury wallet is set during replay (idempotent).
-    fn replay_ensure_treasury(&mut self) {
-        if self.dao_treasury_wallet_id.is_none() {
-            if let Some(member) = self.council_members.first() {
-                if !member.wallet_id.is_empty() {
-                    self.dao_treasury_wallet_id = Some(member.wallet_id.clone());
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
