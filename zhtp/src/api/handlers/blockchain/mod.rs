@@ -3038,7 +3038,7 @@ impl BlockchainHandler {
         let storage_bytes = headers_count * 200;
 
         // Count UTXOs
-        let utxos_tracked = blockchain.utxo_set.len();
+        let utxos_tracked = blockchain.utxo_count();
 
         // Network height is same as current height in this context
         // In a full implementation, this would query other peers

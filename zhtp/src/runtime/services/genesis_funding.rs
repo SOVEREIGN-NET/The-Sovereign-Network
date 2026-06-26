@@ -347,7 +347,7 @@ impl GenesisFundingService {
         info!("   - Mining Pool: 300,000 SOV");
         info!("   - Development Pool: 200,000 SOV");
         info!("   - Total validator stake: {} SOV", total_validator_stake);
-        info!("   - Total UTXO entries: {}", blockchain.utxo_set.len());
+        info!("   - Total UTXO entries: {}", blockchain.utxo_count());
 
         // Register USER identity on blockchain (not just validators)
         Self::register_user_identity(
@@ -366,7 +366,7 @@ impl GenesisFundingService {
         info!(
             "   Genesis block finalized - Height: {}, UTXOs: {}, Identities: {}, Pending: {}",
             blockchain.height,
-            blockchain.utxo_set.len(),
+            blockchain.utxo_count(),
             blockchain.identity_count(),
             blockchain.pending_transactions.len()
         );

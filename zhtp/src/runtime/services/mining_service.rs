@@ -185,7 +185,7 @@ impl MiningService {
                 info!("Block Hash: {:?}", new_block.hash());
                 info!("Block Height: {}", blockchain.height);
                 info!("Transactions in Block: {}", new_block.transactions.len());
-                info!("Total UTXOs: {}", blockchain.utxo_set.len());
+                info!("Total UTXOs: {}", blockchain.utxo_count());
                 info!(
                     "Identity Registry: {} entries",
                     blockchain.identity_count() // #2639: sled-authoritative
@@ -231,12 +231,16 @@ impl MiningService {
                     let current_height = blockchain_guard.height;
 
                     info!(
-                        "Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
+                        "Mining check #{} - Height: {}, Pending: {}, Identities: {}",
                         block_counter,
                         current_height,
                         pending_count,
-                        blockchain_guard.utxo_set.len(),
                         blockchain_guard.identity_count() // #2639: sled-authoritative
+                    );
+                    debug!(
+                        "Mining check #{} - UTXOs: {}",
+                        block_counter,
+                        blockchain_guard.utxo_count()
                     );
 
                     // Check if we have pending transactions

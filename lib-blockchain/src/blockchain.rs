@@ -41,8 +41,10 @@ mod projections;
 mod validators;
 mod gateways;
 mod wallets;
+mod utxo;
 
 pub use persistence::PersistenceStats;
+pub use utxo::SpendableOutputView;
 
 /// Validator was bootstrapped from off-chain genesis configuration at height 0.
 pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "offchain_genesis";
@@ -2044,12 +2046,9 @@ impl Blockchain {
         Ok(total_fees)
     }
 
-    /// Calculate output ID from transaction hash and index
+    /// Calculate output ID from transaction hash and index (delegates to #2662 facade).
     fn calculate_output_id(&self, tx_hash: &Hash, index: usize) -> Hash {
-        let mut data = Vec::new();
-        data.extend_from_slice(tx_hash.as_bytes());
-        data.extend_from_slice(&index.to_le_bytes());
-        crate::types::hash::blake3_hash(&data)
+        Self::legacy_utxo_hash(tx_hash, index)
     }
 
     /// Adjust blockchain difficulty based on block time targets.
