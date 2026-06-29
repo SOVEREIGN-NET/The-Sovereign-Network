@@ -704,7 +704,9 @@ impl BlockExecutor {
             // migration path, or coordinating a breaking storage-format change.
             // Any such change without migration will corrupt deserialization of
             // existing chains.
-            // â”€â”€ Genesis economic state with 20B treasury allocation (#2127) â”€â”€
+            // GENESIS-6 (#2734): CBE is a DAO token — this block-0 seed is deprecated.
+            // Target: founding TokenCreation + curve contract deploy txs, not native h=0.
+            // â”€â”€ Legacy CBE DAO economic state with 20B treasury allocation (#2127) â”€â”€
             {
                 use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
 
@@ -735,19 +737,27 @@ impl BlockExecutor {
                 );
             }
 
-            // Genesis [allocations.sov_balances] are direct inserts in build_block0(),
-            // not block transactions — replay must seed sled or executor balance checks
-            // diverge from the historical chain (g4 @ h=74010, #2641 replay gap).
+            // SOV-native bootstrap (GENESIS-1 / #2729): contract shell + migrated
+            // [allocations.sov_balances]. build_block0() inserts balances in-memory only;
+            // replay must project them to sled (g4 @ h=74010).
             let cfg = crate::genesis::GenesisConfig::from_embedded().map_err(|e| {
                 BlockApplyError::PersistFailed(format!(
-                    "embedded genesis config unavailable for SOV seeding: {}",
+                    "embedded genesis config unavailable for chain bootstrap: {}",
                     e
                 ))
             })?;
-            cfg.credit_sov_allocations_in_open_transaction(self.store.as_ref())
+            let bootstrap = cfg
+                .project_chain_bootstrap_to_store(self.store.as_ref())
                 .map_err(|e| {
-                    BlockApplyError::PersistFailed(format!("genesis SOV allocations: {}", e))
+                    BlockApplyError::PersistFailed(format!("genesis chain bootstrap: {}", e))
                 })?;
+            if bootstrap.sov_contract_installed || bootstrap.sov_balances_credited > 0 {
+                tracing::info!(
+                    sov_contract = bootstrap.sov_contract_installed,
+                    sov_balances = bootstrap.sov_balances_credited,
+                    "Genesis: SOV-native chain bootstrap projected to sled"
+                );
+            }
 
             self.store
                 .append_block(block)
@@ -4013,6 +4023,47 @@ mod tests {
             bal, expected_balance,
             "genesis replay must seed embedded sov_balances into sled"
         );
+    }
+
+    #[test]
+    fn test_genesis_installs_sov_native_contract_in_sled() {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::TokenId;
+
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let token_id = TokenId::new(generate_lib_token_id());
+        let contract = store
+            .get_token_contract(&token_id)
+            .expect("read contract")
+            .expect("SOV native contract must exist in sled after genesis");
+        assert_eq!(contract.symbol, "SOV");
+        assert_eq!(contract.token_id, generate_lib_token_id());
+    }
+
+    #[test]
+    fn test_genesis_bootstrap_skips_duplicate_sov_balances_in_block_tx() {
+        let store = create_test_store();
+        let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
+
+        store.begin_block(0).unwrap();
+        let first = cfg
+            .project_chain_bootstrap_to_store(store.as_ref())
+            .expect("first bootstrap");
+        let second = cfg
+            .project_chain_bootstrap_to_store(store.as_ref())
+            .expect("second bootstrap");
+        store.commit_block().unwrap();
+
+        assert!(first.sov_contract_installed);
+        assert!(first.sov_balances_credited > 0);
+        // Balance credits are idempotent within the open tx; contract install may
+        // report twice before commit because puts are not yet visible to reads.
+        assert_eq!(second.sov_balances_credited, 0);
     }
 
     #[test]
