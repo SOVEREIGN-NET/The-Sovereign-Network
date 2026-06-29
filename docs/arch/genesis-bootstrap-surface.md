@@ -97,51 +97,45 @@ After wipe + replay to height `H`:
 3. BUBL treasury from `TokenCreation` replay if deployed before `H`
 4. No `Insufficient token balance` in executor at g4 checkpoint (~74010)
 
-### CI gate (synthetic)
+### CI gate (synthetic — does not replace g4 fixture)
 
 ```bash
 ./scripts/validate-genesis-replay-gate.sh
 ```
 
-Runs `lib-blockchain/tests/g4_replay_acceptance_tests.rs`:
+Regression-tests replay **mechanics** on a short synthetic chain. A green CI badge does **not** prove empirical g4 parity at 74k+.
 
-- `test_genesis_bootstrap_checkpoint_balances` — SOV contract shell, ≥3 genesis `sov_balances`, CBE 20B treasury after block-0 bootstrap
-- `test_genesis_bootstrap_wipe_replay_parity` — live import → export → fresh sled → `import_blocks` (genesis bootstrap path); asserts SOV sample wallets + CBE treasury parity
+| Test | Scope |
+|------|-------|
+| `test_genesis_bootstrap_checkpoint_balances` | Block-0 SOV shell, ≥3 `sov_balances`, legacy CBE 20B treasury |
+| `test_sov_native_wipe_replay_parity` | SOV transfers — #2725/#2741 fix class |
+| `test_dao_token_creation_wipe_replay_parity` | `TokenCreation` + custom-token transfer (BUBL class) |
 
 Failures print `token_id`, `address`, `have`, `need` via `common/replay_gate.rs`.
 
-### Manual g4 fixture (≥74010)
+**Who runs CI:** every PR touching `lib-blockchain` execution/sync/genesis (CI or `./scripts/validate-genesis-replay-gate.sh` locally).
 
-1. On a live validator with sled, export blocks `0..=H` (bincode `Vec<Block>`):
+### Manual g4 fixture (≥ `G4_CHECKPOINT_HEIGHT_FLOOR` = 74_010)
 
-   ```ignore
-   // ChainSync::export_blocks(0, H) on the node store → write blocks.bin
-   ```
+Empirical gate for the live chain shape. **Who:** testnet maintainer / validator operator with sled SSH access. **When:** before each testnet binary deploy that touches genesis, replay, or executor paths; mandatory before GENESIS-7 (delete seed-sled). **On failure:** block deploy, file issue on [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) / [#2730](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2730) with height + `Insufficient token balance` line (token/address/have/need).
 
-2. Capture checkpoint snapshot JSON (`ReplayCheckpointSnapshot` in `lib-blockchain/tests/common/replay_gate.rs`):
+Export (versioned fixture — `blocks.v1.bin` + `checkpoint.json`):
 
-   ```json
-   {
-     "checkpoint_height": 74010,
-     "sov_wallets": [
-       {"wallet_id": "<hex>", "balance": "<atoms>"}
-     ],
-     "cbe_treasury_balance": "<atoms>",
-     "treasury_sov_balance": "<atoms>",
-     "tolerance_atoms": 0
-   }
-   ```
+```bash
+cargo run -p tools --bin export_replay_fixture -- \
+  /opt/zhtp/data/testnet/sled /tmp/g4-fixture --to-height 74010
+```
 
-3. Run the ignored test:
+Replay:
 
-   ```bash
-   export G4_REPLAY_BLOCKS_PATH=/path/to/blocks.bin
-   export G4_REPLAY_SNAPSHOT_PATH=/path/to/checkpoint.json
-   cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
-     test_g4_checkpoint_replay_acceptance -- --ignored --nocapture
-   ```
+```bash
+export G4_REPLAY_BLOCKS_PATH=/tmp/g4-fixture/blocks.v1.bin
+export G4_REPLAY_SNAPSHOT_PATH=/tmp/g4-fixture/checkpoint.json
+cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
+  test_g4_checkpoint_replay_acceptance -- --ignored --nocapture
+```
 
-Run this gate before testnet deploy after genesis/replay changes; required before GENESIS-7 (delete seed-sled).
+Large chains: use `--to-height` to cap memory (full `export_all_blocks` on 177k+ blocks materialises the window). Bump `REPLAY_BLOCKS_FIXTURE_VERSION` if the wrapper layout changes.
 
 ---
 

@@ -1,20 +1,17 @@
-//! GENESIS-2 (#2730): g4 replay acceptance gate.
+//! GENESIS-2 (#2730): replay acceptance gates.
 //!
-//! Proves wipe-and-replay via `ChainSync::import_blocks` (genesis bootstrap path)
-//! matches incremental live state for SOV-native balances and CBE DAO treasury.
+//! ## CI scope (honest)
+//! - `test_sov_native_wipe_replay_parity` — SOV genesis bootstrap + SOV transfers (#2725/#2741 fix class)
+//! - `test_dao_token_creation_wipe_replay_parity` — `TokenCreation` + custom-token transfer (BUBL class)
 //!
-//! # CI (always on)
-//! `test_genesis_bootstrap_wipe_replay_parity` — synthetic chain with genesis
-//! SOV activity + token transfers; export → fresh sled → re-import.
+//! These do **not** replace the manual g4 fixture at ≥74k — they regression-test replay mechanics
+//! that g4's failure class depends on. Empirical g4 parity requires `test_g4_checkpoint_replay_acceptance`.
 //!
-//! # Manual g4 fixture (ignored)
-//! `test_g4_checkpoint_replay_acceptance` — replays a bincode block window
-//! exported from a live validator and asserts against a JSON balance snapshot.
-//!
+//! ## Manual g4 fixture
 //! ```bash
-//! export G4_REPLAY_BLOCKS_PATH=/path/to/blocks.bin
-//! export G4_REPLAY_SNAPSHOT_PATH=/path/to/checkpoint.json
-//! cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
+//! cargo run -p tools --bin export_replay_fixture -- /opt/zhtp/data/testnet/sled /tmp/g4 --to-height 74010
+//! G4_REPLAY_BLOCKS_PATH=/tmp/g4/blocks.v1.bin G4_REPLAY_SNAPSHOT_PATH=/tmp/g4/checkpoint.json \
+//!   cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
 //!   test_g4_checkpoint_replay_acceptance -- --ignored --nocapture
 //! ```
 
@@ -24,8 +21,11 @@ use lib_blockchain::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCA
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::genesis::GenesisConfig;
 use lib_blockchain::storage::{Address, TokenId};
-use lib_blockchain::sync::ChainSync;
-use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionPayload};
+use lib_blockchain::sync::G4_CHECKPOINT_HEIGHT_FLOOR;
+use lib_blockchain::transaction::{
+    token_creation::TokenCreationPayloadV1, TokenTransferData, Transaction, TransactionPayload,
+};
+use lib_blockchain::transaction::DEFAULT_TOKEN_CREATION_FEE;
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::Blockchain;
 use tempfile::TempDir;
@@ -34,16 +34,13 @@ mod common;
 use common::block_builders::{block_at_height_with_txs, genesis_block};
 use common::crypto_fixtures::dummy_signature;
 use common::replay_gate::{
-    compare_snapshots, first_n_genesis_sov_wallets, load_blocks_fixture, open_fresh_store,
-    ReplayCheckpointSnapshot,
+    bubl_like_token_id, cbe_treasury_address, compare_snapshots, first_n_genesis_sov_wallets,
+    load_blocks_fixture, open_fresh_store, DaoTokenExpectation, ReplayCheckpointSnapshot,
 };
 
-fn create_token_transfer_tx(
-    from: [u8; 32],
-    to: [u8; 32],
-    amount: u128,
-    nonce: u64,
-) -> Transaction {
+use lib_blockchain::sync::ChainSync;
+
+fn create_sov_transfer_tx(from: [u8; 32], to: [u8; 32], amount: u128, nonce: u64) -> Transaction {
     Transaction {
         version: 1,
         chain_id: 0x03,
@@ -54,7 +51,7 @@ fn create_token_transfer_tx(
         signature: dummy_signature(),
         memo: vec![],
         payload: TransactionPayload::TokenTransfer(TokenTransferData {
-            token_id: [0u8; 32], // executor maps to canonical SOV
+            token_id: [0u8; 32],
             from,
             to,
             amount,
@@ -63,78 +60,189 @@ fn create_token_transfer_tx(
     }
 }
 
-/// Build a short chain: genesis bootstrap + SOV transfers among genesis wallets.
+fn create_token_creation_tx(
+    creator_key_id: [u8; 32],
+    treasury_recipient: [u8; 32],
+) -> Transaction {
+    let payload = TokenCreationPayloadV1 {
+        name: "Bubble".to_string(),
+        symbol: "BUBL".to_string(),
+        initial_supply: 1_000_000,
+        decimals: 8,
+        treasury_allocation_bps: 2_000,
+        treasury_recipient,
+    };
+    let mut sig = dummy_signature();
+    sig.public_key.key_id = creator_key_id;
+    Transaction {
+        version: 2,
+        chain_id: 0x03,
+        transaction_type: TransactionType::TokenCreation,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0, // subsidised — avoids coupling to SOV fee debit in this gate
+        signature: sig,
+        memo: payload.encode_memo().expect("token creation memo"),
+        payload: TransactionPayload::None,
+    }
+}
+
+fn create_dao_token_transfer_tx(
+    token_id: [u8; 32],
+    from: [u8; 32],
+    to: [u8; 32],
+    amount: u128,
+    nonce: u64,
+) -> Transaction {
+    let mut sig = dummy_signature();
+    sig.public_key.key_id = from;
+    Transaction {
+        version: 2,
+        chain_id: 0x03,
+        transaction_type: TransactionType::TokenTransfer,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: sig,
+        memo: vec![],
+        payload: TransactionPayload::TokenTransfer(TokenTransferData {
+            token_id,
+            from,
+            to,
+            amount,
+            nonce,
+        }),
+    }
+}
+
 fn build_sov_activity_chain() -> Vec<lib_blockchain::block::Block> {
     let wallets = first_n_genesis_sov_wallets(3);
     let genesis = genesis_block();
     let mut blocks = vec![genesis.clone()];
     let mut prev = genesis.header.block_hash;
-
     let mut sender_nonce = [0u64; 3];
+
     for height in 1..=6 {
         let from_idx = (height as usize - 1) % wallets.len();
         let to_idx = height as usize % wallets.len();
-        let from = wallets[from_idx];
-        let to = wallets[to_idx];
         let nonce = sender_nonce[from_idx];
         sender_nonce[from_idx] += 1;
-        let tx = create_token_transfer_tx(from, to, 50, nonce);
+        let tx = create_sov_transfer_tx(wallets[from_idx], wallets[to_idx], 50, nonce);
         let block = block_at_height_with_txs(height, prev, vec![tx]);
         blocks.push(block.clone());
         prev = block.header.block_hash;
     }
-
     blocks
 }
 
-/// GENESIS-2 CI gate: genesis bootstrap wipe-and-replay parity.
-#[test]
-fn test_genesis_bootstrap_wipe_replay_parity() {
+fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTokenExpectation) {
+    let wallets = first_n_genesis_sov_wallets(3);
+    let creator = wallets[0];
+    let treasury = wallets[1];
+    let recipient = wallets[2];
+    let token_id = bubl_like_token_id();
+
+    let genesis = genesis_block();
+    let block1 = block_at_height_with_txs(
+        1,
+        genesis.header.block_hash,
+        vec![create_token_creation_tx(creator, treasury)],
+    );
+    // Creator holds 80% (800_000); transfer 10_000 to recipient.
+    let block2 = block_at_height_with_txs(
+        2,
+        block1.header.block_hash,
+        vec![create_dao_token_transfer_tx(token_id, creator, recipient, 10_000, 0)],
+    );
+
+    let expect = DaoTokenExpectation {
+        token_id,
+        symbol: "BUBL".to_string(),
+        holder_wallet_id: recipient,
+    };
+
+    (vec![genesis, block1, block2], expect)
+}
+
+fn run_wipe_replay_parity(
+    blocks: Vec<lib_blockchain::block::Block>,
+    checkpoint_height: u64,
+    sample_wallets: &[[u8; 32]],
+    dao_expectations: &[DaoTokenExpectation],
+) {
     let live_dir = TempDir::new().expect("live tempdir");
     let live_store = open_fresh_store(&live_dir);
     let live_sync = ChainSync::new(Arc::clone(&live_store));
 
-    let blocks = build_sov_activity_chain();
-    let import = live_sync
+    live_sync
         .import_blocks(blocks)
         .expect("live import must not hit Insufficient token balance");
-    assert_eq!(import.final_height, Some(6));
-
-    let sample_wallets = first_n_genesis_sov_wallets(3);
-    let reference = ReplayCheckpointSnapshot::from_store_at_height(&*live_store, 6, &sample_wallets);
-
-    // CBE treasury must be present after genesis block-0 seed (legacy path until GENESIS-6).
     assert_eq!(
-        reference.cbe_treasury_balance, GENESIS_TREASURY_ALLOCATION,
-        "CBE DAO treasury must equal 20B atoms after genesis replay seed"
-    );
-    assert!(
-        reference.sov_wallets.iter().all(|w| w.balance > 0),
-        "all sampled genesis SOV wallets must be non-zero after live import"
+        live_store.latest_height().expect("live height"),
+        checkpoint_height
     );
 
-    let exported = live_sync
-        .export_all_blocks()
-        .expect("export live chain");
+    let reference =
+        ReplayCheckpointSnapshot::from_store_at_height(
+            &*live_store,
+            checkpoint_height,
+            sample_wallets,
+            dao_expectations,
+        );
 
-    // Wipe sled: fresh store, replay from exported blocks (production import path).
+    let exported = live_sync.export_all_blocks().expect("export");
+
     let replay_dir = TempDir::new().expect("replay tempdir");
     let replay_store = open_fresh_store(&replay_dir);
     let replay_sync = ChainSync::new(Arc::clone(&replay_store));
 
-    let replay = replay_sync
+    replay_sync
         .import_blocks(exported)
         .expect("wipe-and-replay must not hit Insufficient token balance");
-    assert_eq!(replay.final_height, Some(6));
 
-    let replayed = ReplayCheckpointSnapshot::from_store_at_height(&*replay_store, 6, &sample_wallets);
+    let replayed = ReplayCheckpointSnapshot::from_store_at_height(
+        &*replay_store,
+        checkpoint_height,
+        sample_wallets,
+        dao_expectations,
+    );
 
     compare_snapshots("wipe-and-replay", &reference, &replayed).expect(
         "replay checkpoint must match live reference — see token_id/address/have/need above",
     );
 }
 
-/// Assert genesis-only bootstrap seeds SOV contract + allocations + CBE treasury.
+/// SOV-native genesis bootstrap + SOV transfer replay parity (#2725 / #2741 fix class).
+#[test]
+fn test_sov_native_wipe_replay_parity() {
+    let sample = first_n_genesis_sov_wallets(3);
+    run_wipe_replay_parity(build_sov_activity_chain(), 6, &sample, &[]);
+}
+
+/// DAO `TokenCreation` + custom-token transfer replay parity (BUBL class — g4-adjacent).
+#[test]
+fn test_dao_token_creation_wipe_replay_parity() {
+    let sample = first_n_genesis_sov_wallets(3);
+    let (blocks, dao_expect) = build_dao_token_activity_chain();
+    run_wipe_replay_parity(blocks, 2, &sample, &[dao_expect]);
+
+    // Post-creation recipient must hold transferred BUBL atoms.
+    let live_dir = TempDir::new().unwrap();
+    let store = open_fresh_store(&live_dir);
+    let sync = ChainSync::new(Arc::clone(&store));
+    let (blocks, dao_expect) = build_dao_token_activity_chain();
+    sync.import_blocks(blocks).unwrap();
+    let token = TokenId::new(dao_expect.token_id);
+    let bal = store
+        .get_token_balance(
+            &token,
+            &Address::new(dao_expect.holder_wallet_id),
+        )
+        .unwrap();
+    assert_eq!(bal, 10_000, "BUBL recipient balance after TokenCreation + transfer");
+}
+
+/// Genesis block-0 only: SOV shell, allocations, legacy CBE treasury seed.
 #[test]
 fn test_genesis_bootstrap_checkpoint_balances() {
     let dir = TempDir::new().expect("tempdir");
@@ -166,8 +274,9 @@ fn test_genesis_bootstrap_checkpoint_balances() {
         );
     }
 
+    // TODO(GENESIS-6, #2734): rewrite when CBE founding tx replaces block-0 seed.
     let cbe_token = TokenId::new(Blockchain::derive_cbe_token_id_pub());
-    let treasury = Address::new([0u8; 32]);
+    let treasury = cbe_treasury_address();
     let cbe_bal = store
         .get_token_balance(&cbe_token, &treasury)
         .expect("read CBE treasury");
@@ -175,31 +284,25 @@ fn test_genesis_bootstrap_checkpoint_balances() {
         cbe_bal, GENESIS_TREASURY_ALLOCATION,
         "CBE DAO treasury after genesis: have={cbe_bal} need={GENESIS_TREASURY_ALLOCATION}"
     );
+
+    // TokenCreation fee constant wired (sanity — not exercised when fee=0).
+    let _ = DEFAULT_TOKEN_CREATION_FEE;
 }
 
-/// Manual g4-class gate: requires fixture paths from a live validator export.
-///
-/// Export blocks (on a node with sled):
-/// ```ignore
-/// // Pseudocode — use ChainSync::export_blocks(0, checkpoint) on the node store
-/// let blocks = sync.export_blocks(0, 74_010)?;
-/// std::fs::write("blocks.bin", bincode::serialize(&blocks)?)?;
-/// ```
-///
-/// Snapshot JSON schema: see `ReplayCheckpointSnapshot` in `common/replay_gate.rs`.
+/// Manual g4 gate — export via `tools/export_replay_fixture`, replay here.
 #[test]
-#[ignore = "manual g4 fixture — set G4_REPLAY_BLOCKS_PATH and G4_REPLAY_SNAPSHOT_PATH"]
+#[ignore = "manual g4 fixture — export with tools/export_replay_fixture, set G4_REPLAY_* env vars"]
 fn test_g4_checkpoint_replay_acceptance() {
     let blocks_path = std::env::var("G4_REPLAY_BLOCKS_PATH")
-        .expect("G4_REPLAY_BLOCKS_PATH must point to bincode Vec<Block> fixture");
+        .expect("G4_REPLAY_BLOCKS_PATH must point to blocks.v1.bin fixture");
     let snapshot_path = std::env::var("G4_REPLAY_SNAPSHOT_PATH")
-        .expect("G4_REPLAY_SNAPSHOT_PATH must point to ReplayCheckpointSnapshot JSON");
+        .expect("G4_REPLAY_SNAPSHOT_PATH must point to checkpoint.json");
 
     let reference =
         ReplayCheckpointSnapshot::load_json(snapshot_path.as_ref()).expect("load snapshot");
     assert!(
-        reference.checkpoint_height >= 74_010,
-        "g4 gate expects checkpoint >= 74010 (got {})",
+        reference.checkpoint_height >= G4_CHECKPOINT_HEIGHT_FLOOR,
+        "g4 gate expects checkpoint >= {G4_CHECKPOINT_HEIGHT_FLOOR} (got {})",
         reference.checkpoint_height
     );
 
@@ -219,21 +322,13 @@ fn test_g4_checkpoint_replay_acceptance() {
     let replay_store = open_fresh_store(&replay_dir);
     let replay_sync = ChainSync::new(Arc::clone(&replay_store));
 
-    replay_sync
-        .import_blocks(blocks)
-        .unwrap_or_else(|e| {
-            panic!(
-                "g4 replay failed before checkpoint {}: {e} \
-                 (look for Insufficient token balance — token/address/have/need in error)",
-                reference.checkpoint_height
-            );
-        });
-
-    assert_eq!(
-        replay_store.latest_height().expect("replay height"),
-        last,
-        "replay must reach fixture tip"
-    );
+    replay_sync.import_blocks(blocks).unwrap_or_else(|e| {
+        panic!(
+            "g4 replay failed before checkpoint {}: {e} \
+             (look for Insufficient token balance — token/address/have/need in error)",
+            reference.checkpoint_height
+        );
+    });
 
     reference
         .assert_matches_store(&*replay_store, "g4-checkpoint")

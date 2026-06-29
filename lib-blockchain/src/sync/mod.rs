@@ -30,8 +30,12 @@
 //! snapshot_manager.restore(&snapshot_id)?;
 //! ```
 
+pub mod replay_fixture;
 pub mod snapshot;
 
+pub use replay_fixture::{
+    ReplayBlocksFixture, G4_CHECKPOINT_HEIGHT_FLOOR, REPLAY_BLOCKS_FIXTURE_VERSION,
+};
 pub use snapshot::{SnapshotError, SnapshotId, SnapshotInfo, SnapshotManager, SnapshotResult};
 
 use std::sync::Arc;
