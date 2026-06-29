@@ -31,22 +31,22 @@ Curve **parameters** and `BondingCurveEconomicState` are **DAO contract state** 
 
 ---
 
-## 3. Inventory (current → target)
+## 3. Inventory (current → target; bucket = §4)
 
-| State | Current writer | Sled on replay? | Target bucket |
-|-------|----------------|---------------|---------------|
-| `chain_id`, `genesis_time` | `genesis.toml` | N/A | Genesis config |
-| SOV native shell | `build_block0()` | Partial | **A** — h=0 projection |
-| `[[allocations.sov_balances]]` | `build_block0()` in-mem; #2725 sled | Yes (#2725) | **A** (testnet legacy → retire) |
-| CBE `TokenCreation` + balances | Should be founding tx | Partial (block-0 patch) | **B** |
-| CBE curve params | `genesis.toml` + `canonical.rs` + `build_block0()` deploy | No | **B** — contract state |
-| `BondingCurveEconomicState` | Executor block-0 special case | Yes | **B** — contract init tx |
-| BUBL / custom tokens | `TokenCreation` in chain | Yes if executor path | **B** |
-| Wallets / identities | `[[allocations.*]]`, `apply_genesis_state` | Partial | **B** — registration txs |
-| Bootstrap council | `genesis.toml` | In-mem only | **A** (governance sled TBD) |
-| `[opaque]` | `apply_genesis_state` | No | **C** — runtime auth |
-| `GenesisFundingService` welcome SOV | Bootstrap leader only | No | **C** — retire |
-| Reward streaks | `rewards.sled` | N/A | **C** |
+| State | Current writer | Sled on replay? | Target (§4) |
+|-------|----------------|-----------------|-------------|
+| `chain_id`, `genesis_time` | `genesis.toml` | N/A | A — genesis config |
+| SOV native shell | `build_block0()` in-mem only | Yes (#2741 `project_chain_bootstrap`) | A — h=0 projection |
+| `[[allocations.sov_balances]]` | `build_block0()` in-mem; #2725/#2741 sled | Yes | A — testnet legacy (see §8) |
+| CBE `TokenCreation` + balances | Should be founding tx | Partial (block-0 patch) | B — on-chain txs |
+| CBE curve params | `genesis.toml` + `canonical.rs` + `build_block0()` deploy | No | B — DAO contract state |
+| `BondingCurveEconomicState` | Executor block-0 special case (deprecated) | Yes | B — contract init tx |
+| BUBL / custom tokens | `TokenCreation` in chain | Yes if executor path | B — on-chain txs |
+| Wallets / identities | `[[allocations.*]]`, `apply_genesis_state` | Partial | B — registration txs |
+| Bootstrap council | `genesis.toml` | In-mem only | A — governance sled TBD |
+| `[opaque]` | `apply_genesis_state` | No | C — node-local |
+| `GenesisFundingService` welcome SOV | Bootstrap leader only | No | C — retire |
+| Reward streaks | `rewards.sled` | N/A | C — node-local |
 
 ---
 
@@ -104,3 +104,16 @@ After wipe + replay to height `H`:
 See [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727): GENESIS-0 → GENESIS-1 (SOV h=0) → GENESIS-6 (CBE contract + DAO tokens) → GENESIS-2 (gate) → GENESIS-7+ (state unification).
 
 Do **not** land GENESIS-7 (delete seed-sled) until GENESIS-2 passes.
+
+---
+
+## 8. Migration / retirement plan (testnet)
+
+Retiring `[[allocations.sov_balances]]` (GENESIS-3 / #2731) requires a **coordinated testnet reset**, not a silent genesis.toml edit on a live chain:
+
+1. **Snapshot** current sled + document wallet balances to verify replay parity (GENESIS-2).
+2. **Reset** all validators together with shrunk `genesis.toml` (`[sov] initial_supply = 0`, no bulk allocations).
+3. **Re-seed** wallets via early-block `WalletRegistration` / UBI / coinbase — not genesis rows.
+4. **DAO tokens** (CBE, BUBL): founding `TokenCreation` + contract deploy txs in blocks 1..k (GENESIS-6).
+
+Mainnet uses a one-shot ceremony; testnet may repeat resets until GENESIS-2 gate is green.

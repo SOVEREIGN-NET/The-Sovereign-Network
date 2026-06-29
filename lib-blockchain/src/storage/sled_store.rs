@@ -1480,6 +1480,24 @@ impl BlockchainStore for SledStore {
 
     fn get_token_contract(&self, id: &TokenId) -> StorageResult<Option<TokenContract>> {
         let key = keys::token_contract_key(id);
+
+        // Write-through read (CR #2658): staged puts are visible within the open block
+        // batch so genesis bootstrap and multi-step applies observe their own writes.
+        {
+            let batch_guard = self.tx_batch.lock().unwrap();
+            if let Some(ref batch) = *batch_guard {
+                if let Some(staged) = batch.tree_lookup(TREE_TOKEN_CONTRACTS, key.as_ref()) {
+                    return match staged {
+                        Some(bytes) => {
+                            let contract: TokenContract = Self::deserialize(&bytes)?;
+                            Ok(Some(contract))
+                        }
+                        None => Ok(None),
+                    };
+                }
+            }
+        }
+
         match self.token_contracts.get(key) {
             Ok(Some(bytes)) => {
                 let contract: TokenContract = Self::deserialize(&bytes)?;

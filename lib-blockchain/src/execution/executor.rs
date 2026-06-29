@@ -709,6 +709,15 @@ impl BlockExecutor {
             // â”€â”€ Legacy CBE DAO economic state with 20B treasury allocation (#2127) â”€â”€
             {
                 use crate::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCATION;
+                use std::sync::Once;
+
+                static CBE_GENESIS_SEED_DEPRECATION_WARNED: Once = Once::new();
+                CBE_GENESIS_SEED_DEPRECATION_WARNED.call_once(|| {
+                    tracing::warn!(
+                        "Genesis block-0 CBE treasury seed is deprecated (GENESIS-6 #2734); \
+                         migrate to DAO TokenCreation + curve contract deploy txs"
+                    );
+                });
 
                 let mut econ = lib_types::BondingCurveEconomicState::default();
                 econ.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
@@ -751,11 +760,16 @@ impl BlockExecutor {
                 .map_err(|e| {
                     BlockApplyError::PersistFailed(format!("genesis chain bootstrap: {}", e))
                 })?;
-            if bootstrap.sov_contract_installed || bootstrap.sov_balances_credited > 0 {
+            if bootstrap.sov_contract_installed {
                 tracing::info!(
-                    sov_contract = bootstrap.sov_contract_installed,
+                    "Genesis: SOV native token contract record installed in sled \
+                     (fixes fresh-sync iter_token_contracts / get_token_contract gap)"
+                );
+            }
+            if bootstrap.sov_balances_credited > 0 {
+                tracing::info!(
                     sov_balances = bootstrap.sov_balances_credited,
-                    "Genesis: SOV-native chain bootstrap projected to sled"
+                    "Genesis: SOV allocation balances projected to sled"
                 );
             }
 
@@ -4036,17 +4050,27 @@ mod tests {
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
-        let token_id = TokenId::new(generate_lib_token_id());
+        let sov_id = generate_lib_token_id();
+        let token_id = TokenId::new(sov_id);
         let contract = store
             .get_token_contract(&token_id)
             .expect("read contract")
             .expect("SOV native contract must exist in sled after genesis");
         assert_eq!(contract.symbol, "SOV");
-        assert_eq!(contract.token_id, generate_lib_token_id());
+        assert_eq!(contract.token_id, sov_id);
+
+        let enumerated: Vec<_> = store
+            .iter_token_contracts()
+            .expect("iter contracts")
+            .collect();
+        assert!(
+            enumerated.iter().any(|(id, _)| id.0 == sov_id),
+            "SOV must appear in iter_token_contracts after genesis replay"
+        );
     }
 
     #[test]
-    fn test_genesis_bootstrap_skips_duplicate_sov_balances_in_block_tx() {
+    fn test_genesis_bootstrap_idempotent_within_open_block_tx() {
         let store = create_test_store();
         let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
 
@@ -4061,9 +4085,23 @@ mod tests {
 
         assert!(first.sov_contract_installed);
         assert!(first.sov_balances_credited > 0);
-        // Balance credits are idempotent within the open tx; contract install may
-        // report twice before commit because puts are not yet visible to reads.
+        assert!(!second.sov_contract_installed);
         assert_eq!(second.sov_balances_credited, 0);
+    }
+
+    #[test]
+    fn test_project_chain_bootstrap_requires_open_block_transaction() {
+        let store = create_test_store();
+        let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
+
+        let err = cfg
+            .project_chain_bootstrap_to_store(store.as_ref())
+            .expect_err("must fail without begin_block");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("NoActiveTransaction") || msg.contains("transaction"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]
