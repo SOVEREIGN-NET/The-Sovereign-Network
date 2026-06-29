@@ -97,6 +97,46 @@ After wipe + replay to height `H`:
 3. BUBL treasury from `TokenCreation` replay if deployed before `H`
 4. No `Insufficient token balance` in executor at g4 checkpoint (~74010)
 
+### CI gate (synthetic — does not replace g4 fixture)
+
+```bash
+./scripts/validate-genesis-replay-gate.sh
+```
+
+Regression-tests replay **mechanics** on a short synthetic chain. A green CI badge does **not** prove empirical g4 parity at 74k+.
+
+| Test | Scope |
+|------|-------|
+| `test_genesis_bootstrap_checkpoint_balances` | Block-0 SOV shell, ≥3 `sov_balances`, legacy CBE 20B treasury |
+| `test_sov_native_wipe_replay_parity` | SOV transfers — #2725/#2741 fix class |
+| `test_dao_token_creation_wipe_replay_parity` | `TokenCreation` + custom-token transfer (BUBL class) |
+
+Failures print `token_id`, `address`, `have`, `need` via `common/replay_gate.rs`.
+
+**Who runs CI:** every PR touching `lib-blockchain` execution/sync/genesis (CI or `./scripts/validate-genesis-replay-gate.sh` locally).
+
+### Manual g4 fixture (≥ `G4_CHECKPOINT_HEIGHT_FLOOR` = 74_010)
+
+Empirical gate for the live chain shape. **Who:** testnet maintainer / validator operator with sled SSH access. **When:** before each testnet binary deploy that touches genesis, replay, or executor paths; mandatory before GENESIS-7 (delete seed-sled). **On failure:** block deploy, file issue on [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) / [#2730](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2730) with height + `Insufficient token balance` line (token/address/have/need).
+
+Export (versioned fixture — `blocks.v1.bin` + `checkpoint.json`):
+
+```bash
+cargo run -p tools --bin export_replay_fixture -- \
+  /opt/zhtp/data/testnet/sled /tmp/g4-fixture --to-height 74010
+```
+
+Replay:
+
+```bash
+export G4_REPLAY_BLOCKS_PATH=/tmp/g4-fixture/blocks.v1.bin
+export G4_REPLAY_SNAPSHOT_PATH=/tmp/g4-fixture/checkpoint.json
+cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
+  test_g4_checkpoint_replay_acceptance -- --ignored --nocapture
+```
+
+Large chains: use `--to-height` to cap memory (full `export_all_blocks` on 177k+ blocks materialises the window). Bump `REPLAY_BLOCKS_FIXTURE_VERSION` if the wrapper layout changes.
+
 ---
 
 ## 7. Implementation order

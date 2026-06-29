@@ -44,3 +44,7 @@ dirs = "5"
 [[bin]]
 name = "regen_cbe_key"
 path = "regen_cbe_key.rs"
+
+[[bin]]
+name = "export_replay_fixture"
+path = "export_replay_fixture.rs"
