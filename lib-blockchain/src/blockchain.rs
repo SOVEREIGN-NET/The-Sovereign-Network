@@ -1020,62 +1020,6 @@ impl Blockchain {
 
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
-            // Seed SledStore with any in-memory token balances that were never persisted
-            // there. Wallets that received their initial balance via token.mint() (e.g.
-            // during register_wallet) only exist in the in-memory token_contracts HashMap;
-            // SledStore has 0 for them. The executor reads SledStore for debit_token and
-            // will abort the block if it sees 0, halting the network. backfill writes
-            // ONLY entries that are missing from the tree (idempotent, safe to call here
-            // before begin_block sets tx_active).
-            if let Some(store) = &self.store {
-                let mut seed_map: std::collections::HashMap<[u8; 32], Vec<([u8; 32], u128)>> =
-                    std::collections::HashMap::new();
-                for tx in &block.transactions {
-                    if let Some(data) = tx.token_transfer_data() {
-                        if let Some(token) = self.token_contracts.get(&data.token_id) {
-                            // Look up the sender's in-memory balance.
-                            // balances is keyed by PublicKey; the SledStore uses key_id as
-                            // the 32-byte address — they match for both SOV and custom tokens.
-                            let mem_balance = token
-                                .find_balance_by_key_id(&data.from)
-                                .map(|(_, b)| b)
-                                .unwrap_or(0);
-                            if mem_balance > 0 {
-                                let addr = crate::storage::Address::new(data.from);
-                                let storage_token = crate::storage::TokenId(data.token_id);
-                                // Writes path: compares in-mem vs sled to seed missing entries.
-                                let sled_bal =
-                                    store.get_token_balance(&storage_token, &addr).unwrap_or(0);
-                                if sled_bal == 0 {
-                                    seed_map
-                                        .entry(data.token_id)
-                                        .or_default()
-                                        .push((data.from, mem_balance));
-                                }
-                            }
-                        }
-                    }
-                }
-                for (token_id, entries) in &seed_map {
-                    let storage_token = crate::storage::TokenId(*token_id);
-                    match store.backfill_token_balances_from_contract(&storage_token, entries) {
-                        Ok(n) if n > 0 => tracing::info!(
-                            "[seed-sled] seeded {} missing balance(s) for token {} before block {}",
-                            n,
-                            hex::encode(&token_id[..8]),
-                            block.header.height
-                        ),
-                        Err(e) => tracing::warn!(
-                            "[seed-sled] backfill failed for token {} at block {}: {}",
-                            hex::encode(&token_id[..8]),
-                            block.header.height,
-                            e
-                        ),
-                        _ => {}
-                    }
-                }
-            }
-
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
             let fee_floor = self.tx_fee_config.domain_registration_fee_atoms;
@@ -1089,67 +1033,13 @@ impl Blockchain {
             ) {
                 Ok(_outcome) => {
                     // Block applied successfully through executor.
-                    // Writes path: sync in-memory token_contracts from sled after apply
-                    // (SOV/CBE addresses touched in this block only). The HashMap is a
-                    // legacy-write cache — NOT authoritative for public reads; handlers
-                    // must use token_balance() (#2637).
-                    if let Some(store) = &self.store {
-                        let sov_id = crate::contracts::utils::generate_lib_token_id();
-                        let storage_sov_id = crate::storage::TokenId(sov_id);
-                        let mut addrs_to_sync: Vec<[u8; 32]> = Vec::new();
-                        for tx in &block.transactions {
-                            match tx.transaction_type {
-                                TransactionType::TokenTransfer => {
-                                    if let Some(d) = tx.token_transfer_data() {
-                                        addrs_to_sync.push(d.from);
-                                        addrs_to_sync.push(d.to);
-                                    }
-                                }
-                                TransactionType::TokenMint => {
-                                    if let Some(d) = tx.token_mint_data() {
-                                        addrs_to_sync.push(d.to);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        for addr_bytes in addrs_to_sync {
-                            let addr = crate::storage::Address::new(addr_bytes);
-                            if let Ok(balance) = store.get_token_balance(&storage_sov_id, &addr) {
-                                if let Some(token) = self.token_contracts.get_mut(&sov_id) {
-                                    let pk = Self::wallet_key_for_sov(&addr_bytes);
-                                    token.set_balance(&pk, balance as u128);
-                                }
-                            }
-                        }
-
-                    }
+                    // Token balances/nonces live in sled (#2637); in-memory caches are
+                    // not kept in sync on the live path. Post-executor registry hooks
+                    // run once in finish_block_processing (#2641).
 
                     // Update blockchain metadata
                     self.push_block_windowed(block.clone());
                     self.height += 1;
-                    if let Err(e) = self.process_validator_registration_transactions(&block) {
-                        warn!("process_validator_registration_transactions in executor path: {}", e);
-                    }
-                    self.process_gateway_transactions(&block);
-                    // Rebuild wallet_registry and in-memory SOV balances from WalletRegistration
-                    // transactions in this block. The BlockExecutor handles SledStore state but
-                    // does NOT update the in-memory wallet_registry or token_contracts mints.
-                    // Without this call, after a restart from an old .dat file the in-memory
-                    // balance stays at 0 for wallets whose registration block was applied in
-                    // executor mode — making transfers fail the mempool balance check.
-                    if let Err(e) = self.process_wallet_transactions(&block) {
-                        warn!("process_wallet_transactions in executor path: {}", e);
-                    }
-                    // Replay employment contract setup so executor has in-memory registry.
-                    if let Err(e) = self.process_employment_contract_transactions(&block) {
-                        warn!("process_employment_contract_transactions in executor path: {}", e);
-                    }
-                    self.process_domain_transactions(&block);
-                    self.process_nft_transactions(&block);
-                    for tx in &block.transactions {
-                        self.index_dao_registry_entry_from_tx(tx, block.header.height);
-                    }
                     self.adjust_difficulty()?;
 
                     debug!(
@@ -1392,13 +1282,30 @@ impl Blockchain {
                 .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
         }
 
-        // Process identity transactions
+        // Legacy post-executor hooks (#2641): types the executor admits as no-ops but
+        // whose in-memory registries handlers still read. Consolidated here so the
+        // executor success path does not duplicate them.
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_entity_registry_transactions(&block)?;
         self.process_employment_contract_transactions(&block)?;
         self.process_domain_transactions(&block);
         self.process_credential_transactions(&block);
+        if let Err(e) = self.process_validator_registration_transactions(&block) {
+            if using_executor {
+                warn!(
+                    "process_validator_registration_transactions at height {}: {}",
+                    block.header.height, e
+                );
+            } else {
+                return Err(e);
+            }
+        }
+        self.process_gateway_transactions(&block);
+        self.process_nft_transactions(&block);
+        for tx in &block.transactions {
+            self.index_dao_registry_entry_from_tx(tx, block.header.height);
+        }
         // #56: validator sled writes use the metadata batch (executor path) or the
         // legacy begin_block window — same atomicity class as identity metadata.
         // A crash between executor commit_block and commit_metadata_write can leave

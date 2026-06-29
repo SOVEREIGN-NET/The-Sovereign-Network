@@ -977,7 +977,10 @@ impl Blockchain {
                     self.wallet_blocks
                         .insert(wallet_id_str.clone(), block.height());
 
-                    if transaction.transaction_type == TransactionType::WalletRegistration
+                    // Executor mode mints initial SOV to sled in apply_block; in-memory
+                    // mint here would be a second write source (#2641).
+                    if !self.has_executor()
+                        && transaction.transaction_type == TransactionType::WalletRegistration
                         && wallet_data.initial_balance > 0
                     {
                         let sov_token_id = crate::contracts::utils::generate_lib_token_id();

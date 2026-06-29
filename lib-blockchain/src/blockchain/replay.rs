@@ -1,30 +1,25 @@
 //! Block replay for state reconstruction.
 //!
-//! On startup, if sled has blocks but in-memory registries are empty,
-//! replay all blocks to rebuild the full in-memory state. This is the
-//! single source of truth — block history defines all derived state.
-//!
-//! No sled writes happen during replay (self.store is None).
-//! No event publishing. No broadcast. Just state reconstruction.
+//! Production startup uses [`Blockchain::load_from_store`] (sled-first hydration
+//! with block-scan fallback). [`replay_from_store`] is retained as a thin
+//! compatibility wrapper.
 
 use anyhow::Result;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::block::Block;
 use crate::blockchain::Blockchain;
 
 impl Blockchain {
-    /// Replay a single block's transactions to rebuild in-memory state.
+    /// Advance replay metadata for a block (genesis registries, oracle epochs,
+    /// governance). Does **not** replay transaction state — use
+    /// [`load_from_store`] / executor apply for balance reconstruction.
     ///
-    /// Does NOT write to sled. Does NOT validate signatures or fees.
-    /// Assumes blocks are fed in order (height 0 to tip).
-    ///
-    /// For height 0: also applies genesis-specific state (council, allocations)
-    /// that was populated via direct inserts in build_block0(), not via transactions.
-    pub fn replay_block_state(&mut self, block: &Block) -> Result<()> {
+    /// Kept as `replay_block_state` for call-site compatibility; prefer
+    /// [`Self::advance_replay_metadata`] for new code.
+    pub fn advance_replay_metadata(&mut self, block: &Block) -> Result<()> {
         let height = block.height();
 
-        // Genesis-specific state: council, allocations, SOV token
         if height == 0 {
             if let Ok(cfg) = crate::genesis::GenesisConfig::from_embedded() {
                 let _ = cfg.apply_genesis_state(self);
@@ -32,41 +27,7 @@ impl Blockchain {
             self.replay_ensure_sov_token();
         }
 
-        // Process all transaction types (same order as finish_block_processing)
-        self.process_identity_transactions(block)?;
-        self.process_wallet_transactions(block)?;
-        self.process_entity_registry_transactions(block)?;
-        self.process_employment_contract_transactions(block)?;
-        self.process_domain_transactions(block);
-        self.process_credential_transactions(block);
-        self.process_validator_registration_transactions(block)?;
-        self.process_gateway_transactions(block);
-        self.process_contract_transactions(block)?;
-        // Boot replay: tolerate non-integrity TokenTransfer errors (approximate
-        // in-memory state) but still enforce replay protection. See the method doc.
-        self.process_token_transactions_replay(block)?;
-        self.process_nft_transactions(block);
-
-        // DAO registry indexing
-        for tx in &block.transactions {
-            self.index_dao_registry_entry_from_tx(tx, height);
-        }
-
-        // On-ramp trades
-        self.process_on_ramp_trade_transactions(block);
-
-        // Oracle attestations
-        self.process_oracle_attestation_transactions(block, block.header.timestamp);
-
-        // Economic features
-        if let Err(e) = self.process_ubi_claim_transactions(block) {
-            debug!("Replay: UBI claim error at height {}: {} (non-fatal)", height, e);
-        }
-        if let Err(e) = self.process_profit_declarations(block) {
-            debug!("Replay: profit declaration error at height {}: {} (non-fatal)", height, e);
-        }
-
-        // Oracle epoch advancement
+        // Oracle epoch advancement (in-memory oracle_state — not in sled apply path)
         if self
             .oracle_state
             .should_process_epoch(block.header.timestamp, self.last_oracle_epoch_processed)
@@ -77,99 +38,35 @@ impl Blockchain {
             self.last_oracle_epoch_processed = block.header.timestamp;
         }
 
-        // Governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
-            debug!("Replay: governance error at height {}: {} (non-fatal)", height, e);
+            tracing::debug!(
+                "Replay: governance error at height {}: {} (non-fatal)",
+                height,
+                e
+            );
         }
 
-        // Update chain state
         self.height = height;
-
         Ok(())
     }
 
-    /// Replay all blocks from a store to fully reconstruct in-memory state.
+    /// Deprecated alias for [`Self::advance_replay_metadata`].
+    #[deprecated(note = "use advance_replay_metadata — this no longer replays tx state")]
+    pub fn replay_block_state(&mut self, block: &Block) -> Result<()> {
+        self.advance_replay_metadata(block)
+    }
+
+    /// Compatibility wrapper — delegates to [`load_from_store`].
     ///
-    /// Called on startup when sled has blocks. Creates a fully populated
-    /// Blockchain with all registries, validators, domains, credentials, etc.
+    /// Previously replayed every block through legacy `process_*_transactions`
+    /// writers. Phase 4 (#2641) makes sled the sole write path; startup state
+    /// is rebuilt by projection hydration or the scan fallback inside
+    /// `load_from_store`.
     pub fn replay_from_store(
         store: std::sync::Arc<dyn crate::storage::BlockchainStore>,
     ) -> Result<Option<Self>> {
-        let latest_height = match store.latest_height() {
-            Ok(h) => h,
-            Err(_) => return Ok(None),
-        };
-
-        // Check if store actually has block 0
-        if store.get_block_by_height(0)?.is_none() {
-            return Ok(None);
-        }
-
-        info!(
-            "Replaying {} blocks from sled to rebuild in-memory state...",
-            latest_height + 1
-        );
-
-        let start = std::time::Instant::now();
-        let mut bc = Self::new_runtime_state();
-        // store is None during replay — prevents sled writes from process_* functions
-        bc.blocks.clear();
-
-        for height in 0..=latest_height {
-            let block = store
-                .get_block_by_height(height)?
-                .ok_or_else(|| anyhow::anyhow!("Missing block at height {} — sled corrupted", height))?;
-
-            bc.replay_block_state(&block)?;
-            bc.blocks.push(block);
-        }
-
-        let elapsed = start.elapsed();
-        info!(
-            "Replay complete: {} blocks in {:.2}s — {} identities, {} wallets, {} validators, {} domains, {} credentials",
-            latest_height + 1,
-            elapsed.as_secs_f64(),
-            bc.identity_registry.len(),
-            bc.wallet_registry.len(),
-            bc.validator_registry.len(),
-            bc.domain_registry.len(),
-            bc.credential_registry.len(),
-        );
-
-        // Post-replay: attach store and executor
-        bc.replay_ensure_treasury();
-
-        // Now attach the store (enables sled writes for future blocks)
-        let executor = std::sync::Arc::new(
-            crate::execution::executor::BlockExecutor::new_catchup_sync(
-                store.clone(),
-                crate::execution::executor::FeeModelV2::default(),
-                Default::default(),
-            ),
-        );
-        bc.store = Some(store);
-        bc.executor = Some(executor);
-
-        // Rebuild the PoUW mint index from the replayed blocks so
-        // /api/v1/pouw/rewards reports the full on-chain history. (The
-        // per-block hook in process_token_transactions also populates it
-        // during replay; this is an idempotent, authoritative re-scan.)
-        bc.rebuild_pouw_mint_index();
-
-        // Backfill genesis-only identities into the sled store. Genesis
-        // populates bc.identity_registry directly without going through
-        // transactions, so identities created at genesis are absent from
-        // sled's identity tree. Any later IdentityUpdate against them halts
-        // consensus with "Cannot update non-existent identity".
-        bc.backfill_genesis_identities_to_store();
-
-        // Bring the sled `identity_metadata` tree up to the current schema
-        // (#58: adds kyber_public_key). Regenerates from the just-replayed
-        // in-memory registry; gated so it only runs once per upgrade.
-        bc.migrate_identity_metadata_schema();
-        bc.migrate_validator_records_schema();
-
-        Ok(Some(bc))
+        info!("replay_from_store: delegating to load_from_store (#2641)");
+        Self::load_from_store(store)
     }
 
     /// Version-gated regeneration of the sled `identity_metadata` tree (#58).
@@ -207,22 +104,11 @@ impl Blockchain {
             self.identity_registry.len()
         );
 
-        // Drop stale pre-v2 blobs first. If this fails we abort without having
-        // mutated anything, leaving the version unchanged for a clean retry.
         if let Err(e) = store.clear_identity_metadata() {
             warn!("identity_metadata schema migration: clear failed: {e} — aborting (version unchanged)");
             return;
         }
 
-        // CR PR #2679 (1): collect records and write them in ONE bulk call
-        // with a SINGLE flush at the end (the per-record direct write flushed
-        // per call → O(n) fsyncs).
-        //
-        // CR PR #2679 (2): if the bulk write fails partway, do NOT bump the
-        // version — the tree is partially rebuilt and the next boot must
-        // retry the full migration. Bumping the version here would suppress
-        // retries via the version gate and leave kyber permanently missing
-        // for the records that didn't make it.
         let records: Vec<([u8; 32], crate::storage::IdentityMetadata)> = self
             .identity_registry
             .iter()
@@ -261,10 +147,6 @@ impl Blockchain {
     }
 
     /// Version-gated regeneration of the sled `validators` tree (#56).
-    ///
-    /// Fully derivable from replayed blocks — never decodes legacy blobs.
-    /// Called from `replay_from_store` and `load_from_store` so existing chains
-    /// backfill the durable validators tree on normal startup, not replay-only.
     pub(crate) fn migrate_validator_records_schema(&self) {
         let Some(ref store) = self.store else {
             return;
@@ -344,8 +226,6 @@ impl Blockchain {
         let mut written = 0usize;
         for (did, data) in &self.identity_registry {
             let did_hash = crate::storage::did_to_hash(did);
-            // Skip if already present (avoids overwriting state that may have
-            // diverged via on-chain updates).
             match store.get_identity(&did_hash) {
                 Ok(Some(_)) => continue,
                 Ok(None) => {}
@@ -384,16 +264,6 @@ impl Blockchain {
             .or_insert_with(crate::contracts::TokenContract::new_sov_native);
     }
 
-    /// Ensure treasury wallet is set during replay (idempotent).
-    fn replay_ensure_treasury(&mut self) {
-        if self.dao_treasury_wallet_id.is_none() {
-            if let Some(member) = self.council_members.first() {
-                if !member.wallet_id.is_empty() {
-                    self.dao_treasury_wallet_id = Some(member.wallet_id.clone());
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

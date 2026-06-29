@@ -1012,6 +1012,23 @@ impl Blockchain {
         // #56: backfill durable validators tree on normal startup (not replay-only).
         // Gated by schema version; regenerates from the loaded/replayed registry.
         blockchain.migrate_validator_records_schema();
+        blockchain.backfill_genesis_identities_to_store();
+        blockchain.migrate_identity_metadata_schema();
+
+        // Genesis allocations are direct inserts in build_block0(), not block txs.
+        // After executor-only block-0 import the in-memory registries are empty until
+        // we re-apply embedded genesis metadata (replay determinism / g4 bootstrap).
+        if let Ok(cfg) = crate::genesis::GenesisConfig::from_embedded() {
+            if let Err(e) = cfg.apply_genesis_state(&mut blockchain) {
+                warn!(
+                    "apply_genesis_state during load_from_store failed (non-fatal): {}",
+                    e
+                );
+            }
+        }
+
+        blockchain.backfill_genesis_identities_to_store();
+        blockchain.migrate_identity_metadata_schema();
 
         // Genesis allocations are direct inserts in build_block0(), not block txs.
         // After executor-only block-0 import the in-memory registries are empty until
