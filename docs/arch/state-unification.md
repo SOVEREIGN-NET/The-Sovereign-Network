@@ -1,6 +1,6 @@
 # State Unification — Phase 0 Inventory & Decisions
 
-**Tracker:** [#2645](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2645) — `arch: unify state to single source of truth`
+**Tracker:** [#2727 GENESIS epic](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) — chain bootstrap, replay determinism, and state unification (supersedes [#2645](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2645))
 **This document delivers:** [#2634](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2634) — Phase 0
 **Status:** Draft (Phase 0, no code changes)
 
@@ -382,7 +382,7 @@ Recap of the ordering as it now relates to the catalog:
 
 ## 8. References
 
-- Parent tracker: [#2645](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2645)
+- Parent tracker: [#2727 GENESIS epic](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) (supersedes #2645)
 - Phase issues: [#2634](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2634) (this doc) through [#2644](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2644)
 - Key code paths cited:
   - `lib-blockchain/src/execution/` — clean architecture (BlockExecutor + StateView + StateMutator)

@@ -336,6 +336,20 @@ impl GenesisStateSnapshot {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Chain bootstrap projection (GENESIS-1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Outcome of [`GenesisConfig::project_chain_bootstrap_to_store`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ChainBootstrapOutcome {
+    /// `true` when the SOV native contract record was written to sled.
+    pub sov_contract_installed: bool,
+    /// Count of `[allocations.sov_balances]` addresses credited this call.
+    pub sov_balances_credited: usize,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GenesisConfig implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -691,6 +705,59 @@ impl GenesisConfig {
         Ok(entries)
     }
 
+    /// Project **SOV-native** chain bootstrap into sled during an open block transaction.
+    ///
+    /// Scope (GENESIS-1 / #2729): native SOV contract shell + `[allocations.sov_balances]`
+    /// only. CBE is a DAO token — its curve contract and 20B treasury allocation remain
+    /// on the legacy block-0 path until GENESIS-6 (#2734).
+    ///
+    /// **Bug fix (latent):** `build_block0()` populated SOV in in-memory `token_contracts`
+    /// but block-0 replay never persisted the SOV contract record to sled. Fresh-sync
+    /// nodes had balances (post-#2725) but `get_token_contract` / `iter_token_contracts`
+    /// omitted SOV until this install path runs.
+    ///
+    /// Must be called while `begin_block` is active (executor block-0 apply/replay).
+    /// `put_token_contract` returns `NoActiveTransaction` otherwise.
+    pub fn project_chain_bootstrap_to_store(
+        &self,
+        store: &dyn crate::storage::BlockchainStore,
+    ) -> Result<ChainBootstrapOutcome> {
+        let sov_contract_installed = self.ensure_sov_native_contract_in_store(store)?;
+        let sov_balances_credited = self.credit_sov_allocations_in_open_transaction(store)?;
+        Ok(ChainBootstrapOutcome {
+            sov_contract_installed,
+            sov_balances_credited,
+        })
+    }
+
+    /// Install the SOV native token contract metadata in sled if missing.
+    ///
+    /// Idempotent within an open block transaction: uses batch-aware
+    /// `get_token_contract` (CR #2658) so a second call in the same `begin_block`
+    /// returns `Ok(false)` after the first install.
+    fn ensure_sov_native_contract_in_store(
+        &self,
+        store: &dyn crate::storage::BlockchainStore,
+    ) -> Result<bool> {
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::storage::TokenId;
+
+        let token_id = TokenId::new(generate_lib_token_id());
+        if store
+            .get_token_contract(&token_id)
+            .map_err(|e| anyhow::anyhow!("genesis SOV contract read failed: {}", e))?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let contract = crate::contracts::TokenContract::new_sov_native();
+        store
+            .put_token_contract(&contract)
+            .map_err(|e| anyhow::anyhow!("genesis SOV contract install failed: {}", e))?;
+        info!("Genesis: installed SOV native token contract in sled");
+        Ok(true)
+    }
+
     /// Persist genesis SOV allocations into sled (startup / no active tx).
     /// Idempotent: only fills addresses missing from `token_balances`.
     pub fn credit_sov_allocations_to_store(
@@ -716,6 +783,9 @@ impl GenesisConfig {
     }
 
     /// Persist genesis SOV allocations during an open block/metadata transaction.
+    ///
+    /// Prefer [`Self::project_chain_bootstrap_to_store`] at block 0 — it also installs
+    /// the SOV native contract shell.
     ///
     /// Idempotent for block-0 replay: skips any address whose sled balance is
     /// already non-zero. That is correct because (a) a fresh wipe has zero
