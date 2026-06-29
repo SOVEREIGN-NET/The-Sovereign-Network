@@ -97,6 +97,52 @@ After wipe + replay to height `H`:
 3. BUBL treasury from `TokenCreation` replay if deployed before `H`
 4. No `Insufficient token balance` in executor at g4 checkpoint (~74010)
 
+### CI gate (synthetic)
+
+```bash
+./scripts/validate-genesis-replay-gate.sh
+```
+
+Runs `lib-blockchain/tests/g4_replay_acceptance_tests.rs`:
+
+- `test_genesis_bootstrap_checkpoint_balances` — SOV contract shell, ≥3 genesis `sov_balances`, CBE 20B treasury after block-0 bootstrap
+- `test_genesis_bootstrap_wipe_replay_parity` — live import → export → fresh sled → `import_blocks` (genesis bootstrap path); asserts SOV sample wallets + CBE treasury parity
+
+Failures print `token_id`, `address`, `have`, `need` via `common/replay_gate.rs`.
+
+### Manual g4 fixture (≥74010)
+
+1. On a live validator with sled, export blocks `0..=H` (bincode `Vec<Block>`):
+
+   ```ignore
+   // ChainSync::export_blocks(0, H) on the node store → write blocks.bin
+   ```
+
+2. Capture checkpoint snapshot JSON (`ReplayCheckpointSnapshot` in `lib-blockchain/tests/common/replay_gate.rs`):
+
+   ```json
+   {
+     "checkpoint_height": 74010,
+     "sov_wallets": [
+       {"wallet_id": "<hex>", "balance": "<atoms>"}
+     ],
+     "cbe_treasury_balance": "<atoms>",
+     "treasury_sov_balance": "<atoms>",
+     "tolerance_atoms": 0
+   }
+   ```
+
+3. Run the ignored test:
+
+   ```bash
+   export G4_REPLAY_BLOCKS_PATH=/path/to/blocks.bin
+   export G4_REPLAY_SNAPSHOT_PATH=/path/to/checkpoint.json
+   cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
+     test_g4_checkpoint_replay_acceptance -- --ignored --nocapture
+   ```
+
+Run this gate before testnet deploy after genesis/replay changes; required before GENESIS-7 (delete seed-sled).
+
 ---
 
 ## 7. Implementation order
