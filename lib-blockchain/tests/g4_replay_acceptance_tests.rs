@@ -116,13 +116,19 @@ fn create_dao_token_transfer_tx(
 }
 
 fn build_sov_activity_chain() -> Vec<lib_blockchain::block::Block> {
+    build_sov_activity_chain_to_height(6)
+}
+
+/// Longer chain so paginated import (50 blocks/page, as in `try_initial_sync_from_peer`)
+/// spans multiple pages and exercises the continuation import path.
+fn build_sov_activity_chain_to_height(last_height: u64) -> Vec<lib_blockchain::block::Block> {
     let wallets = first_n_genesis_sov_wallets(3);
     let genesis = genesis_block();
     let mut blocks = vec![genesis.clone()];
     let mut prev = genesis.header.block_hash;
     let mut sender_nonce = [0u64; 3];
 
-    for height in 1..=6 {
+    for height in 1..=last_height {
         let from_idx = (height as usize - 1) % wallets.len();
         let to_idx = height as usize % wallets.len();
         let nonce = sender_nonce[from_idx];
@@ -133,6 +139,16 @@ fn build_sov_activity_chain() -> Vec<lib_blockchain::block::Block> {
         prev = block.header.block_hash;
     }
     blocks
+}
+
+/// Mirrors production `BLOCKS_PER_PAGE` in `zhtp::runtime::try_initial_sync_from_peer`.
+const INITIAL_SYNC_PAGE_SIZE: usize = 50;
+
+fn import_blocks_paginated(sync: &ChainSync, blocks: Vec<lib_blockchain::block::Block>) {
+    for chunk in blocks.chunks(INITIAL_SYNC_PAGE_SIZE) {
+        sync.import_blocks(chunk.to_vec())
+            .expect("paginated import must not hit Insufficient token balance");
+    }
 }
 
 fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTokenExpectation) {
@@ -217,6 +233,48 @@ fn run_wipe_replay_parity(
 fn test_sov_native_wipe_replay_parity() {
     let sample = first_n_genesis_sov_wallets(3);
     run_wipe_replay_parity(build_sov_activity_chain(), 6, &sample, &[]);
+}
+
+/// Paginated fresh sync must match single-shot wipe-and-replay (g4 page-2+ bug class).
+#[test]
+fn test_paginated_fresh_sync_replay_parity() {
+    const CHECKPOINT: u64 = 60;
+    let sample = first_n_genesis_sov_wallets(3);
+    let blocks = build_sov_activity_chain_to_height(CHECKPOINT);
+
+    let live_dir = TempDir::new().expect("live tempdir");
+    let live_store = open_fresh_store(&live_dir);
+    let live_sync = ChainSync::new(Arc::clone(&live_store));
+    live_sync
+        .import_blocks(blocks.clone())
+        .expect("live single-shot import");
+
+    let reference = ReplayCheckpointSnapshot::from_store_at_height(
+        &*live_store,
+        CHECKPOINT,
+        &sample,
+        &[],
+    );
+
+    let replay_dir = TempDir::new().expect("replay tempdir");
+    let replay_store = open_fresh_store(&replay_dir);
+    let replay_sync = ChainSync::new(Arc::clone(&replay_store));
+    import_blocks_paginated(&replay_sync, blocks);
+
+    assert_eq!(
+        replay_store.latest_height().expect("paginated replay height"),
+        CHECKPOINT
+    );
+
+    let replayed = ReplayCheckpointSnapshot::from_store_at_height(
+        &*replay_store,
+        CHECKPOINT,
+        &sample,
+        &[],
+    );
+    compare_snapshots("paginated-fresh-sync", &reference, &replayed).expect(
+        "paginated import must match single-shot live reference",
+    );
 }
 
 /// DAO `TokenCreation` + custom-token transfer replay parity (BUBL class — g4-adjacent).
@@ -333,4 +391,28 @@ fn test_g4_checkpoint_replay_acceptance() {
     reference
         .assert_matches_store(&*replay_store, "g4-checkpoint")
         .expect("g4 checkpoint balance parity");
+}
+
+/// Manual g4 gate via paginated import (production `try_initial_sync_from_peer` path).
+#[test]
+#[ignore = "manual g4 paginated fixture — same env vars as test_g4_checkpoint_replay_acceptance"]
+fn test_g4_checkpoint_paginated_replay_acceptance() {
+    let blocks_path = std::env::var("G4_REPLAY_BLOCKS_PATH")
+        .expect("G4_REPLAY_BLOCKS_PATH must point to blocks.v1.bin fixture");
+    let snapshot_path = std::env::var("G4_REPLAY_SNAPSHOT_PATH")
+        .expect("G4_REPLAY_SNAPSHOT_PATH must point to checkpoint.json");
+
+    let reference =
+        ReplayCheckpointSnapshot::load_json(snapshot_path.as_ref()).expect("load snapshot");
+    let blocks = load_blocks_fixture(blocks_path.as_ref()).expect("load block fixture");
+
+    let replay_dir = TempDir::new().expect("replay tempdir");
+    let replay_store = open_fresh_store(&replay_dir);
+    let replay_sync = ChainSync::new(Arc::clone(&replay_store));
+
+    import_blocks_paginated(&replay_sync, blocks);
+
+    reference
+        .assert_matches_store(&*replay_store, "g4-checkpoint-paginated")
+        .expect("paginated g4 checkpoint balance parity");
 }

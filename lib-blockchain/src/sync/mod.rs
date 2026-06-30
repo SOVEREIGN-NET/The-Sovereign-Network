@@ -5,9 +5,8 @@
 //!
 //! # Design Principles
 //!
-//! 1. **Import uses executor by default** - Standard imports go through `BlockExecutor::apply_block`
-//! 2. **Canonical fallback for Contract/DAO txs** - Imports containing `Contract*`/`Dao*`
-//!    transactions replay via canonical `Blockchain` runtime path
+//! 1. **Genesis bootstrap (h=0)** - Block 0 via executor, blocks 1+ via canonical runtime
+//! 2. **Continuation (h≥1)** - Always canonical `Blockchain` runtime (matches live validators)
 //! 3. **No direct state writes** - Import never writes directly to store
 //! 4. **Atomic failure** - If any block fails, stop immediately; state reflects last committed block
 //! 5. **Deterministic** - Same blocks always produce same state
@@ -247,66 +246,13 @@ impl ChainSync {
             return self.import_blocks_from_genesis_bootstrap(blocks, on_progress);
         }
 
-        if Self::requires_canonical_runtime_import(&blocks) {
-            return self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress));
-        }
-
-        let executor = BlockExecutor::from_config_trusted_replay(
-            Arc::clone(&self.store),
-            self.executor_config.clone(),
-        );
-
-        // Track last committed block hash for chain continuity validation.
-        // The executor uses trusted replay (skip_prev_hash_validation=true),
-        // so ChainSync must enforce previous_hash continuity itself.
-        let mut prev_block_hash: Option<[u8; 32]> = if expected_start > 0 {
-            self.store
-                .get_block_hash_by_height(expected_start - 1)?
-                .map(|bh| *bh.as_bytes())
-        } else {
-            None
-        };
-
-        let mut imported_count = 0;
-        let mut last_height = None;
-
-        for block in blocks {
-            let height = block.header.height;
-
-            // Validate previous_hash chain continuity (non-genesis blocks)
-            if height > 0 {
-                if let Some(expected_prev) = prev_block_hash {
-                    if block.header.previous_hash != expected_prev {
-                        use lib_types::primitives::BlockHash;
-                        return Err(SyncError::BlockApplyFailed {
-                            height,
-                            error: BlockApplyError::InvalidPreviousHash {
-                                expected: BlockHash::new(expected_prev),
-                                actual: BlockHash::new(block.header.previous_hash),
-                            },
-                        });
-                    }
-                }
-            }
-
-            // Apply block through executor
-            // This handles: prechecks, begin_block, apply txs, append_block, commit_block
-            // On error: automatic rollback, state unchanged from before begin_block
-            executor
-                .apply_block(&block)
-                .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
-
-            prev_block_hash = Some(block.header.block_hash.as_array());
-
-            imported_count += 1;
-            last_height = Some(height);
-            on_progress(height, imported_count);
-        }
-
-        Ok(ImportResult {
-            blocks_imported: imported_count,
-            final_height: last_height,
-        })
+        // Blocks 1+ must replay through canonical `Blockchain` runtime to match
+        // live-validator `process_and_commit_block` / `finish_block_processing`.
+        // Executor-only `apply_block` skips finish_block hooks and breaks wallet
+        // projection parity (g4 @ h=74010). Paginated initial sync (50 blocks/page
+        // in `try_initial_sync_from_peer`) lands here on page 2+ — unconditional
+        // canonical import is required for wipe-and-replay correctness.
+        self.import_blocks_via_canonical_runtime(blocks, Some(&mut on_progress))
     }
 
     /// Fresh bootstrap from genesis: executor applies block 0 (seeds genesis SOV to

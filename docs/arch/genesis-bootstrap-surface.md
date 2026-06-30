@@ -157,3 +157,5 @@ Retiring `[[allocations.sov_balances]]` (GENESIS-3 / #2731) requires a **coordin
 4. **DAO tokens** (CBE, BUBL): founding `TokenCreation` + contract deploy txs in blocks 1..k (GENESIS-6).
 
 Mainnet uses a one-shot ceremony; testnet may repeat resets until GENESIS-2 gate is green.
+
+**Operator runbook:** [`docs/protocol/genesis-3-testnet-reset.md`](../protocol/genesis-3-testnet-reset.md)
