@@ -40,6 +40,7 @@ serde = { version = "1.0", features = ["derive"] }
 blake3 = "1"
 serde_json = "1"
 dirs = "5"
+tempfile = "3"
 
 [[bin]]
 name = "regen_cbe_key"
@@ -48,3 +49,7 @@ path = "regen_cbe_key.rs"
 [[bin]]
 name = "export_replay_fixture"
 path = "export_replay_fixture.rs"
+
+[[bin]]
+name = "replay_divergence"
+path = "replay_divergence.rs"

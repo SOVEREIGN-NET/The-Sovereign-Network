@@ -7,6 +7,12 @@
 //! These do **not** replace the manual g4 fixture at ≥74k — they regression-test replay mechanics
 //! that g4's failure class depends on. Empirical g4 parity requires `test_g4_checkpoint_replay_acceptance`.
 //!
+//! **Forensics @ h=74010 (wallet `0e2962d5…`):** current executor replay ends at **4100 SOV**
+//! before the canonical **4150 SOV** self-transfer (`test_g4_wallet74010_sequence_isolated_replay`).
+//! Live g1 applied that tx (sled nonce=4 at tip). The 50 SOV gap matches the h=73982 self-transfer
+//! amount — pre-reset testnet state was built under older write paths; wipe-and-replay with today's
+//! sled-canonical executor cannot re-derive it. **GENESIS-3 reset** is the clean gate, not a 74k replay patch.
+//!
 //! ## Manual g4 fixture
 //! ```bash
 //! cargo run -p tools --bin export_replay_fixture -- /opt/zhtp/data/testnet/sled /tmp/g4 --to-height 74010
@@ -24,7 +30,9 @@ use lib_blockchain::storage::{Address, TokenId};
 use lib_blockchain::sync::G4_CHECKPOINT_HEIGHT_FLOOR;
 use lib_blockchain::transaction::{
     token_creation::TokenCreationPayloadV1, TokenTransferData, Transaction, TransactionPayload,
+    WalletTransactionData,
 };
+use lib_blockchain::types::Hash;
 use lib_blockchain::transaction::DEFAULT_TOKEN_CREATION_FEE;
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::Blockchain;
@@ -32,7 +40,7 @@ use tempfile::TempDir;
 
 mod common;
 use common::block_builders::{block_at_height_with_txs, genesis_block};
-use common::crypto_fixtures::dummy_signature;
+use common::crypto_fixtures::{dummy_public_key, dummy_signature};
 use common::replay_gate::{
     bubl_like_token_id, cbe_treasury_address, compare_snapshots, first_n_genesis_sov_wallets,
     load_blocks_fixture, open_fresh_store, DaoTokenExpectation, ReplayCheckpointSnapshot,
@@ -40,9 +48,46 @@ use common::replay_gate::{
 
 use lib_blockchain::sync::ChainSync;
 
-fn create_sov_transfer_tx(from: [u8; 32], to: [u8; 32], amount: u128, nonce: u64) -> Transaction {
+fn create_wallet_registration_tx(wallet_id: [u8; 32], initial_balance: u128) -> Transaction {
+    let owner = dummy_public_key();
     Transaction {
-        version: 1,
+        version: 8,
+        chain_id: 0x03,
+        transaction_type: TransactionType::WalletRegistration,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: dummy_signature(),
+        memo: vec![],
+        payload: TransactionPayload::Wallet(WalletTransactionData {
+            wallet_id: Hash::new(wallet_id),
+            owner_identity_id: None,
+            alias: None,
+            wallet_name: "g4-repro".to_string(),
+            wallet_type: "Primary".to_string(),
+            public_key: owner.dilithium_pk.to_vec(),
+            capabilities: 0,
+            created_at: 0,
+            registration_fee: 0,
+            initial_balance,
+            seed_commitment: Hash::zero(),
+        }),
+    }
+}
+
+fn create_sov_transfer_tx(from: [u8; 32], to: [u8; 32], amount: u128, nonce: u64) -> Transaction {
+    create_sov_transfer_tx_version(from, to, amount, nonce, 8u32)
+}
+
+fn create_sov_transfer_tx_version(
+    from: [u8; 32],
+    to: [u8; 32],
+    amount: u128,
+    nonce: u64,
+    version: u32,
+) -> Transaction {
+    Transaction {
+        version,
         chain_id: 0x03,
         transaction_type: TransactionType::TokenTransfer,
         inputs: vec![],
@@ -226,6 +271,132 @@ fn run_wipe_replay_parity(
     compare_snapshots("wipe-and-replay", &reference, &replayed).expect(
         "replay checkpoint must match live reference — see token_id/address/have/need above",
     );
+}
+
+/// Isolated repro of g4 wallet `0e2962d5…` activity through the failing h=74010 tx.
+/// Pins current executor semantics without replaying 74k prefix blocks.
+#[test]
+fn test_g4_wallet74010_sequence_isolated_replay() {
+    const ATOMS: u128 = 1_000_000_000_000_000_000;
+    let wallet: [u8; 32] =
+        hex::decode("0e2962d527220810ffe8c78ae3290fdf37b25f9bbba1c9a69eac612193db78ab")
+            .expect("wallet hex")
+            .try_into()
+            .expect("wallet len");
+    let recipient: [u8; 32] =
+        hex::decode("7beb2195d122ffa72b4cb124125c30eb540a19a36b69a143ff2b25c2bd32f3b7")
+            .expect("recipient hex")
+            .try_into()
+            .expect("recipient len");
+
+    let genesis = genesis_block();
+    let mut prev = genesis.header.block_hash;
+    let h1 = block_at_height_with_txs(
+        1,
+        prev,
+        vec![create_wallet_registration_tx(wallet, 5000 * ATOMS)],
+    );
+    prev = h1.header.block_hash;
+    let h2 = block_at_height_with_txs(
+        2,
+        prev,
+        vec![create_sov_transfer_tx(wallet, wallet, 50 * ATOMS, 0)],
+    );
+    prev = h2.header.block_hash;
+    let h3 = block_at_height_with_txs(
+        3,
+        prev,
+        vec![create_sov_transfer_tx(wallet, recipient, 900 * ATOMS, 1)],
+    );
+    prev = h3.header.block_hash;
+    let h4 = block_at_height_with_txs(
+        4,
+        prev,
+        vec![create_sov_transfer_tx(wallet, wallet, 4150 * ATOMS, 2)],
+    );
+
+    let dir = TempDir::new().expect("tempdir");
+    let store = open_fresh_store(&dir);
+    let sync = ChainSync::new(Arc::clone(&store));
+
+    sync.import_blocks(vec![genesis, h1, h2, h3])
+        .expect("import through outbound transfer");
+
+    let sov = TokenId::new(generate_lib_token_id());
+    let bal = store
+        .get_token_balance(&sov, &Address::new(wallet))
+        .expect("read balance");
+    assert_eq!(
+        bal, 4100 * ATOMS,
+        "after 5000 mint, zero-net 50 self-transfer, 900 outbound: have {bal}"
+    );
+    let nonce = store
+        .get_token_nonce(&sov, &Address::new(wallet))
+        .expect("read nonce");
+    assert_eq!(nonce, 2, "outbound transfer must advance nonce to 2 before final leg");
+
+    let err = sync
+        .import_blocks(vec![h4])
+        .expect_err("4150 self-transfer must fail — 50 SOV short of g4 canonical block");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("Insufficient token balance") || msg.contains("InsufficientBalance"),
+        "expected balance error, got: {msg}"
+    );
+}
+
+/// Fixture uses tx version 8 — confirm version is not the replay/live divergence.
+#[test]
+fn test_g4_wallet74010_sequence_tx_version_eight() {
+    const ATOMS: u128 = 1_000_000_000_000_000_000;
+    let wallet: [u8; 32] =
+        hex::decode("0e2962d527220810ffe8c78ae3290fdf37b25f9bbba1c9a69eac612193db78ab")
+            .expect("wallet hex")
+            .try_into()
+            .expect("wallet len");
+    let recipient: [u8; 32] =
+        hex::decode("7beb2195d122ffa72b4cb124125c30eb540a19a36b69a143ff2b25c2bd32f3b7")
+            .expect("recipient hex")
+            .try_into()
+            .expect("recipient len");
+
+    let genesis = genesis_block();
+    let mut prev = genesis.header.block_hash;
+    let h1 = block_at_height_with_txs(
+        1,
+        prev,
+        vec![create_wallet_registration_tx(wallet, 5000 * ATOMS)],
+    );
+    prev = h1.header.block_hash;
+    let h2 = block_at_height_with_txs(
+        2,
+        prev,
+        vec![create_sov_transfer_tx_version(wallet, wallet, 50 * ATOMS, 0, 8u32)],
+    );
+    prev = h2.header.block_hash;
+    let h3 = block_at_height_with_txs(
+        3,
+        prev,
+        vec![create_sov_transfer_tx_version(wallet, recipient, 900 * ATOMS, 1, 8u32)],
+    );
+    prev = h3.header.block_hash;
+    let h4 = block_at_height_with_txs(
+        4,
+        prev,
+        vec![create_sov_transfer_tx_version(wallet, wallet, 4150 * ATOMS, 2, 8u32)],
+    );
+
+    let dir = TempDir::new().expect("tempdir");
+    let store = open_fresh_store(&dir);
+    let sync = ChainSync::new(Arc::clone(&store));
+    sync.import_blocks(vec![genesis, h1, h2, h3])
+        .expect("import through outbound transfer");
+    let sov = TokenId::new(generate_lib_token_id());
+    let bal = store
+        .get_token_balance(&sov, &Address::new(wallet))
+        .expect("balance");
+    assert_eq!(bal, 4100 * ATOMS);
+    assert!(sync.import_blocks(vec![h4]).is_err());
 }
 
 /// SOV-native genesis bootstrap + SOV transfer replay parity (#2725 / #2741 fix class).
