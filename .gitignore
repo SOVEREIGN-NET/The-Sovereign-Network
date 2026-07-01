@@ -152,6 +152,8 @@ tools/sled-identity-export/state-snapshot.json
 
 # Sensitive keys — NEVER commit
 keys/
+zhtp-testnet-vault/
+ops-credentials/
 tmp/keystore*
 tmp/zhtp-keystore*
 *.zkdid.json
