@@ -145,6 +145,23 @@ impl std::error::Error for ValidationError {}
 pub type ValidationResult = Result<(), ValidationError>;
 
 /// Transaction validator with state context
+
+/// Returns true when a system transaction must still carry a valid signature.
+fn requires_system_tx_signature(transaction: &Transaction) -> bool {
+    matches!(
+        transaction.transaction_type,
+        TransactionType::WalletRegistration
+            | TransactionType::IdentityRegistration
+            | TransactionType::DomainRegistration
+            | TransactionType::DomainUpdate
+            | TransactionType::TokenMint
+            | TransactionType::InitEntityRegistry
+            | TransactionType::TokenCreation
+            | TransactionType::WalletUpdate
+    ) || (transaction.transaction_type == TransactionType::Transfer
+        && (!transaction.outputs.is_empty() || transaction.fee > 0))
+}
+
 pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
     // blockchain state, UTXO set, nullifier set, etc.
@@ -592,14 +609,8 @@ impl TransactionValidator {
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals; the
         //   transaction-level signature may be empty/dummy on these types.
-        let require_signature = !is_system_transaction
-            || matches!(
-                transaction.transaction_type,
-                TransactionType::WalletUpdate
-                    | TransactionType::TokenMint
-                    | TransactionType::TokenCreation
-                    | TransactionType::InitEntityRegistry
-            );
+        let require_signature =
+            !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         // Skip tx-level sig validation for threshold-approval-only types
         let is_threshold_only = matches!(
@@ -890,14 +901,8 @@ impl TransactionValidator {
         //   This prevents malformed signatures (wrong size, invalid bytes) from passing
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals.
-        let require_signature = !is_system_transaction
-            || matches!(
-                transaction.transaction_type,
-                TransactionType::WalletUpdate
-                    | TransactionType::TokenMint
-                    | TransactionType::TokenCreation
-                    | TransactionType::InitEntityRegistry
-            );
+        let require_signature =
+            !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         let is_threshold_only_sflag = matches!(
             transaction.transaction_type,
@@ -2348,11 +2353,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         // Signature validation (always required except for system transactions)
         // TokenMint and InitEntityRegistry are system for fee purposes but MUST still be signed.
         // RecordOnRampTrade and TreasuryAllocation use threshold approvals — skip tx-level sig.
-        let mut skip_signature = is_system_transaction
-            && !matches!(
-                transaction.transaction_type,
-                TransactionType::TokenMint | TransactionType::InitEntityRegistry
-            );
+        let mut skip_signature =
+            is_system_transaction && !requires_system_tx_signature(transaction);
         // Always skip tx-level signature for threshold-approval-only types
         if is_threshold_type {
             skip_signature = true;
