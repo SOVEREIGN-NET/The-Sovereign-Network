@@ -81,7 +81,7 @@ jni = "0.21"
 # WASM: Pure Rust PQC implementations
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 crystals-dilithium = "1.0"
-pqc_kyber = { version = "0.7", features = ["kyber1024"] }
+pqc_kyber_edit = { version = "0.7", features = ["kyber1024"] }
 
 # WASM (optional, for web)
 wasm-bindgen = { version = "0.2", optional = true }

@@ -1260,6 +1260,29 @@ impl DomainRegistry {
         })
     }
 
+    /// Hex-encoded Dilithium5 detached signatures are 4595 bytes → 9190 hex chars.
+    const DILITHIUM5_HEX_SIGNATURE_LEN: usize = 9190;
+
+    /// Reject missing or malformed owner signatures before mutating domain state.
+    fn validate_domain_owner_signature(signature: &str) -> Option<String> {
+        if signature.is_empty() {
+            return Some(
+                "Domain update requires a valid signature from the domain owner".to_string(),
+            );
+        }
+        if signature.len() < Self::DILITHIUM5_HEX_SIGNATURE_LEN {
+            return Some(format!(
+                "Invalid signature length: {} chars (expected at least {} for Dilithium5)",
+                signature.len(),
+                Self::DILITHIUM5_HEX_SIGNATURE_LEN
+            ));
+        }
+        if !signature.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some("Invalid signature: must be hex-encoded Dilithium5 bytes".to_string());
+        }
+        None
+    }
+
     /// Update domain with new manifest (atomic compare-and-swap)
     pub async fn update_domain(
         &self,
@@ -1316,8 +1339,19 @@ impl DomainRegistry {
             });
         }
 
-        // TODO: Verify signature matches domain owner
-        // For now, we trust the caller has verified authorization
+        if let Some(error) = Self::validate_domain_owner_signature(&update_request.signature) {
+            return Ok(DomainUpdateResponse {
+                success: false,
+                new_version: 0,
+                new_manifest_cid: String::new(),
+                previous_manifest_cid: String::new(),
+                updated_at: 0,
+                error: Some(error),
+            });
+        }
+
+        // TODO: Cryptographic verify signature over (domain, new_cid, expected_prev, timestamp)
+        // against record.owner's registered Dilithium public key.
 
         let previous_manifest_cid = record.current_web4_manifest_cid.clone();
         let new_version = record.version + 1;
@@ -1567,7 +1601,7 @@ impl DomainRegistry {
             domain: domain.to_string(),
             new_manifest_cid: target_cid,
             expected_previous_manifest_cid: current_cid,
-            signature: String::new(), // TODO: Require signature
+            signature: String::new(), // Caller must supply owner signature (validated in update_domain)
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
@@ -1641,6 +1675,10 @@ mod tests {
     use lib_identity::{IdentityType, ZhtpIdentity};
     use std::sync::RwLock as StdRwLock;
     use tempfile::TempDir;
+
+    fn test_dilithium_hex_signature() -> String {
+        "ab".repeat(DomainRegistry::DILITHIUM5_HEX_SIGNATURE_LEN / 2)
+    }
 
     /// Test storage implementation that actually persists data in memory
     #[derive(Clone, Default)]
@@ -1832,12 +1870,17 @@ mod tests {
         let owner = create_test_identity();
         let domain_name = "updatetest.zhtp";
         let initial_manifest_cid: String;
-        let updated_manifest_cid = "bafknewmanifest123456".to_string();
+        let updated_manifest_cid: String;
 
         // Create registry, register domain, then update it
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
             let registry = DomainRegistry::new(storage).await.unwrap();
+
+            updated_manifest_cid = registry
+                .store_content_by_cid(br#"{"files":[]}"#.to_vec())
+                .await
+                .unwrap();
 
             // Register domain
             let registration_proof = ZeroKnowledgeProof::new(
@@ -1887,7 +1930,7 @@ mod tests {
                 domain: domain_name.to_string(),
                 new_manifest_cid: updated_manifest_cid.clone(),
                 expected_previous_manifest_cid: initial_manifest_cid.clone(),
-                signature: String::new(),
+                signature: test_dilithium_hex_signature(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

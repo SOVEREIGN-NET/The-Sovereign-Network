@@ -9,7 +9,8 @@ repository = "https://github.com/SOVEREIGN-NETWORK/ZHTPDEV"
 [dependencies]
 # Post-quantum cryptography (NIST standardized CRYSTALS)
 crystals-dilithium = "1.0"
-pqc_kyber = { version = "0.7", features = ["kyber1024"] }
+# RUSTSEC-2023-0079 (KyberSlash): pqc_kyber_edit contains the patched Kyber implementation
+pqc_kyber_edit = { version = "0.7", features = ["kyber1024"] }
 
 # Classical cryptography for compatibility (but identities use pure PQC)
 ed25519-dalek = { version = "2.0", features = ["rand_core"] }

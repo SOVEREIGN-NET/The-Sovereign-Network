@@ -46,13 +46,26 @@ mod key_rotation_policy_tests {
     fn test_key_rotation_policy_constant() {
         assert_eq!(KEY_ROTATION_POLICY, "no_rotation");
     }
+
+    #[test]
+    fn from_private_key_signs_with_stored_material() -> Result<()> {
+        let keypair = KeyPair::generate()?;
+        let derived = KeyPair::from_private_key(&keypair.private_key)?;
+        let message = b"caller-key-bind-test";
+        let signature = derived.sign(message)?;
+        assert!(derived.public_key.verify(message, &signature)?);
+
+        let other = KeyPair::generate()?;
+        assert!(!other.public_key.verify(message, &signature)?);
+        Ok(())
+    }
 }
 
 use crate::types::{PrivateKey, PublicKey};
 use anyhow::Result;
 use blake3::Hasher as Blake3Hasher;
 use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
-use pqc_kyber;
+use pqc_kyber_edit as pqc_kyber;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
@@ -120,6 +133,53 @@ impl KeyPair {
         keypair.validate()?;
 
         Ok(keypair)
+    }
+
+    /// Build a signing keypair from stored Dilithium private key material.
+    ///
+    /// Used when the caller already holds a `PrivateKey` (keystore, identity store)
+    /// and must sign with that key — not a freshly generated one.
+    pub fn from_private_key(private_key: &PrivateKey) -> Result<Self> {
+        if private_key.dilithium_sk.iter().all(|&x| x == 0) {
+            return Err(anyhow::anyhow!("Invalid Dilithium private key: all zeros"));
+        }
+
+        let dilithium_pk = private_key.dilithium_pk;
+        let key_id = crate::hash_blake3(&dilithium_pk);
+
+        Ok(Self {
+            private_key: private_key.clone(),
+            public_key: PublicKey {
+                dilithium_pk,
+                kyber_pk: [0u8; 1568],
+                key_id,
+            },
+        })
+    }
+
+    /// Build a signing keypair from raw Dilithium key byte slices (identity store layout).
+    pub fn from_dilithium_bytes(secret_key: &[u8], public_key: &[u8]) -> Result<Self> {
+        if secret_key.is_empty() || secret_key.iter().all(|&x| x == 0) {
+            return Err(anyhow::anyhow!("Invalid Dilithium secret key"));
+        }
+        if public_key.is_empty() {
+            return Err(anyhow::anyhow!("Invalid Dilithium public key"));
+        }
+
+        let mut dilithium_sk = [0u8; 4896];
+        let sk_len = secret_key.len().min(4896);
+        dilithium_sk[..sk_len].copy_from_slice(&secret_key[..sk_len]);
+
+        let mut dilithium_pk = [0u8; 2592];
+        let pk_len = public_key.len().min(2592);
+        dilithium_pk[..pk_len].copy_from_slice(&public_key[..pk_len]);
+
+        Self::from_private_key(&PrivateKey {
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk: [0u8; 3168],
+            master_seed: [0u8; 64],
+        })
     }
 
     /// Validate that the keypair is properly formed and secure

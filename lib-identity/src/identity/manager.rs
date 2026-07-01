@@ -1019,42 +1019,20 @@ impl IdentityManager {
 
         let message_to_sign = [data, identity_id.0.as_slice(), &timestamp.to_le_bytes()].concat();
 
-        // Generate quantum-resistant signature using CRYSTALS-Dilithium approach
-        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
-        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
-        let signature_seed = lib_crypto::hash_blake3(
-            &[
-                private_data.private_key(),
-                &derived_seed.to_vec(),
-                &message_to_sign,
-            ]
-            .concat(),
-        );
+        let keypair = lib_crypto::KeyPair::from_dilithium_bytes(
+            private_data.private_key(),
+            private_data.public_key(),
+        )
+        .map_err(|e| anyhow!("Failed to load identity signing key: {}", e))?;
 
-        // Create the signature using proper post-quantum methods
-        let signature_bytes =
-            lib_crypto::hash_blake3(&[signature_seed.as_slice(), &message_to_sign].concat());
-
-        // FIXME: This function creates fake signatures using hashing instead of real Dilithium signing.
-        // It needs to be rewritten to use the actual Dilithium private key for signing.
-        // For now, we create properly-sized zero arrays to satisfy type requirements.
-        
-        // Create key ID from identity
-        let mut key_id = [0u8; 32];
-        key_id.copy_from_slice(&identity_id.0);
-
-        // FIXME: These should be real Dilithium5 keys from the identity's keypair
-        let dilithium_pk = [0u8; 2592];
-        let kyber_pk = [0u8; 1568];
+        let signature = keypair
+            .sign(&message_to_sign)
+            .map_err(|e| anyhow!("Dilithium5 signing failed: {}", e))?;
 
         Ok(PostQuantumSignature {
-            signature: signature_bytes.to_vec(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk,
-                kyber_pk,
-                key_id,
-            },
-            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT, // Updated to match consensus
+            signature: signature.signature,
+            public_key: signature.public_key,
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
             timestamp,
         })
     }

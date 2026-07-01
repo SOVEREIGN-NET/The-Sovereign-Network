@@ -3440,7 +3440,7 @@ dependencies = [
  "lib-network",
  "lib-protocols",
  "opaque-ke",
- "pqc_kyber",
+ "pqc_kyber_edit",
  "pqcrypto-kyber",
  "pqcrypto-traits",
  "quinn",
@@ -3575,7 +3575,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hkdf",
- "pqc_kyber",
+ "pqc_kyber_edit",
  "rand 0.8.5",
  "serde",
  "sha3",
@@ -3735,7 +3735,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "parking_lot 0.12.5",
- "pqc_kyber",
+ "pqc_kyber_edit",
  "quick-xml 0.31.0",
  "quinn",
  "rand 0.8.5",
@@ -5123,10 +5123,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "pqc_kyber"
-version = "0.7.1"
+name = "pqc_kyber_edit"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b23e1823e8a78ad67990c5cb843d5eba75ab3b8a44d041f3814fde89463dc6f"
+checksum = "90af5ab02bb265c976d2f0de25fa35a70dec379fee21d509a8bbd9a606054bc0"
 dependencies = [
  "rand_core 0.6.4",
 ]

@@ -36,15 +36,12 @@ pub fn sign_transaction(
     // Create signing hash (without existing signature)
     let signing_hash = crate::transaction::hashing::hash_for_signature(transaction);
 
-    // Create a keypair from the provided private key for signing
-    // TODO: In a proper implementation, would construct keypair from the provided private_key
-    // For now, we use the private_key validation but generate a new keypair
-    if private_key.dilithium_sk.is_empty() {
+    if private_key.dilithium_sk.iter().all(|&x| x == 0) {
         return Err(SigningError::InvalidPrivateKey);
     }
 
-    let keypair =
-        lib_crypto::KeyPair::generate().map_err(|e| SigningError::CryptoError(e.to_string()))?;
+    let keypair = lib_crypto::KeyPair::from_private_key(private_key)
+        .map_err(|e| SigningError::CryptoError(e.to_string()))?;
 
     // Sign the hash using the keypair and transaction context
     let signature = keypair

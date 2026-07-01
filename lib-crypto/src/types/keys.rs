@@ -332,7 +332,7 @@ impl PrivateKey {
 // ============================================================================
 
 #[cfg(test)]
-mod tests {
+mod timing_resistance_tests {
     use super::*;
 
     #[test]
