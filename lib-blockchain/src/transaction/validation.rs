@@ -8,6 +8,7 @@ use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
+use crate::transaction::mint_authorization::validate_token_mint_authorization;
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
     decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -3268,38 +3269,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         transaction: &Transaction,
     ) -> ValidationResult {
         let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
-        let mint_data = transaction
-            .token_mint_data()
-            .ok_or(ValidationError::MissingRequiredData)?;
-
-        // SOV mints currently use dedicated consensus paths and are handled separately.
-        let is_sov = mint_data.token_id == [0u8; 32]
-            || mint_data.token_id == crate::contracts::utils::generate_lib_token_id();
-        if is_sov {
-            return Ok(());
-        }
-
-        // Preserve existing execution semantics for UBI and migration flows.
-        let memo_str = std::str::from_utf8(&transaction.memo).ok();
-        let is_ubi_mint = memo_str
-            .map(|memo| memo.starts_with("UBI_DISTRIBUTION_V1:"))
-            .unwrap_or(false);
-        let is_migration = memo_str
-            .map(|memo| memo.starts_with("TOKEN_MIGRATE_V1:"))
-            .unwrap_or(false);
-
-        let token = blockchain
-            .token_contracts
-            .get(&mint_data.token_id)
-            .ok_or(ValidationError::InvalidTransaction)?;
-
-        if is_ubi_mint || is_migration {
-            return Ok(());
-        }
-
-        token
-            .check_mint_authorization(&transaction.signature.public_key)
-            .map_err(|_| ValidationError::InvalidTransaction)
+        validate_token_mint_authorization(blockchain, transaction)
     }
 
     /// Validate OracleAttestation transaction at block execution time (ORACLE-9).
@@ -4063,7 +4033,7 @@ mod tests {
         let validator = StatefulTransactionValidator::new(&blockchain);
         let result = validator.validate_token_mint_stateful_authorization(&tx);
         assert!(
-            matches!(result, Err(ValidationError::InvalidTransaction)),
+            matches!(result, Err(ValidationError::Unauthorized)),
             "Unauthorized mint must be rejected during stateful precheck"
         );
     }
