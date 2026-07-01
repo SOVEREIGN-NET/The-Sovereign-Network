@@ -121,6 +121,42 @@ impl TransactionBuilder {
         })
     }
 
+    /// Load the node's validator/kernel signing key for system transactions.
+    ///
+    /// Production nodes MUST have `ZHTP_KEYSTORE_DIR` (or default `node_data/keystore`)
+    /// populated with the validator private key. Under `cfg(test)` only, falls back to a
+    /// deterministic test keypair when the keystore is absent.
+    async fn load_system_keypair() -> Result<lib_crypto::KeyPair> {
+        match crate::runtime::token_utils::load_validator_keypair_from_keystore().await {
+            Ok(kp) => Ok(kp),
+            Err(e) => {
+                #[cfg(test)]
+                {
+                    tracing::warn!(
+                        "Validator keystore unavailable in test ({}); using deterministic test keypair",
+                        e
+                    );
+                    Ok(Self::deterministic_test_system_keypair())
+                }
+                #[cfg(not(test))]
+                {
+                    Err(anyhow::anyhow!(
+                        "System transaction signing requires validator keystore key: {}",
+                        e
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Deterministic test-only system keypair. NEVER used in production builds.
+    #[cfg(test)]
+    fn deterministic_test_system_keypair() -> lib_crypto::KeyPair {
+        use lib_crypto::post_quantum::dilithium5_keypair_from_entropy;
+        let (pk, sk) = dilithium5_keypair_from_entropy(b"zhtp-test-system-tx-signing-seed");
+        lib_crypto::KeyPair::from_dilithium_bytes(&sk, &pk).expect("deterministic test keypair")
+    }
+
     /// Create a proper cryptographic signature for system transactions
     async fn create_system_signature(
         economics_tx: &lib_economy::transactions::Transaction,
@@ -129,10 +165,9 @@ impl TransactionBuilder {
         tx_type: BlockchainTxType,
         environment: &crate::config::Environment,
     ) -> Result<Signature> {
-        use lib_crypto::{generate_keypair, sign_message};
+        use lib_crypto::sign_message;
 
-        // Generate a system keypair (in production, this would be a well-known system keypair)
-        let system_keypair = generate_keypair()?;
+        let system_keypair = Self::load_system_keypair().await?;
 
         // Create the transaction for signing (without signature)
         let temp_signature = Signature {
