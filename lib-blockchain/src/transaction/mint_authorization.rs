@@ -28,9 +28,7 @@ pub fn is_treasury_authorized_signer(blockchain: &Blockchain, signer: &PublicKey
 }
 
 fn is_genesis_unsigned_mint_exception(blockchain: &Blockchain, transaction: &Transaction) -> bool {
-    blockchain.height == 0
-        && blockchain.latest_block().is_none()
-        && transaction.signature.signature.is_empty()
+    blockchain.is_applying_genesis_state() && transaction.signature.signature.is_empty()
 }
 
 fn validate_ubi_distribution_memo(
@@ -234,13 +232,13 @@ mod tests {
     #[test]
     fn sov_mint_allows_genesis_unsigned_exception() {
         let mut blockchain = Blockchain::default();
-        blockchain.blocks.clear();
-        blockchain.height = 0;
+        blockchain.begin_genesis_apply();
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         let signer = test_public_key(30);
 
         let result = validate_token_mint_authorization(&blockchain, &mint_tx(&signer, sov_id, "", true));
         assert!(result.is_ok());
+        blockchain.end_genesis_apply();
     }
 
     #[test]
@@ -321,9 +319,8 @@ mod tests {
     }
 
     #[test]
-    fn genesis_exception_does_not_fire_when_blocks_present() {
-        let mut blockchain = Blockchain::default();
-        blockchain.height = 0;
+    fn genesis_exception_does_not_fire_outside_apply_genesis_state() {
+        let blockchain = Blockchain::default();
         let sov_id = crate::contracts::utils::generate_lib_token_id();
         let signer = test_public_key(44);
 
