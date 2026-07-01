@@ -11,7 +11,8 @@ use lib_access_control::{SecurityPrincipal, Role};
 use lib_types::NodeType;
 use lib_network::web4::{
     domain_signing::{
-        has_owner_signing_key, validate_domain_owner_signature_hex, verify_domain_update_signature,
+        has_owner_signing_key, validate_domain_owner_signature_hex,
+        verify_domain_registration_signature, verify_domain_update_signature,
     },
     DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
     PublicOwnerInfo,
@@ -175,6 +176,8 @@ pub struct ApiDomainTransferRequest {
     pub to_owner: String,
     /// Transfer proof
     pub transfer_proof: String,
+    /// Unix timestamp included in the transfer signing preimage
+    pub transfer_timestamp: Option<u64>,
 }
 
 /// Domain release request from API
@@ -1046,6 +1049,21 @@ impl Web4Handler {
             ));
         }
 
+        if let Some(err) = validate_domain_owner_signature_hex(&request.signature) {
+            return Err(anyhow!(err));
+        }
+        let sig_ok = verify_domain_registration_signature(
+            owner_identity.public_key.dilithium_pk.as_slice(),
+            &request.domain,
+            request.timestamp,
+            user_provided_fee,
+            &request.signature,
+        )
+        .map_err(|e| anyhow!("Manifest registration signature verification failed: {}", e))?;
+        if !sig_ok {
+            return Err(anyhow!("Manifest registration signature is invalid"));
+        }
+
         let signature_bytes = hex::decode(&request.signature)
             .map_err(|e| anyhow!("Invalid manifest registration signature hex: {}", e))?;
         let registration_proof = ZeroKnowledgeProof::new(
@@ -1187,6 +1205,11 @@ impl Web4Handler {
         // Parse request
         let api_request: ApiDomainRegistrationRequest = serde_json::from_slice(&request_body)
             .map_err(|e| anyhow!("Invalid domain registration request: {}", e))?;
+
+        return Ok(ZhtpResponse::error(
+            ZhtpStatus::BadRequest,
+            "Legacy registration_proof format is unsupported; use /register/simple or manifest-based registration with owner signature".to_string(),
+        ));
 
         // Deserialize owner identity
         let owner_identity = self
@@ -1386,18 +1409,19 @@ impl Web4Handler {
             .deserialize_identity(&api_request.to_owner)
             .map_err(|e| anyhow!("Invalid to_owner identity: {}", e))?;
 
+        if let Some(err) = validate_domain_owner_signature_hex(&api_request.transfer_proof) {
+            return Err(anyhow!(err));
+        }
         let signature_bytes = hex::decode(&api_request.transfer_proof)
             .map_err(|e| anyhow!("Invalid transfer_proof hex encoding: {}", e))?;
-        if signature_bytes.is_empty() {
-            return Err(anyhow!(
-                "Domain transfer requires a non-empty Dilithium signature in transfer_proof"
-            ));
-        }
 
+        let transfer_timestamp = api_request.transfer_timestamp.ok_or_else(|| {
+            anyhow!("Domain transfer requires transfer_timestamp for authorization freshness")
+        })?;
         let transfer_proof = lib_proofs::ZeroKnowledgeProof::new(
             "dilithium-domain-transfer".to_string(),
             signature_bytes,
-            vec![],
+            transfer_timestamp.to_le_bytes().to_vec(),
             from_owner.id.0.to_vec(),
             None,
         );
