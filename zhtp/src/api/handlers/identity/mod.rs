@@ -284,28 +284,33 @@ impl IdentityHandler {
             tracing::info!(" Creating blockchain transactions for identity and wallets");
             let did_string = format!("did:zhtp:{}", citizenship_result.identity_id);
 
-            // Create proper ownership proof by signing the DID with identity data
-            let ownership_proof_data = format!("{}:{}", did_string, citizenship_result.identity_id);
-            let ownership_proof = ownership_proof_data.as_bytes().to_vec();
+            // Use the citizen's actual key material from identity manager (not a throwaway keypair).
+            let citizen_identity = identity_manager
+                .get_identity(&citizenship_result.identity_id)
+                .ok_or_else(|| anyhow::anyhow!("Citizen identity missing after onboarding"))?;
+            let citizen_private_key = citizen_identity
+                .private_key
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Citizen private key missing after onboarding"))?;
+            let keypair = lib_crypto::KeyPair {
+                public_key: citizen_identity.public_key.clone(),
+                private_key: citizen_private_key,
+            };
+            let public_key_bytes = citizen_identity.public_key.dilithium_pk.to_vec();
+            let ownership_proof = citizen_identity.ownership_proof.proof_data.clone();
 
             let identity_transaction_data = IdentityTransactionData::new(
                 did_string.clone(),
-                citizenship_result.identity_id.to_string(),
-                citizenship_result.primary_wallet_id.as_bytes().to_vec(), // public key
-                ownership_proof,                                          // proper ownership proof
+                req_data.display_name.clone(),
+                public_key_bytes,
+                ownership_proof,
                 "human".to_string(),
                 Hash::default(), // DID document hash
                 0,               // registration fee - system transactions are fee-free
                 0,               // DAO fee - system transactions are fee-free
             );
 
-            // Create proper cryptographic signature for blockchain transaction
-            // The signature must be over the transaction hash, not arbitrary data
-            use lib_crypto::{generate_keypair, sign_message};
-
-            // Generate a temporary keypair (in production, use citizen's actual keypair)
-            let keypair = generate_keypair()
-                .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {}", e))?;
+            use lib_crypto::sign_message;
 
             // ========================================================================
             // CRITICAL FIX: Create welcome bonus UTXO output (5,000 SOV)
@@ -344,37 +349,33 @@ impl IdentityHandler {
 
             let outputs = vec![welcome_bonus_output];
 
-            // Create transaction WITHOUT signature first to get the hash for signing
+            // Build unsigned skeleton, then sign with signing_hash() (canonical validator path).
             let temp_transaction = Transaction::new_identity_registration(
                 identity_transaction_data.clone(),
-                outputs.clone(), // Include welcome bonus output
+                outputs.clone(),
                 Signature {
-                    signature: Vec::new(),                  // Empty signature for hash calculation
-                    public_key: PublicKey::new([0u8; 2592]), // Empty public key for hash calculation
+                    signature: Vec::new(),
+                    public_key: PublicKey::new(keypair.public_key.dilithium_pk),
                     algorithm: SignatureAlgorithm::DEFAULT,
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
-                Vec::new(), // Empty data for initial hash
+                Vec::new(),
             );
 
-            // Get the transaction hash that needs to be signed
-            let tx_hash = temp_transaction.hash();
-
-            // Sign the transaction hash with proper cryptographic signature
-            let crypto_signature = sign_message(&keypair, tx_hash.as_bytes())
+            let signing_hash = temp_transaction.signing_hash();
+            let crypto_signature = sign_message(&keypair, signing_hash.as_bytes())
                 .map_err(|e| anyhow::anyhow!("Failed to create signature: {}", e))?;
 
-            // Create the final blockchain transaction with proper signature
             let transaction = Transaction::new_identity_registration(
                 identity_transaction_data,
-                outputs, //  Include welcome bonus UTXO output
+                outputs,
                 Signature {
-                    signature: crypto_signature.signature, // cryptographic signature over tx hash
-                    public_key: PublicKey::new(keypair.public_key.dilithium_pk), // public key
-                    algorithm: SignatureAlgorithm::DEFAULT, // Post-quantum algorithm
+                    signature: crypto_signature.signature,
+                    public_key: PublicKey::new(keypair.public_key.dilithium_pk),
+                    algorithm: SignatureAlgorithm::DEFAULT,
                     timestamp: citizenship_result.dao_registration.registered_at,
                 },
-                Vec::new(), // No additional data needed
+                Vec::new(),
             );
 
             // Submit identity transaction to shared blockchain
@@ -414,7 +415,10 @@ impl IdentityHandler {
                 initial_balance: citizenship_result.welcome_bonus.bonus_amount, // Welcome bonus goes to primary
             };
 
-            if let Err(e) = self.submit_wallet_to_blockchain(primary_wallet_tx).await {
+            if let Err(e) = self
+                .submit_wallet_to_blockchain(primary_wallet_tx, &keypair)
+                .await
+            {
                 tracing::warn!("Failed to submit primary wallet to blockchain: {}", e);
             }
 
@@ -435,7 +439,10 @@ impl IdentityHandler {
                 initial_balance: 0,   // UBI payments come later
             };
 
-            if let Err(e) = self.submit_wallet_to_blockchain(ubi_wallet_tx).await {
+            if let Err(e) = self
+                .submit_wallet_to_blockchain(ubi_wallet_tx, &keypair)
+                .await
+            {
                 tracing::warn!("Failed to submit UBI wallet to blockchain: {}", e);
             }
 
@@ -456,7 +463,10 @@ impl IdentityHandler {
                 initial_balance: 0,   // Starts empty
             };
 
-            if let Err(e) = self.submit_wallet_to_blockchain(savings_wallet_tx).await {
+            if let Err(e) = self
+                .submit_wallet_to_blockchain(savings_wallet_tx, &keypair)
+                .await
+            {
                 tracing::warn!("Failed to submit savings wallet to blockchain: {}", e);
             }
 
@@ -651,13 +661,10 @@ impl IdentityHandler {
     async fn submit_wallet_to_blockchain(
         &self,
         wallet_data: lib_blockchain::transaction::WalletTransactionData,
+        keypair: &lib_crypto::KeyPair,
     ) -> Result<String> {
         use lib_blockchain::integration::{PublicKey, Signature, SignatureAlgorithm};
         use lib_blockchain::transaction::{Transaction, TransactionOutput};
-
-        // Generate keypair for wallet transaction signature
-        let keypair = lib_crypto::KeyPair::generate()
-            .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {}", e))?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -714,12 +721,10 @@ impl IdentityHandler {
             Vec::new(), // Empty data
         );
 
-        // Get the transaction hash for signing
-        let tx_hash = temp_transaction.hash();
-
-        // Sign the transaction hash
+        // Sign with canonical signing_hash() (matches validator verification).
+        let signing_hash = temp_transaction.signing_hash();
         let crypto_signature = keypair
-            .sign(tx_hash.as_bytes())
+            .sign(signing_hash.as_bytes())
             .map_err(|e| anyhow::anyhow!("Failed to sign wallet transaction: {}", e))?;
 
         // Create final signed transaction

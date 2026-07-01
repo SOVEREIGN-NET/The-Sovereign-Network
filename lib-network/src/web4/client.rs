@@ -734,15 +734,39 @@ impl Web4Client {
         new_manifest_cid: &str,
         expected_previous_cid: &str,
     ) -> Result<serde_json::Value> {
+        let private_key = self
+            .identity
+            .private_key
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Domain update requires owner signing key; identity has no private key. \
+                     Use lib-client `build_domain_update_request` or zhtp-cli instead."
+                )
+            })?;
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
+
+        use super::domain_signing::domain_update_signing_message;
+        use lib_crypto::{KeyPair, sign_message};
+
+        let keypair = KeyPair::from_private_key(private_key)
+            .context("Failed to reconstruct owner signing keypair")?;
+        let message = domain_update_signing_message(
+            domain,
+            expected_previous_cid,
+            new_manifest_cid,
+            timestamp,
+        );
+        let signature = sign_message(&keypair, &message).context("Failed to sign domain update")?;
 
         let body = serde_json::json!({
             "domain": domain,
             "new_manifest_cid": new_manifest_cid,
             "expected_previous_manifest_cid": expected_previous_cid,
-            "signature": "", // TODO: Sign with identity
+            "signature": hex::encode(&signature.signature),
             "timestamp": timestamp,
         });
 

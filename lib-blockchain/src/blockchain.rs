@@ -2463,11 +2463,75 @@ impl Blockchain {
     /// the bypass itself is load-bearing (see #2647 Patterns A and B). This
     /// path does NOT run `lib_mempool::admit()` nor `verify_transaction`;
     /// each caller is responsible for the trust it implicitly grants.
+    /// Validate a system-originated transaction before it enters the pending pool.
+    ///
+    /// System injectors bypass signature verification at admission time; this gate
+    /// enforces minimum structural trust per originator class.
+    fn validate_system_injection(
+        originator: &'static str,
+        tx: &Transaction,
+    ) -> anyhow::Result<()> {
+        use crate::types::transaction_type::TransactionType;
+
+        let empty_sig = tx.signature.signature.is_empty();
+
+        if tx.transaction_type == TransactionType::TokenMint && empty_sig {
+            let allowed_originator =
+                matches!(originator, "pouw_mint" | "pouw_reward");
+            let memo_ok = tx.memo.starts_with(b"pouw:mint:");
+            if !allowed_originator || !memo_ok {
+                return Err(anyhow::anyhow!(
+                    "rejecting unsigned TokenMint from originator '{}': \
+                     only pouw_mint/pouw_reward with pouw:mint: memo are permitted",
+                    originator
+                ));
+            }
+        }
+
+        if tx.transaction_type == TransactionType::WalletRegistration {
+            if let Some(wallet_data) = tx.wallet_data() {
+                if wallet_data.initial_balance > 0 && !Self::is_treasury_system_originator(originator)
+                {
+                    return Err(anyhow::anyhow!(
+                        "rejecting WalletRegistration with initial_balance={} from originator '{}': \
+                         treasury originator required for funded wallet bootstrap",
+                        wallet_data.initial_balance,
+                        originator
+                    ));
+                }
+            }
+        }
+
+        if empty_sig
+            && matches!(
+                originator,
+                "web4_domain_register" | "web4_domain_update"
+            )
+        {
+            return Err(anyhow::anyhow!(
+                "rejecting unsigned domain system tx from originator '{}'",
+                originator
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn is_treasury_system_originator(originator: &str) -> bool {
+        originator.contains("treasury")
+            || matches!(
+                originator,
+                "admin_sov_mint" | "genesis_bootstrap" | "genesis_wallet" | "migration_wallet"
+            )
+    }
+
     pub fn add_system_transaction(
         &mut self,
         transaction: Transaction,
         originator: &'static str,
     ) -> Result<()> {
+        Self::validate_system_injection(originator, &transaction)?;
+
         tracing::info!(
             originator = originator,
             tx_hash = %hex::encode(&transaction.hash().as_bytes()[..8]),

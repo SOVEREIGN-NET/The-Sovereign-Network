@@ -8,6 +8,9 @@ use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
+use crate::transaction::mint_authorization::{
+    is_treasury_authorized_signer, validate_token_mint_authorization,
+};
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
     decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -148,6 +151,22 @@ pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
     // blockchain state, UTXO set, nullifier set, etc.
     fee_config: crate::transaction::TxFeeConfig,
+}
+
+/// Returns true when a system transaction must still carry a valid signature.
+fn requires_system_tx_signature(transaction: &Transaction) -> bool {
+    matches!(
+        transaction.transaction_type,
+        TransactionType::WalletRegistration
+            | TransactionType::IdentityRegistration
+            | TransactionType::DomainRegistration
+            | TransactionType::DomainUpdate
+            | TransactionType::TokenMint
+            | TransactionType::InitEntityRegistry
+            | TransactionType::TokenCreation
+            | TransactionType::WalletUpdate
+    ) || (transaction.transaction_type == TransactionType::Transfer
+        && (!transaction.outputs.is_empty() || transaction.fee > 0))
 }
 
 /// Transaction validator with blockchain state access for identity verification
@@ -348,7 +367,7 @@ impl TransactionValidator {
             }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
-                self.validate_wallet_registration_transaction(transaction)?;
+                self.validate_wallet_registration_transaction(transaction, None)?;
             }
             TransactionType::WalletUpdate => {
                 self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
@@ -591,14 +610,8 @@ impl TransactionValidator {
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals; the
         //   transaction-level signature may be empty/dummy on these types.
-        let require_signature = !is_system_transaction
-            || matches!(
-                transaction.transaction_type,
-                TransactionType::WalletUpdate
-                    | TransactionType::TokenMint
-                    | TransactionType::TokenCreation
-                    | TransactionType::InitEntityRegistry
-            );
+        let require_signature =
+            !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         // Skip tx-level sig validation for threshold-approval-only types
         let is_threshold_only = matches!(
@@ -670,7 +683,7 @@ impl TransactionValidator {
             }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
-                self.validate_wallet_registration_transaction(transaction)?;
+                self.validate_wallet_registration_transaction(transaction, None)?;
             }
             TransactionType::WalletUpdate => {
                 self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
@@ -889,14 +902,8 @@ impl TransactionValidator {
         //   This prevents malformed signatures (wrong size, invalid bytes) from passing
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals.
-        let require_signature = !is_system_transaction
-            || matches!(
-                transaction.transaction_type,
-                TransactionType::WalletUpdate
-                    | TransactionType::TokenMint
-                    | TransactionType::TokenCreation
-                    | TransactionType::InitEntityRegistry
-            );
+        let require_signature =
+            !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         let is_threshold_only_sflag = matches!(
             transaction.transaction_type,
@@ -1479,6 +1486,7 @@ impl TransactionValidator {
     fn validate_wallet_registration_transaction(
         &self,
         transaction: &Transaction,
+        blockchain: Option<&crate::blockchain::Blockchain>,
     ) -> ValidationResult {
         // Check that wallet_data exists
         let wallet_data = transaction
@@ -1515,6 +1523,14 @@ impl TransactionValidator {
             _ => return Err(ValidationError::InvalidWalletType),
         }
 
+        if wallet_data.initial_balance > 0 {
+            if let Some(bc) = blockchain {
+                if !is_treasury_authorized_signer(bc, &transaction.signature.public_key) {
+                    return Err(ValidationError::Unauthorized);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1529,7 +1545,7 @@ impl TransactionValidator {
         is_system_transaction: bool,
     ) -> ValidationResult {
         // Must carry wallet_data
-        self.validate_wallet_registration_transaction(transaction)?;
+        self.validate_wallet_registration_transaction(transaction, None)?;
 
         // Restrict to system transactions for now (no user-auth path implemented yet).
         if !is_system_transaction {
@@ -1806,8 +1822,11 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::WalletRegistration => {
-                // Wallet registration transactions - validate wallet data and ownership
                 stateless_validator.validate_transaction(transaction)?;
+                stateless_validator.validate_wallet_registration_transaction(
+                    transaction,
+                    self.blockchain,
+                )?;
             }
             TransactionType::WalletUpdate => {
                 stateless_validator.validate_transaction(transaction)?;
@@ -2336,14 +2355,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists OK");
         }
 
-        // Signature validation (always required except for system transactions)
-        // TokenMint and InitEntityRegistry are system for fee purposes but MUST still be signed.
+        // Signature validation (always required except for true genesis/bootstrap types).
         // RecordOnRampTrade and TreasuryAllocation use threshold approvals — skip tx-level sig.
-        let mut skip_signature = is_system_transaction
-            && !matches!(
-                transaction.transaction_type,
-                TransactionType::TokenMint | TransactionType::InitEntityRegistry
-            );
+        let mut skip_signature =
+            is_system_transaction && !requires_system_tx_signature(transaction);
         // Always skip tx-level signature for threshold-approval-only types
         if is_threshold_type {
             skip_signature = true;
@@ -2997,14 +3012,9 @@ impl<'a> StatefulTransactionValidator<'a> {
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
         tracing::debug!("[BREADCRUMB] validate_sender_identity_exists ENTER");
 
-        // If we don't have blockchain access, skip this check (backward compatibility)
-        let blockchain = match self.blockchain {
-            Some(blockchain) => blockchain,
-            None => {
-                tracing::warn!("SECURITY WARNING: Identity verification skipped - no blockchain state available");
-                return Ok(());
-            }
-        };
+        let blockchain = self
+            .blockchain
+            .ok_or(ValidationError::InvalidTransaction)?;
 
         // Extract the public key from the transaction signature
         let sender_public_key = transaction.signature.public_key.as_bytes();
@@ -3268,38 +3278,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         transaction: &Transaction,
     ) -> ValidationResult {
         let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
-        let mint_data = transaction
-            .token_mint_data()
-            .ok_or(ValidationError::MissingRequiredData)?;
-
-        // SOV mints currently use dedicated consensus paths and are handled separately.
-        let is_sov = mint_data.token_id == [0u8; 32]
-            || mint_data.token_id == crate::contracts::utils::generate_lib_token_id();
-        if is_sov {
-            return Ok(());
-        }
-
-        // Preserve existing execution semantics for UBI and migration flows.
-        let memo_str = std::str::from_utf8(&transaction.memo).ok();
-        let is_ubi_mint = memo_str
-            .map(|memo| memo.starts_with("UBI_DISTRIBUTION_V1:"))
-            .unwrap_or(false);
-        let is_migration = memo_str
-            .map(|memo| memo.starts_with("TOKEN_MIGRATE_V1:"))
-            .unwrap_or(false);
-
-        let token = blockchain
-            .token_contracts
-            .get(&mint_data.token_id)
-            .ok_or(ValidationError::InvalidTransaction)?;
-
-        if is_ubi_mint || is_migration {
-            return Ok(());
-        }
-
-        token
-            .check_mint_authorization(&transaction.signature.public_key)
-            .map_err(|_| ValidationError::InvalidTransaction)
+        validate_token_mint_authorization(blockchain, transaction)
     }
 
     /// Validate OracleAttestation transaction at block execution time (ORACLE-9).
@@ -4063,7 +4042,7 @@ mod tests {
         let validator = StatefulTransactionValidator::new(&blockchain);
         let result = validator.validate_token_mint_stateful_authorization(&tx);
         assert!(
-            matches!(result, Err(ValidationError::InvalidTransaction)),
+            matches!(result, Err(ValidationError::Unauthorized)),
             "Unauthorized mint must be rejected during stateful precheck"
         );
     }

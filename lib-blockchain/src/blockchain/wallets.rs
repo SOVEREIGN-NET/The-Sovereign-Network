@@ -747,8 +747,14 @@ impl Blockchain {
             ));
         }
 
+        // Never embed SOV mint amount in the WalletRegistration tx — executor and
+        // mempool reject initial_balance > 0 unless treasury-authorized. Bonus
+        // SOV is credited via the trusted in-memory mint path below.
+        let mut registration_data = wallet_data.clone();
+        registration_data.initial_balance = 0;
+
         let registration_tx = Transaction::new_wallet_registration(
-            wallet_data.clone(),
+            registration_data,
             vec![],
             Signature {
                 signature: wallet_data.public_key.clone(),

@@ -3249,6 +3249,12 @@ impl BlockExecutor {
                         "WalletRegistration requires wallet_data field".to_string(),
                     )
                 })?;
+                if wallet_data.initial_balance > 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "WalletRegistration initial_balance must be 0; use treasury-authorized TokenMint"
+                            .to_string(),
+                    ));
+                }
                 let wallet_id = wallet_data.wallet_id.as_array();
                 mutator.put_wallet_projection(
                     &wallet_id,

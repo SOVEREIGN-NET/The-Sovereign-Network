@@ -115,6 +115,53 @@ fn pending_tx_survives_store_reattach() {
 }
 
 #[test]
+fn system_injection_rejects_unsigned_token_mint_from_unknown_originator() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: [7u8; 32],
+        amount: 100,
+    };
+    let tx = Transaction::new_token_mint(mint_data, Signature {
+        signature: Vec::new(),
+        public_key: PublicKey::new([0u8; 2592]),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 0,
+    }, b"not-a-pouw-mint".to_vec());
+
+    let err = bc
+        .add_system_transaction(tx, "admin_sov_mint")
+        .expect_err("unsigned mint must be rejected");
+    assert!(
+        err.to_string().contains("rejecting unsigned TokenMint"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[test]
+fn system_injection_allows_pouw_mint_with_matching_memo() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let recipient = [9u8; 32];
+    let amount = 500u128;
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: recipient,
+        amount,
+    };
+    let memo = format!("pouw:mint:{}:{}", hex::encode(recipient), amount).into_bytes();
+    let tx = Transaction::new_token_mint(mint_data, Signature {
+        signature: Vec::new(),
+        public_key: PublicKey::new([0u8; 2592]),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 0,
+    }, memo);
+
+    bc.add_system_transaction(tx, "pouw_mint").expect("pouw mint allowed");
+    assert_eq!(bc.pending_transactions.len(), 1);
+}
+
+#[test]
 fn audit_only_config_admits_zero_fee_transactions() {
     // The S2 default (`audit_only`) must not reject the existing zero-fee
     // traffic (coinbase, system mints) at the admission gate; BlockExecutor

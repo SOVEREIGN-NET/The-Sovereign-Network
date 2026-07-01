@@ -11,7 +11,7 @@ use crate::dao::{
     GovernanceParameterValue, PrivacyLevel,
 };
 use anyhow::Result;
-use lib_crypto::{hash_blake3, Hash};
+use lib_crypto::{hash_blake3, sign_message, Hash, KeyPair};
 use lib_identity::IdentityId;
 use lib_types::consensus::{ConsensusConfig, MIN_BFT_VALIDATORS as MIN_VALIDATORS};
 use std::collections::HashMap;
@@ -780,14 +780,23 @@ impl DaoEngine {
         total_power.min(1_000_000)
     }
 
-    /// Sign a DAO vote
+    /// Sign a DAO vote with a real Dilithium5 keypair.
+    ///
+    /// Hash-as-signature stubs are rejected — callers must supply the voter's keypair.
     #[allow(dead_code)]
     async fn sign_dao_vote(
         &self,
+        keypair: Option<&KeyPair>,
         voter: &IdentityId,
         proposal_id: &Hash,
         vote_choice: &DaoVoteChoice,
     ) -> Result<lib_crypto::Signature> {
+        let keypair = keypair.ok_or_else(|| {
+            anyhow::anyhow!(
+                "sign_dao_vote requires a real KeyPair; hash-as-signature stub removed"
+            )
+        })?;
+
         let vote_data = [
             voter.as_bytes(),
             proposal_id.as_bytes(),
@@ -795,27 +804,7 @@ impl DaoEngine {
         ]
         .concat();
 
-        let signature_hash = hash_blake3(&vote_data);
-
-        // Create fixed-size arrays from hash (for test/placeholder purposes)
-        let mut dilithium_pk = [0u8; 2592];
-        let mut kyber_pk = [0u8; 1568];
-        dilithium_pk[..32].copy_from_slice(&signature_hash[..32]);
-        kyber_pk[..32].copy_from_slice(&signature_hash[..32]);
-
-        Ok(lib_crypto::Signature {
-            signature: signature_hash.to_vec(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk,
-                kyber_pk,
-                key_id: signature_hash[..32].try_into().unwrap(),
-            },
-            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        })
+        sign_message(keypair, &vote_data)
     }
 
     /// Process expired proposals

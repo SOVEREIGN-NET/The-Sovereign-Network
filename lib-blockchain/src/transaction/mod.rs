@@ -13,6 +13,7 @@ pub mod credentials;
 pub mod domain;
 pub mod fee;
 pub mod hashing;
+pub mod mint_authorization;
 pub mod oracle_governance;
 pub mod signing;
 pub mod threshold_approval;
@@ -83,6 +84,9 @@ pub use contract_execution::{
     MAX_CONTRACT_EXECUTION_MEMO_BYTES,
 };
 pub use fee::{required_token_creation_fee, TxFeeConfig, DEFAULT_TOKEN_CREATION_FEE};
+pub use mint_authorization::{
+    is_canonical_sov_token_id, is_treasury_authorized_signer, validate_token_mint_authorization,
+};
 pub use token_creation::{
     TokenCreationPayloadV1, MAX_TOKEN_CREATION_MEMO_BYTES, MAX_TOKEN_NAME_BYTES,
     MAX_TOKEN_SYMBOL_BYTES, TOKEN_CREATION_MEMO_PREFIX,
