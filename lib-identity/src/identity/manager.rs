@@ -444,6 +444,20 @@ impl IdentityManager {
         self.identities.insert(identity_id, identity);
     }
 
+    /// Test helper: seed private signing material for `sign_with_identity` tests.
+    #[cfg(test)]
+    pub fn seed_test_private_data(
+        &mut self,
+        identity_id: &IdentityId,
+        private_key: Vec<u8>,
+        public_key: Vec<u8>,
+    ) {
+        self.private_data.insert(
+            identity_id.clone(),
+            PrivateIdentityData::new(private_key, public_key, vec![]),
+        );
+    }
+
     /// Register an externally-created identity (client-side key generation)
     ///
     /// This method registers an identity where the keys were generated on the client
@@ -1045,6 +1059,35 @@ impl IdentityManager {
         })
     }
 
+    /// Verify an attestation produced by [`Self::sign_with_identity`].
+    pub fn verify_identity_attestation(
+        &self,
+        identity_id: &IdentityId,
+        data: &[u8],
+        attestation: &PostQuantumSignature,
+    ) -> Result<bool> {
+        let identity = self
+            .identities
+            .get(identity_id)
+            .ok_or_else(|| anyhow!("Identity not found"))?;
+
+        const IDENTITY_SIGN_DOMAIN: &[u8] = b"ZHTP-identity-sig-v1\0";
+        let message = [
+            IDENTITY_SIGN_DOMAIN,
+            data,
+            identity_id.0.as_slice(),
+            &attestation.timestamp.to_le_bytes(),
+        ]
+        .concat();
+
+        lib_crypto::verify_signature(
+            &message,
+            &attestation.signature,
+            &identity.public_key.dilithium_pk,
+        )
+        .map_err(|e| anyhow!("Identity attestation verification failed: {}", e))
+    }
+
     /// Import an identity from 20-word recovery phrase (enables password functionality)
     pub async fn import_identity_from_phrase(
         &mut self,
@@ -1433,6 +1476,54 @@ impl IdentityManager {
 impl Default for IdentityManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod identity_signing_tests {
+    use super::*;
+
+    fn seeded_identity(seed: [u8; 64]) -> ZhtpIdentity {
+        ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            Some(seed),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sign_with_identity_roundtrips_through_verify_helper() {
+        let mut manager = IdentityManager::new();
+        let identity = seeded_identity([0x44u8; 64]);
+        let identity_id = identity.id.clone();
+        let private_key = identity
+            .private_key
+            .as_ref()
+            .expect("seeded identity must include private key")
+            .dilithium_sk
+            .to_vec();
+        let public_key = identity.public_key.dilithium_pk.to_vec();
+        manager.add_identity(identity);
+        manager.seed_test_private_data(&identity_id, private_key, public_key);
+
+        let payload = b"attestation payload for integration test";
+        let attestation = manager
+            .sign_with_identity(&identity_id, payload)
+            .await
+            .expect("sign");
+
+        let ok = manager
+            .verify_identity_attestation(&identity_id, payload, &attestation)
+            .expect("verify");
+        assert!(ok);
+
+        let tampered = manager
+            .verify_identity_attestation(&identity_id, b"tampered", &attestation)
+            .expect("verify tampered");
+        assert!(!tampered);
     }
 }
 

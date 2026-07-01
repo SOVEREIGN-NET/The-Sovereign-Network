@@ -14,6 +14,9 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use super::content_publisher::ContentPublisher;
+use super::domain_signing::{
+    has_owner_signing_key, validate_domain_owner_signature_hex, verify_domain_update_signature,
+};
 use super::types::*;
 use crate::dht::ZkDHTIntegration;
 use crate::storage_stub::UnifiedStorage;
@@ -528,6 +531,7 @@ impl DomainRegistry {
             DomainRecord {
                 domain: request.domain.clone(),
                 owner: existing.owner.clone(),
+                owner_dilithium_pk: request.owner.public_key.dilithium_pk.to_vec(),
                 current_web4_manifest_cid: web4_manifest_cid,
                 version,
                 registered_at: existing.registered_at,
@@ -543,6 +547,7 @@ impl DomainRegistry {
             DomainRecord {
                 domain: request.domain.clone(),
                 owner: request.owner.id.clone(),
+                owner_dilithium_pk: request.owner.public_key.dilithium_pk.to_vec(),
                 current_web4_manifest_cid: web4_manifest_cid,
                 version,
                 registered_at: current_time,
@@ -760,6 +765,7 @@ impl DomainRegistry {
 
             let mut updated_record = record.clone();
             updated_record.owner = to_owner.id.clone();
+            updated_record.owner_dilithium_pk = to_owner.public_key.dilithium_pk.to_vec();
             updated_record.transfer_history.push(transfer_record);
             updated_record.ownership_proof = new_ownership_proof;
 
@@ -1260,29 +1266,6 @@ impl DomainRegistry {
         })
     }
 
-    /// Hex-encoded Dilithium5 detached signatures are 4595 bytes → 9190 hex chars.
-    const DILITHIUM5_HEX_SIGNATURE_LEN: usize = 9190;
-
-    /// Reject missing or malformed owner signatures before mutating domain state.
-    fn validate_domain_owner_signature(signature: &str) -> Option<String> {
-        if signature.is_empty() {
-            return Some(
-                "Domain update requires a valid signature from the domain owner".to_string(),
-            );
-        }
-        if signature.len() != Self::DILITHIUM5_HEX_SIGNATURE_LEN {
-            return Some(format!(
-                "Invalid signature length: {} chars (expected exactly {} for Dilithium5)",
-                signature.len(),
-                Self::DILITHIUM5_HEX_SIGNATURE_LEN
-            ));
-        }
-        if !signature.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Some("Invalid signature: must be hex-encoded Dilithium5 bytes".to_string());
-        }
-        None
-    }
-
     /// Update domain with new manifest (atomic compare-and-swap)
     pub async fn update_domain(
         &self,
@@ -1339,7 +1322,7 @@ impl DomainRegistry {
             });
         }
 
-        if let Some(error) = Self::validate_domain_owner_signature(&update_request.signature) {
+        if let Some(error) = validate_domain_owner_signature_hex(&update_request.signature) {
             return Ok(DomainUpdateResponse {
                 success: false,
                 new_version: 0,
@@ -1350,8 +1333,47 @@ impl DomainRegistry {
             });
         }
 
-        // TODO: Cryptographic verify signature over (domain, new_cid, expected_prev, timestamp)
-        // against record.owner's registered Dilithium public key.
+        if has_owner_signing_key(&record.owner_dilithium_pk) {
+            match verify_domain_update_signature(
+                &record.owner_dilithium_pk,
+                &update_request.domain,
+                &update_request.expected_previous_manifest_cid,
+                &update_request.new_manifest_cid,
+                update_request.timestamp,
+                &update_request.signature,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Ok(DomainUpdateResponse {
+                        success: false,
+                        new_version: record.version,
+                        new_manifest_cid: record.current_web4_manifest_cid.clone(),
+                        previous_manifest_cid: record.current_web4_manifest_cid.clone(),
+                        updated_at: record.updated_at,
+                        error: Some(
+                            "Invalid domain update signature: does not match registered owner key"
+                                .to_string(),
+                        ),
+                    });
+                }
+                Err(e) => {
+                    return Ok(DomainUpdateResponse {
+                        success: false,
+                        new_version: 0,
+                        new_manifest_cid: String::new(),
+                        previous_manifest_cid: String::new(),
+                        updated_at: 0,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        } else {
+            warn!(
+                "Domain {} update accepted with structural signature only — \
+                 owner_dilithium_pk missing (legacy record); re-register to enable crypto verify",
+                update_request.domain
+            );
+        }
 
         let previous_manifest_cid = record.current_web4_manifest_cid.clone();
         let new_version = record.version + 1;
@@ -1676,8 +1698,30 @@ mod tests {
     use std::sync::RwLock as StdRwLock;
     use tempfile::TempDir;
 
-    fn test_dilithium_hex_signature() -> String {
-        "ab".repeat(DomainRegistry::DILITHIUM5_HEX_SIGNATURE_LEN / 2)
+    fn sign_domain_update(
+        owner: &ZhtpIdentity,
+        domain: &str,
+        expected_previous_manifest_cid: &str,
+        new_manifest_cid: &str,
+        timestamp: u64,
+    ) -> String {
+        use crate::web4::domain_signing::domain_update_signing_message;
+        use lib_crypto::{KeyPair, sign_message};
+
+        let private_key = owner
+            .private_key
+            .as_ref()
+            .expect("test identity must include private key");
+        let keypair =
+            KeyPair::from_private_key(private_key).expect("reconstruct owner signing keypair");
+        let message = domain_update_signing_message(
+            domain,
+            expected_previous_manifest_cid,
+            new_manifest_cid,
+            timestamp,
+        );
+        let sig = sign_message(&keypair, &message).expect("sign domain update");
+        hex::encode(&sig.signature)
     }
 
     /// Test storage implementation that actually persists data in memory
@@ -1925,16 +1969,25 @@ mod tests {
                 .current_web4_manifest_cid
                 .clone();
 
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let signature = sign_domain_update(
+                &owner,
+                domain_name,
+                &initial_manifest_cid,
+                &updated_manifest_cid,
+                timestamp,
+            );
+
             // Update domain
             let update_request = DomainUpdateRequest {
                 domain: domain_name.to_string(),
                 new_manifest_cid: updated_manifest_cid.clone(),
                 expected_previous_manifest_cid: initial_manifest_cid.clone(),
-                signature: test_dilithium_hex_signature(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                signature,
+                timestamp,
             };
 
             let update_response = registry.update_domain(update_request).await.unwrap();

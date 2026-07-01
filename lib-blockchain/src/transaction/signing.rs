@@ -288,3 +288,53 @@ pub mod utils {
         base_cost + zk_cost + identity_cost
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::transaction::core::Transaction;
+    use lib_crypto::KeyPair;
+
+    fn empty_signature() -> Signature {
+        Signature {
+            signature: Vec::new(),
+            public_key: PublicKey::new([0u8; 2592]),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn sign_transaction_binds_to_caller_private_key() {
+        let signer = KeyPair::generate().expect("signer keypair");
+        let other = KeyPair::generate().expect("other keypair");
+
+        let mut tx = Transaction::new(vec![], vec![], 0, empty_signature(), vec![]);
+
+        sign_transaction(&mut tx, &signer.private_key).expect("sign with caller key");
+
+        assert!(
+            verify_transaction_signature(&tx, &signer.public_key).expect("verify signer"),
+            "signature must verify against caller public key"
+        );
+        assert!(
+            !verify_transaction_signature(&tx, &other.public_key).expect("verify other"),
+            "signature must not verify against a different public key"
+        );
+    }
+
+    #[test]
+    fn sign_transaction_rejects_zero_private_key() {
+        let mut tx = Transaction::new(vec![], vec![], 0, empty_signature(), vec![]);
+        let zero_key = PrivateKey {
+            dilithium_sk: [0u8; 4896],
+            dilithium_pk: [0u8; 2592],
+            kyber_sk: [0u8; 3168],
+            master_seed: [0u8; 64],
+        };
+
+        let err = sign_transaction(&mut tx, &zero_key).unwrap_err();
+        assert!(matches!(err, SigningError::InvalidPrivateKey));
+    }
+}
