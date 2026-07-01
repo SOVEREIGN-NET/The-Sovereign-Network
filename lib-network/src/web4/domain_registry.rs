@@ -638,6 +638,15 @@ impl DomainRegistry {
         self.register_domain(request).await
     }
 
+    /// Whole-SOV registration fee used in the registration signing preimage.
+    fn expected_registration_fee_whole(domain: &str, duration_days: u64) -> u64 {
+        let base_fee = 10.0_f64;
+        let per_day_fee = 0.01_f64;
+        let premium_multiplier = if domain.len() <= 6 { 3.0 } else { 1.0 };
+        let total = (base_fee + (duration_days as f64 * per_day_fee)) * premium_multiplier;
+        total.round() as u64
+    }
+
     fn sign_registration_fields(
         owner: &ZhtpIdentity,
         domain: &str,
@@ -654,7 +663,7 @@ impl DomainRegistry {
         let registration_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        let registration_fee_whole = 10u64;
+        let registration_fee_whole = Self::expected_registration_fee_whole(domain, 365);
         let message = domain_registration_signing_message(domain, registration_timestamp, registration_fee_whole);
         let sig = sign_message(&keypair, &message).map_err(|e| anyhow!("Failed to sign registration: {}", e))?;
 
@@ -1068,6 +1077,16 @@ impl DomainRegistry {
             return Ok(false);
         }
 
+        let expected_fee =
+            Self::expected_registration_fee_whole(&request.domain, request.duration_days);
+        if request.registration_fee_whole != expected_fee {
+            warn!(
+                "Domain registration rejected: fee {} does not match expected {} for {}",
+                request.registration_fee_whole, expected_fee, request.domain
+            );
+            return Ok(false);
+        }
+
         verify_domain_registration_signature(
             request.owner.public_key.dilithium_pk.as_slice(),
             &request.domain,
@@ -1104,7 +1123,11 @@ impl DomainRegistry {
                     .map_err(|_| anyhow!("invalid transfer timestamp in proof public_inputs"))?,
             ))
         } else {
-            None
+            warn!(
+                "Domain transfer rejected: missing timestamp in proof public_inputs for {}",
+                domain
+            );
+            return Ok(false);
         };
 
         verify_domain_transfer_signature(

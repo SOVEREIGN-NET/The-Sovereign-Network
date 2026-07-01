@@ -83,20 +83,26 @@ pub fn verify_domain_registration_signature(
         .map_err(|e| anyhow!("Domain registration signature verification failed: {}", e))
 }
 
-/// Candidate signing messages for domain transfer (CLI, lib-client, legacy formats).
+/// Maximum age of a domain transfer authorization signature (5 minutes).
+pub const DOMAIN_TRANSFER_SIGNATURE_MAX_AGE_SECS: u64 = 300;
+
+/// Candidate signing messages for domain transfer.
+///
+/// When a timestamp is present, only the timestamped format is accepted so
+/// freshness checks cannot be bypassed via legacy preimages.
 pub fn domain_transfer_signing_candidates(
     domain: &str,
     from_did: &str,
     to_did: &str,
     timestamp: Option<u64>,
 ) -> Vec<Vec<u8>> {
-    let mut candidates = Vec::new();
     if let Some(ts) = timestamp {
-        candidates.push(format!("{}|{}|{}|{}", domain, from_did, to_did, ts).into_bytes());
+        return vec![format!("{}|{}|{}|{}", domain, from_did, to_did, ts).into_bytes()];
     }
-    candidates.push(format!("{}|{}|{}", domain, from_did, to_did).into_bytes());
-    candidates.push(format!("{}|{}", domain, to_did).into_bytes());
-    candidates
+    vec![
+        format!("{}|{}|{}", domain, from_did, to_did).into_bytes(),
+        format!("{}|{}", domain, to_did).into_bytes(),
+    ]
 }
 
 /// Verify a domain transfer signature against the current owner's Dilithium5 public key.
@@ -110,6 +116,17 @@ pub fn verify_domain_transfer_signature(
 ) -> Result<bool> {
     if signature_bytes.is_empty() {
         return Ok(false);
+    }
+
+    if let Some(ts) = timestamp {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("system time error: {}", e))?
+            .as_secs();
+        let age = now.abs_diff(ts);
+        if age > DOMAIN_TRANSFER_SIGNATURE_MAX_AGE_SECS {
+            return Ok(false);
+        }
     }
 
     let owner_pk = owner_pk_array(owner_dilithium_pk)?;
