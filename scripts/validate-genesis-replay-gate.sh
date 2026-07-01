@@ -29,6 +29,11 @@ run_gate \
     test_sov_native_wipe_replay_parity -- --nocapture
 
 run_gate \
+  "Paginated fresh sync replay parity (page-2+ canonical import)" \
+  cargo test --locked -p lib-blockchain --test g4_replay_acceptance_tests \
+    test_paginated_fresh_sync_replay_parity -- --nocapture
+
+run_gate \
   "DAO TokenCreation + custom-token wipe-and-replay parity" \
   cargo test --locked -p lib-blockchain --test g4_replay_acceptance_tests \
     test_dao_token_creation_wipe_replay_parity -- --nocapture
@@ -41,7 +46,8 @@ run_gate \
 echo ""
 echo "[genesis-replay-gate] All GENESIS-2 CI gates passed"
 echo "[genesis-replay-gate] Manual g4 fixture (testnet maintainer, pre-deploy):"
-echo "  cargo run -p tools --bin export_replay_fixture -- <sled-path> <out-dir> --to-height 74010"
+echo "  cargo run --release -p tools --bin export_replay_fixture -- <sled-path> <out-dir> --to-height 74010"
 echo "  G4_REPLAY_BLOCKS_PATH=<out>/blocks.v1.bin G4_REPLAY_SNAPSHOT_PATH=<out>/checkpoint.json \\"
-echo "    cargo test --locked -p lib-blockchain --test g4_replay_acceptance_tests \\"
+echo "    cargo test --release -p lib-blockchain --test g4_replay_acceptance_tests \\"
 echo "      test_g4_checkpoint_replay_acceptance -- --ignored --nocapture"
+echo "  Optional paginated path (production mirror; 3–6h at 74k): test_g4_checkpoint_paginated_replay_acceptance"

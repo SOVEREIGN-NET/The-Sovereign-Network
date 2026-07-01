@@ -319,7 +319,7 @@ async fn try_initial_sync_from_peer(
             tip.height
         );
 
-        // Paginated import: 200 blocks per request, same as consensus catch-up.
+        // Paginated import: 50 blocks per request (ChainSync uses canonical runtime on page 2+).
         let sync = ChainSync::new(store.clone() as std::sync::Arc<dyn BlockchainStore>);
         let mut cursor = local_height;
         let mut next_start = first_start; // may be 0 (empty store) or local_height+1
