@@ -123,20 +123,29 @@ impl TransactionBuilder {
 
     /// Load the node's validator/kernel signing key for system transactions.
     ///
-    /// Production nodes MUST have `ZHTP_KEYSTORE_DIR` (or default `node_data/keystore`)
-    /// populated with the validator private key. Under `cfg(test)` only, falls back to a
-    /// deterministic test keypair when the keystore is absent.
+    /// Production nodes MUST have `ZHTP_KEYSTORE_DIR` set, or use `<data-dir>/keystore`
+    /// (default data-dir: `~/.zhtp`, overridable via `--data-dir`) with the validator key.
+    /// Under `cfg(test)` only, falls back when the keystore file is missing — not on parse errors.
     async fn load_system_keypair() -> Result<lib_crypto::KeyPair> {
         match crate::runtime::token_utils::load_validator_keypair_from_keystore().await {
             Ok(kp) => Ok(kp),
             Err(e) => {
                 #[cfg(test)]
                 {
-                    tracing::warn!(
-                        "Validator keystore unavailable in test ({}); using deterministic test keypair",
-                        e
-                    );
-                    Ok(Self::deterministic_test_system_keypair())
+                    let missing = e.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                    });
+                    if missing {
+                        tracing::warn!(
+                            "Validator keystore missing in test ({}); using deterministic test keypair",
+                            e
+                        );
+                        Ok(Self::deterministic_test_system_keypair())
+                    } else {
+                        Err(e)
+                    }
                 }
                 #[cfg(not(test))]
                 {
