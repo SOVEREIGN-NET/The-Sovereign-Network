@@ -4014,7 +4014,7 @@ mod tests {
     }
 
     #[test]
-    fn test_genesis_persists_sov_allocations_to_sled() {
+    fn test_genesis_shrunk_has_no_sov_allocation_rows() {
         use crate::contracts::utils::generate_lib_token_id;
         use crate::storage::{Address, TokenId};
 
@@ -4025,18 +4025,23 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
-        let entries = cfg.sov_allocation_entries().expect("sov entries");
-        assert!(!entries.is_empty(), "test genesis must include sov_balances");
+        assert!(
+            cfg.sov_allocation_entries().expect("sov entries").is_empty(),
+            "GENESIS-3 genesis must not include bulk sov_balances"
+        );
 
         let token = TokenId::new(generate_lib_token_id());
-        let (wallet_id, expected_balance) = entries[0];
+        let contract = store
+            .get_token_contract(&token)
+            .expect("read contract")
+            .expect("SOV shell installed at genesis");
+        assert_eq!(contract.symbol, "SOV");
+
+        // Spot-check: arbitrary wallet has zero SOV until block txs credit it.
         let bal = store
-            .get_token_balance(&token, &Address::new(wallet_id))
+            .get_token_balance(&token, &Address::new([0xab; 32]))
             .expect("read sled balance");
-        assert_eq!(
-            bal, expected_balance,
-            "genesis replay must seed embedded sov_balances into sled"
-        );
+        assert_eq!(bal, 0);
     }
 
     #[test]
@@ -4084,7 +4089,7 @@ mod tests {
         store.commit_block().unwrap();
 
         assert!(first.sov_contract_installed);
-        assert!(first.sov_balances_credited > 0);
+        assert_eq!(first.sov_balances_credited, 0, "GENESIS-3: no genesis SOV rows");
         assert!(!second.sov_contract_installed);
         assert_eq!(second.sov_balances_credited, 0);
     }

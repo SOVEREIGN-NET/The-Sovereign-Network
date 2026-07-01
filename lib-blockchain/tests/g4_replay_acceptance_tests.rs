@@ -9,7 +9,7 @@
 //! | `test_paginated_fresh_sync_replay_parity` | Page-2+ paginated sync regression (canonical import on continuation) |
 //! | `test_g4_wallet74010_sequence_isolated_replay` | h=74010 forensics — **expected replay failure** until GENESIS-3 |
 //! | `test_g4_wallet74010_sequence_tx_version_eight` | Rules out tx-version-8 as divergence cause |
-//! | `test_genesis_bootstrap_checkpoint_balances` | Block-0 SOV shell + CBE treasury seed |
+//! | `test_genesis_bootstrap_checkpoint_balances` | Block-0 SOV shell (no bulk allocations) + CBE treasury seed |
 //! | `test_g4_checkpoint_replay_acceptance` | Manual ≥74k fixture — full-chain empirical gate (ignored) |
 //! | `test_g4_checkpoint_paginated_replay_acceptance` | Manual ≥74k fixture via paginated import (ignored) |
 //! | `test_canonical_import_throughput_benchmark_10k` | `#[ignore]` ops floor — blocks/sec on 10k synthetic chain |
@@ -57,8 +57,8 @@ use common::block_builders::{block_at_height_with_txs, genesis_block};
 use common::crypto_fixtures::{dummy_public_key, dummy_signature};
 use common::replay_gate::{
     bubl_like_token_id, cbe_treasury_address, compare_snapshots, first_n_genesis_sov_wallets,
-    load_blocks_fixture, open_fresh_store, DaoTokenExpectation, ReplayCheckpointSnapshot,
-    G4_CHECKPOINT_HEIGHT_FLOOR,
+    load_blocks_fixture, open_fresh_store, replay_gate_test_wallets, DaoTokenExpectation,
+    ReplayCheckpointSnapshot, G4_CHECKPOINT_HEIGHT_FLOOR,
 };
 
 use lib_blockchain::sync::ChainSync;
@@ -176,21 +176,32 @@ fn create_dao_token_transfer_tx(
 }
 
 fn build_sov_activity_chain() -> Vec<lib_blockchain::block::Block> {
-    build_sov_activity_chain_to_height(6)
+    // h=1 wallet registrations + 6 transfer blocks (tip @ 7).
+    build_sov_activity_chain_to_height(7)
 }
 
 /// Longer chain so paginated import (50 blocks/page, as in `try_initial_sync_from_peer`)
 /// spans multiple pages and exercises the continuation import path.
-fn build_sov_activity_chain_to_height(last_height: u64) -> Vec<lib_blockchain::block::Block> {
-    let wallets = first_n_genesis_sov_wallets(3);
+fn build_sov_activity_chain_to_height(tip_height: u64) -> Vec<lib_blockchain::block::Block> {
+    use common::replay_gate::{replay_gate_test_wallets, REPLAY_GATE_WALLET_MINT_ATOMS};
+
+    let wallets = replay_gate_test_wallets(3);
     let genesis = genesis_block();
     let mut blocks = vec![genesis.clone()];
     let mut prev = genesis.header.block_hash;
-    let mut sender_nonce = [0u64; 3];
 
-    for height in 1..=last_height {
-        let from_idx = (height as usize - 1) % wallets.len();
-        let to_idx = height as usize % wallets.len();
+    let reg_txs: Vec<_> = wallets
+        .iter()
+        .map(|w| create_wallet_registration_tx(*w, REPLAY_GATE_WALLET_MINT_ATOMS))
+        .collect();
+    let reg_block = block_at_height_with_txs(1, prev, reg_txs);
+    blocks.push(reg_block.clone());
+    prev = reg_block.header.block_hash;
+
+    let mut sender_nonce = [0u64; 3];
+    for height in 2..=tip_height {
+        let from_idx = (height as usize - 2) % wallets.len();
+        let to_idx = (height as usize - 1) % wallets.len();
         let nonce = sender_nonce[from_idx];
         sender_nonce[from_idx] += 1;
         let tx = create_sov_transfer_tx(wallets[from_idx], wallets[to_idx], 50, nonce);
@@ -212,7 +223,9 @@ fn import_blocks_paginated(sync: &ChainSync, blocks: Vec<lib_blockchain::block::
 }
 
 fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTokenExpectation) {
-    let wallets = first_n_genesis_sov_wallets(3);
+    use common::replay_gate::{replay_gate_test_wallets, REPLAY_GATE_WALLET_MINT_ATOMS};
+
+    let wallets = replay_gate_test_wallets(3);
     let creator = wallets[0];
     let treasury = wallets[1];
     let recipient = wallets[2];
@@ -222,12 +235,20 @@ fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTo
     let block1 = block_at_height_with_txs(
         1,
         genesis.header.block_hash,
-        vec![create_token_creation_tx(creator, treasury)],
+        wallets
+            .iter()
+            .map(|w| create_wallet_registration_tx(*w, REPLAY_GATE_WALLET_MINT_ATOMS))
+            .collect(),
     );
-    // Creator holds 80% (800_000); transfer 10_000 to recipient.
     let block2 = block_at_height_with_txs(
         2,
         block1.header.block_hash,
+        vec![create_token_creation_tx(creator, treasury)],
+    );
+    // Creator holds 80% (800_000); transfer 10_000 to recipient.
+    let block3 = block_at_height_with_txs(
+        3,
+        block2.header.block_hash,
         vec![create_dao_token_transfer_tx(token_id, creator, recipient, 10_000, 0)],
     );
 
@@ -237,7 +258,7 @@ fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTo
         holder_wallet_id: recipient,
     };
 
-    (vec![genesis, block1, block2], expect)
+    (vec![genesis, block1, block2, block3], expect)
 }
 
 fn run_wipe_replay_parity(
@@ -425,7 +446,7 @@ fn test_g4_wallet74010_sequence_tx_version_eight() {
 #[test]
 fn test_sov_native_wipe_replay_parity() {
     let sample = first_n_genesis_sov_wallets(3);
-    run_wipe_replay_parity(build_sov_activity_chain(), 6, &sample, &[]);
+    run_wipe_replay_parity(build_sov_activity_chain(), 7, &sample, &[]);
 }
 
 /// Floor estimate for ops: canonical-import throughput on a synthetic 10k SOV chain.
@@ -436,7 +457,7 @@ fn test_sov_native_wipe_replay_parity() {
 #[test]
 #[ignore = "benchmark — run manually for canonical import throughput floor estimate"]
 fn test_canonical_import_throughput_benchmark_10k() {
-    const HEIGHT: u64 = 10_000;
+    const HEIGHT: u64 = 10_001;
     let blocks = build_sov_activity_chain_to_height(HEIGHT);
 
     let dir = TempDir::new().expect("tempdir");
@@ -461,7 +482,7 @@ fn test_canonical_import_throughput_benchmark_10k() {
 /// Paginated fresh sync must match single-shot wipe-and-replay (g4 page-2+ bug class).
 #[test]
 fn test_paginated_fresh_sync_replay_parity() {
-    const CHECKPOINT: u64 = 60;
+    const CHECKPOINT: u64 = 61;
     let sample = first_n_genesis_sov_wallets(3);
     let blocks = build_sov_activity_chain_to_height(CHECKPOINT);
 
@@ -505,7 +526,7 @@ fn test_paginated_fresh_sync_replay_parity() {
 fn test_dao_token_creation_wipe_replay_parity() {
     let sample = first_n_genesis_sov_wallets(3);
     let (blocks, dao_expect) = build_dao_token_activity_chain();
-    run_wipe_replay_parity(blocks, 2, &sample, &[dao_expect]);
+    run_wipe_replay_parity(blocks, 3, &sample, &[dao_expect]);
 
     // Post-creation recipient must hold transferred BUBL atoms.
     let live_dir = TempDir::new().unwrap();
@@ -523,7 +544,7 @@ fn test_dao_token_creation_wipe_replay_parity() {
     assert_eq!(bal, 10_000, "BUBL recipient balance after TokenCreation + transfer");
 }
 
-/// Genesis block-0 only: SOV shell, allocations, legacy CBE treasury seed.
+/// Genesis block-0 only: SOV shell (no bulk allocations), legacy CBE treasury seed.
 #[test]
 fn test_genesis_bootstrap_checkpoint_balances() {
     let dir = TempDir::new().expect("tempdir");
@@ -542,18 +563,17 @@ fn test_genesis_bootstrap_checkpoint_balances() {
 
     let cfg = GenesisConfig::from_embedded().expect("embedded genesis");
     let entries = cfg.sov_allocation_entries().expect("sov entries");
-    assert!(entries.len() >= 3);
+    assert!(
+        entries.is_empty(),
+        "GENESIS-3 genesis must not carry bulk sov_balances (have {})",
+        entries.len()
+    );
 
-    for (wallet_id, expected) in entries.iter().take(3) {
-        let have = store
-            .get_token_balance(&sov_token, &Address::new(*wallet_id))
-            .expect("read SOV balance");
-        assert_eq!(
-            have, *expected,
-            "SOV genesis wallet {} balance mismatch after bootstrap: have={have} need={expected}",
-            hex::encode(wallet_id)
-        );
-    }
+    let sample = replay_gate_test_wallets(1);
+    let have = store
+        .get_token_balance(&sov_token, &Address::new(sample[0]))
+        .expect("read SOV balance");
+    assert_eq!(have, 0, "no genesis SOV rows — balances enter via block txs");
 
     // TODO(GENESIS-6, #2734): rewrite when CBE founding tx replaces block-0 seed.
     let cbe_token = TokenId::new(Blockchain::derive_cbe_token_id_pub());

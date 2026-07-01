@@ -19,7 +19,7 @@ run_gate() {
 }
 
 run_gate \
-  "Genesis bootstrap checkpoint (SOV shell + allocations + legacy CBE 20B)" \
+  "Genesis bootstrap checkpoint (SOV shell, no bulk allocations + legacy CBE 20B)" \
   cargo test --locked -p lib-blockchain --test g4_replay_acceptance_tests \
     test_genesis_bootstrap_checkpoint_balances -- --nocapture
 

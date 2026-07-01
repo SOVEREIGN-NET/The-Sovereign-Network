@@ -230,7 +230,7 @@ On reset commit:
 
 - Remove bulk `[[allocations.sov_balances]]` from active `genesis.toml`
 - Set `[sov] initial_supply = 0`
-- Archive migrated allocations to `archive/genesis-v1-pre-cutover.toml` (forensic only)
+- Archive migrated allocations to `archive/genesis-testnet-sov-balances-pre-genesis3.toml` (forensic only)
 - Retire `[cbe_curve]` / block-0 CBE seed when GENESIS-6 lands
 
 ---

@@ -171,15 +171,29 @@ pub struct DaoTokenExpectation {
     pub holder_wallet_id: [u8; 32],
 }
 
+/// SOV minted per wallet in synthetic replay chains (GENESIS-3: via `WalletRegistration`, not genesis rows).
+pub const REPLAY_GATE_WALLET_MINT_ATOMS: u128 = 5_000 * 1_000_000_000_000_000_000;
+
+/// Deterministic wallets for GENESIS-2 synthetic replay chains.
+pub fn replay_gate_test_wallets(n: usize) -> Vec<[u8; 32]> {
+    const IDS: [&str; 3] = [
+        "a101010101010101010101010101010101010101010101010101010101010101",
+        "a202020202020202020202020202020202020202020202020202020202020202",
+        "a303030303030303030303030303030303030303030303030303030303030303",
+    ];
+    assert!(n <= IDS.len(), "replay gate supports at most {} wallets", IDS.len());
+    IDS[..n]
+        .iter()
+        .map(|hex| {
+            let bytes: [u8; 32] = hex::decode(hex).expect("wallet hex").try_into().expect("len");
+            bytes
+        })
+        .collect()
+}
+
+/// Back-compat alias — genesis no longer carries `sov_balances` after GENESIS-3 (#2731).
 pub fn first_n_genesis_sov_wallets(n: usize) -> Vec<[u8; 32]> {
-    let cfg = GenesisConfig::from_embedded().expect("embedded genesis");
-    let entries = cfg.sov_allocation_entries().expect("sov entries");
-    assert!(
-        entries.len() >= n,
-        "embedded genesis must contain at least {n} sov_balances entries (have {})",
-        entries.len()
-    );
-    entries.into_iter().take(n).map(|(id, _)| id).collect()
+    replay_gate_test_wallets(n)
 }
 
 pub fn bubl_like_token_id() -> [u8; 32] {
