@@ -573,7 +573,7 @@ async fn auto_create_identity_from_seed(
                     },
                     b"seed-recovery-auto-register".to_vec(),
                 );
-                if let Err(e) = blockchain.add_system_transaction(reg_tx, "seed_recovery_identity") {
+                if let Err(e) = blockchain.add_system_transaction(reg_tx, lib_blockchain::SystemOriginator::SeedRecoveryIdentity) {
                     tracing::warn!("Recovery: failed to queue identity registration tx: {}", e);
                 } else {
                     // Identity will be added to registry when the block containing
@@ -713,7 +713,7 @@ async fn migrate_wallets_for_identity(
 
         // add_system_transaction bypasses signature validation (correct for a
         // server-originated system tx where we hold no user private key).
-        match blockchain.add_system_transaction(reg_tx, "migration_wallet") {
+        match blockchain.add_system_transaction(reg_tx, lib_blockchain::SystemOriginator::MigrationWallet) {
             Ok(_) => tracing::info!(
                 "Migration: queued WalletRegistration for {} ({} SOV)",
                 &wallet_id_hex[..16.min(wallet_id_hex.len())],
@@ -784,7 +784,7 @@ async fn create_fallback_wallet(
         return;
     };
 
-    match blockchain.add_system_transaction(reg_tx, "recovery_fallback_wallet") {
+    match blockchain.add_system_transaction(reg_tx, lib_blockchain::SystemOriginator::RecoveryFallbackWallet) {
         Ok(_) => {
             blockchain.insert_wallet_shadow(wallet_id_hex.clone(), wallet_data);
             tracing::info!(
