@@ -1270,9 +1270,9 @@ impl DomainRegistry {
                 "Domain update requires a valid signature from the domain owner".to_string(),
             );
         }
-        if signature.len() < Self::DILITHIUM5_HEX_SIGNATURE_LEN {
+        if signature.len() != Self::DILITHIUM5_HEX_SIGNATURE_LEN {
             return Some(format!(
-                "Invalid signature length: {} chars (expected at least {} for Dilithium5)",
+                "Invalid signature length: {} chars (expected exactly {} for Dilithium5)",
                 signature.len(),
                 Self::DILITHIUM5_HEX_SIGNATURE_LEN
             ));

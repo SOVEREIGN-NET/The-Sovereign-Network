@@ -1017,7 +1017,15 @@ impl IdentityManager {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        let message_to_sign = [data, identity_id.0.as_slice(), &timestamp.to_le_bytes()].concat();
+        // Domain-separated from transaction signing hashes (see sign_transaction).
+        const IDENTITY_SIGN_DOMAIN: &[u8] = b"ZHTP-identity-sig-v1\0";
+        let message_to_sign = [
+            IDENTITY_SIGN_DOMAIN,
+            data,
+            identity_id.0.as_slice(),
+            &timestamp.to_le_bytes(),
+        ]
+        .concat();
 
         let keypair = lib_crypto::KeyPair::from_dilithium_bytes(
             private_data.private_key(),

@@ -59,6 +59,24 @@ mod key_rotation_policy_tests {
         assert!(!other.public_key.verify(message, &signature)?);
         Ok(())
     }
+
+    #[test]
+    fn from_private_key_rejects_sk_pk_mismatch() -> Result<()> {
+        let keypair = KeyPair::generate()?;
+        let mut corrupted = keypair.private_key.clone();
+        corrupted.dilithium_pk[0] ^= 0xFF;
+        assert!(KeyPair::from_private_key(&corrupted).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn from_private_key_key_id_matches_public_key_new() -> Result<()> {
+        let keypair = KeyPair::generate()?;
+        let derived = KeyPair::from_private_key(&keypair.private_key)?;
+        let expected = PublicKey::new(keypair.private_key.dilithium_pk);
+        assert_eq!(derived.public_key.key_id, expected.key_id);
+        Ok(())
+    }
 }
 
 use crate::types::{PrivateKey, PublicKey};
@@ -145,15 +163,21 @@ impl KeyPair {
         }
 
         let dilithium_pk = private_key.dilithium_pk;
-        let key_id = crate::hash_blake3(&dilithium_pk);
+        let sk_matches_pk = crate::post_quantum::dilithium::dilithium5_sk_matches_pk(
+            &private_key.dilithium_sk,
+            &dilithium_pk,
+        )?;
+        if !sk_matches_pk {
+            return Err(anyhow::anyhow!(
+                "Dilithium secret key does not match stored public key"
+            ));
+        }
 
+        // key_id matches PublicKey::new (blake3 of dilithium_pk only). Full KeyPair::generate
+        // uses blake3(dilithium_pk || kyber_pk); callers needing that form must supply kyber_pk.
         Ok(Self {
             private_key: private_key.clone(),
-            public_key: PublicKey {
-                dilithium_pk,
-                kyber_pk: [0u8; 1568],
-                key_id,
-            },
+            public_key: PublicKey::new(dilithium_pk),
         })
     }
 
