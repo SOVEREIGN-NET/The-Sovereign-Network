@@ -6,11 +6,18 @@
 //! Architecture Note: lib-economy is Layer 2, lib-blockchain is Layer 3.
 //! Direct dependency would violate architecture, so we use traits that
 //! lib-blockchain implements via the integration layer in zhtp.
+//!
+//! Signing uses the same canonical `hash_for_signature` field ordering as
+//! `lib_blockchain::transaction::hashing::hash_for_signature`. Keep in sync
+//! with that function when changing transaction wire format.
 
 use crate::transactions::Transaction as EconomyTransaction;
 use crate::types::TransactionType as EconomyTxType;
 use crate::types::TransactionTypeExt;
 use anyhow::Result;
+use blake3::Hasher as Blake3Hasher;
+use lib_crypto::types::keys::PublicKey as CryptoPublicKey;
+use serde::Serialize;
 
 /// Economy transaction data needed for blockchain conversion
 /// This struct provides the necessary data without importing blockchain types
@@ -36,6 +43,75 @@ pub struct BlockchainOutput {
     pub recipient: Vec<u8>,
 }
 
+/// Mirror of lib-blockchain `TransactionType` for canonical signing-hash serialization.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[repr(u8)]
+enum BlockchainMirrorTxType {
+    Transfer = 0,
+}
+
+/// Mirror of lib-blockchain `TransactionPayload::None` variant.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+enum BlockchainMirrorPayload {
+    None,
+}
+
+/// Mirror of lib-blockchain `Hash` tuple struct for bincode compatibility.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct BlockchainMirrorHash([u8; 32]);
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct BlockchainMirrorOutput {
+    commitment: BlockchainMirrorHash,
+    note: BlockchainMirrorHash,
+    recipient: CryptoPublicKey,
+    merkle_leaf: BlockchainMirrorHash,
+}
+
+/// Compute the canonical blockchain signing hash for a system transfer skeleton.
+///
+/// MUST match `lib_blockchain::transaction::hashing::hash_for_signature`.
+fn hash_for_signature_mirror(
+    version: u32,
+    chain_id: u8,
+    transaction_type: BlockchainMirrorTxType,
+    outputs: &[BlockchainMirrorOutput],
+    fee: u64,
+    memo: &[u8],
+) -> [u8; 32] {
+    let mut hasher = Blake3Hasher::new();
+
+    hasher.update(&version.to_le_bytes());
+    hasher.update(&[chain_id]);
+
+    let type_bytes =
+        bincode::serialize(&transaction_type).expect("TransactionType serialization should never fail");
+    hasher.update(&type_bytes);
+
+    hasher.update(&(0u64).to_le_bytes()); // empty inputs
+
+    let mut sorted_outputs = outputs.to_vec();
+    sorted_outputs.sort_by_key(|output| output.commitment.0);
+    hasher.update(&(sorted_outputs.len() as u64).to_le_bytes());
+    for output in &sorted_outputs {
+        let output_bytes =
+            bincode::serialize(output).expect("TransactionOutput serialization should never fail");
+        hasher.update(&output_bytes);
+    }
+
+    hasher.update(&fee.to_le_bytes());
+    hasher.update(&(memo.len() as u64).to_le_bytes());
+    hasher.update(memo);
+
+    let payload = BlockchainMirrorPayload::None;
+    let payload_bytes =
+        bincode::serialize(&payload).expect("TransactionPayload serialization should never fail");
+    hasher.update(&(payload_bytes.len() as u64).to_le_bytes());
+    hasher.update(&payload_bytes);
+
+    *hasher.finalize().as_bytes()
+}
+
 /// Convert economics transaction to blockchain-compatible data
 ///
 /// This creates a data structure that lib-blockchain can convert into its Transaction type.
@@ -52,18 +128,25 @@ pub fn to_blockchain_data(
 ) -> Result<BlockchainTransactionData> {
     use lib_crypto::{hashing::hash_blake3, sign_message};
 
-    // Create SYSTEM TRANSACTION with empty inputs
-    // System transactions don't spend UTXOs - they create new money from protocol rules
-    let inputs = Vec::new(); // Empty for system transactions
+    let inputs = Vec::new();
 
-    // Create outputs for the transaction
+    let commitment = hash_blake3(format!("commitment_{}", economics_tx.amount).as_bytes());
+    let note = hash_blake3(format!("note_{}", hex::encode(economics_tx.tx_id)).as_bytes());
+    let recipient_pk = CryptoPublicKey::new([0u8; 2592]);
+
     let outputs = vec![BlockchainOutput {
-        commitment: hash_blake3(format!("commitment_{}", economics_tx.amount).as_bytes()),
-        note: hash_blake3(format!("note_{}", hex::encode(economics_tx.tx_id)).as_bytes()),
-        recipient: economics_tx.to.to_vec(),
+        commitment,
+        note,
+        recipient: recipient_pk.dilithium_pk.to_vec(),
     }];
 
-    // Map economics transaction type to blockchain transaction type name
+    let mirror_outputs = vec![BlockchainMirrorOutput {
+        commitment: BlockchainMirrorHash(commitment),
+        note: BlockchainMirrorHash(note),
+        recipient: recipient_pk.clone(),
+        merkle_leaf: BlockchainMirrorHash([0u8; 32]),
+    }];
+
     let tx_type_name = match economics_tx.tx_type {
         EconomyTxType::UbiDistribution => "Transfer",
         EconomyTxType::Reward => "Transfer",
@@ -72,21 +155,6 @@ pub fn to_blockchain_data(
     }
     .to_string();
 
-    // Create signing data
-    let signing_data = format!(
-        "{}:{}:{}:{}:{}",
-        chain_id,
-        tx_type_name,
-        economics_tx.amount,
-        hex::encode(&economics_tx.to),
-        economics_tx.timestamp
-    );
-    let signing_hash = hash_blake3(signing_data.as_bytes());
-
-    // Sign the transaction
-    let signature = sign_message(system_keypair, &signing_hash)?;
-
-    // Create memo with transaction details
     let memo = format!(
         "System TX: {} {} SOV to {:?}",
         economics_tx.tx_type.description(),
@@ -95,14 +163,25 @@ pub fn to_blockchain_data(
     )
     .into_bytes();
 
-    // Return blockchain-compatible data
+    let chain_id_u8 = chain_id.min(u8::MAX as u32) as u8;
+    let signing_hash = hash_for_signature_mirror(
+        1,
+        chain_id_u8,
+        BlockchainMirrorTxType::Transfer,
+        &mirror_outputs,
+        0,
+        &memo,
+    );
+
+    let signature = sign_message(system_keypair, &signing_hash)?;
+
     Ok(BlockchainTransactionData {
         version: 1,
         chain_id,
         tx_type_name,
-        inputs, // Empty inputs = system transaction
+        inputs,
         outputs,
-        fee: 0, // System transactions are fee-free
+        fee: 0,
         signature_data: signature.signature,
         public_key: system_keypair.public_key.dilithium_pk.to_vec(),
         timestamp: economics_tx.timestamp,
@@ -125,14 +204,12 @@ pub fn create_ubi_blockchain_data(
 ) -> Result<BlockchainTransactionData> {
     use crate::transactions::creation::create_ubi_distributions;
 
-    // Create UBI distributions using economics package
     let ubi_distributions = create_ubi_distributions(&[(citizen_id, amount)])?;
 
     if ubi_distributions.is_empty() {
         return Err(anyhow::anyhow!("No UBI distributions created"));
     }
 
-    // Convert economics transaction to blockchain data
     let economics_tx = &ubi_distributions[0];
     to_blockchain_data(economics_tx, chain_id, system_keypair)
 }
@@ -152,10 +229,8 @@ pub fn create_reward_blockchain_data(
 ) -> Result<BlockchainTransactionData> {
     use crate::transactions::creation::create_reward_transaction;
 
-    // Create reward for network services (routing, storage, etc.)
     let reward_tx = create_reward_transaction(node_id, reward_amount)?;
 
-    // Convert economics transaction to blockchain data
     to_blockchain_data(&reward_tx, chain_id, system_keypair)
 }
 
@@ -176,8 +251,8 @@ mod tests {
         assert!(result.is_ok());
         let data = result.unwrap();
         assert_eq!(data.chain_id, 1);
-        assert_eq!(data.fee, 0); // System transactions are fee-free
-        assert!(data.inputs.is_empty()); // System transactions have no inputs
+        assert_eq!(data.fee, 0);
+        assert!(data.inputs.is_empty());
         assert_eq!(data.outputs.len(), 1);
         assert_eq!(data.tx_type_name, "Transfer");
     }
@@ -207,12 +282,9 @@ mod tests {
 
         let data = create_reward_blockchain_data(node_id, 250, 1, &keypair).unwrap();
 
-        // Signature should be present and non-empty
         assert!(!data.signature_data.is_empty());
         assert!(!data.public_key.is_empty());
         assert!(data.timestamp > 0);
-
-        // Verify public key matches keypair
         assert_eq!(data.public_key, keypair.public_key.dilithium_pk);
     }
 }
