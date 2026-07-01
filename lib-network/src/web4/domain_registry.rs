@@ -14,6 +14,9 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use super::content_publisher::ContentPublisher;
+use super::domain_signing::{
+    has_owner_signing_key, validate_domain_owner_signature_hex, verify_domain_update_signature,
+};
 use super::types::*;
 use crate::dht::ZkDHTIntegration;
 use crate::storage_stub::UnifiedStorage;
@@ -528,6 +531,7 @@ impl DomainRegistry {
             DomainRecord {
                 domain: request.domain.clone(),
                 owner: existing.owner.clone(),
+                owner_dilithium_pk: request.owner.public_key.dilithium_pk.to_vec(),
                 current_web4_manifest_cid: web4_manifest_cid,
                 version,
                 registered_at: existing.registered_at,
@@ -543,6 +547,7 @@ impl DomainRegistry {
             DomainRecord {
                 domain: request.domain.clone(),
                 owner: request.owner.id.clone(),
+                owner_dilithium_pk: request.owner.public_key.dilithium_pk.to_vec(),
                 current_web4_manifest_cid: web4_manifest_cid,
                 version,
                 registered_at: current_time,
@@ -760,6 +765,7 @@ impl DomainRegistry {
 
             let mut updated_record = record.clone();
             updated_record.owner = to_owner.id.clone();
+            updated_record.owner_dilithium_pk = to_owner.public_key.dilithium_pk.to_vec();
             updated_record.transfer_history.push(transfer_record);
             updated_record.ownership_proof = new_ownership_proof;
 
@@ -1316,8 +1322,58 @@ impl DomainRegistry {
             });
         }
 
-        // TODO: Verify signature matches domain owner
-        // For now, we trust the caller has verified authorization
+        if let Some(error) = validate_domain_owner_signature_hex(&update_request.signature) {
+            return Ok(DomainUpdateResponse {
+                success: false,
+                new_version: 0,
+                new_manifest_cid: String::new(),
+                previous_manifest_cid: String::new(),
+                updated_at: 0,
+                error: Some(error),
+            });
+        }
+
+        if has_owner_signing_key(&record.owner_dilithium_pk) {
+            match verify_domain_update_signature(
+                &record.owner_dilithium_pk,
+                &update_request.domain,
+                &update_request.expected_previous_manifest_cid,
+                &update_request.new_manifest_cid,
+                update_request.timestamp,
+                &update_request.signature,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Ok(DomainUpdateResponse {
+                        success: false,
+                        new_version: record.version,
+                        new_manifest_cid: record.current_web4_manifest_cid.clone(),
+                        previous_manifest_cid: record.current_web4_manifest_cid.clone(),
+                        updated_at: record.updated_at,
+                        error: Some(
+                            "Invalid domain update signature: does not match registered owner key"
+                                .to_string(),
+                        ),
+                    });
+                }
+                Err(e) => {
+                    return Ok(DomainUpdateResponse {
+                        success: false,
+                        new_version: 0,
+                        new_manifest_cid: String::new(),
+                        previous_manifest_cid: String::new(),
+                        updated_at: 0,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        } else {
+            warn!(
+                "Domain {} update accepted with structural signature only — \
+                 owner_dilithium_pk missing (legacy record); re-register to enable crypto verify",
+                update_request.domain
+            );
+        }
 
         let previous_manifest_cid = record.current_web4_manifest_cid.clone();
         let new_version = record.version + 1;
@@ -1567,7 +1623,7 @@ impl DomainRegistry {
             domain: domain.to_string(),
             new_manifest_cid: target_cid,
             expected_previous_manifest_cid: current_cid,
-            signature: String::new(), // TODO: Require signature
+            signature: String::new(), // Caller must supply owner signature (validated in update_domain)
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs(),
@@ -1641,6 +1697,32 @@ mod tests {
     use lib_identity::{IdentityType, ZhtpIdentity};
     use std::sync::RwLock as StdRwLock;
     use tempfile::TempDir;
+
+    fn sign_domain_update(
+        owner: &ZhtpIdentity,
+        domain: &str,
+        expected_previous_manifest_cid: &str,
+        new_manifest_cid: &str,
+        timestamp: u64,
+    ) -> String {
+        use crate::web4::domain_signing::domain_update_signing_message;
+        use lib_crypto::{KeyPair, sign_message};
+
+        let private_key = owner
+            .private_key
+            .as_ref()
+            .expect("test identity must include private key");
+        let keypair =
+            KeyPair::from_private_key(private_key).expect("reconstruct owner signing keypair");
+        let message = domain_update_signing_message(
+            domain,
+            expected_previous_manifest_cid,
+            new_manifest_cid,
+            timestamp,
+        );
+        let sig = sign_message(&keypair, &message).expect("sign domain update");
+        hex::encode(&sig.signature)
+    }
 
     /// Test storage implementation that actually persists data in memory
     #[derive(Clone, Default)]
@@ -1832,12 +1914,17 @@ mod tests {
         let owner = create_test_identity();
         let domain_name = "updatetest.zhtp";
         let initial_manifest_cid: String;
-        let updated_manifest_cid = "bafknewmanifest123456".to_string();
+        let updated_manifest_cid: String;
 
         // Create registry, register domain, then update it
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
             let registry = DomainRegistry::new(storage).await.unwrap();
+
+            updated_manifest_cid = registry
+                .store_content_by_cid(br#"{"files":[]}"#.to_vec())
+                .await
+                .unwrap();
 
             // Register domain
             let registration_proof = ZeroKnowledgeProof::new(
@@ -1882,16 +1969,25 @@ mod tests {
                 .current_web4_manifest_cid
                 .clone();
 
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let signature = sign_domain_update(
+                &owner,
+                domain_name,
+                &initial_manifest_cid,
+                &updated_manifest_cid,
+                timestamp,
+            );
+
             // Update domain
             let update_request = DomainUpdateRequest {
                 domain: domain_name.to_string(),
                 new_manifest_cid: updated_manifest_cid.clone(),
                 expected_previous_manifest_cid: initial_manifest_cid.clone(),
-                signature: String::new(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                signature,
+                timestamp,
             };
 
             let update_response = registry.update_domain(update_request).await.unwrap();

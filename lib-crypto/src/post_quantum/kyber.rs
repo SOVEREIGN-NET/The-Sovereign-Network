@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use hkdf::Hkdf;
-use pqc_kyber;
+use pqc_kyber_edit as pqc_kyber;
 use rand::rngs::OsRng;
 use sha3::Sha3_256;
 

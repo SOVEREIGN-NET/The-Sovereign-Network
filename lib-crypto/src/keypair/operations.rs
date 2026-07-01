@@ -11,7 +11,7 @@ use crystals_dilithium::dilithium5::{
     PublicKey as CrystalsPublicKey, SecretKey as CrystalsSecretKey, SIGNBYTES,
 };
 use hkdf::Hkdf;
-use pqc_kyber;
+use pqc_kyber_edit as pqc_kyber;
 use sha3::Sha3_256;
 // Ed25519 imports removed - pure post-quantum only
 use super::KeyPair;

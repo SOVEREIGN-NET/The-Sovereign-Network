@@ -52,6 +52,10 @@ pub struct DomainRecord {
     /// Owner's identity
     #[serde(default)]
     pub owner: IdentityId,
+    /// Owner Dilithium5 public key (2592 bytes) for domain-update verification.
+    /// Empty for legacy records migrated before this field existed.
+    #[serde(default)]
+    pub owner_dilithium_pk: Vec<u8>,
     /// CANONICAL: Current Web4Manifest CID (runtime truth for resolution)
     /// This is the authoritative pointer used by all domain resolution logic
     /// MIGRATION: serde alias allows loading old records with "current_manifest_cid"

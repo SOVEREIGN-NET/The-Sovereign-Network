@@ -73,7 +73,8 @@ sled = "0.34"
 x25519-dalek = "2.0"
 
 # Post-quantum cryptography (Kyber for forward secrecy)
-pqc_kyber = { version = "0.7", features = ["kyber1024"] }
+# SECURITY: RUSTSEC-2023-0079 (KyberSlash) — patched fork until upstream ships fix
+pqc_kyber_edit = { version = "0.7", features = ["kyber1024"] }
 
 # System calls (for Bluetooth Classic on macOS/Linux)
 libc = "0.2"

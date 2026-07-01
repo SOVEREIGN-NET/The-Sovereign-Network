@@ -444,6 +444,20 @@ impl IdentityManager {
         self.identities.insert(identity_id, identity);
     }
 
+    /// Test helper: seed private signing material for `sign_with_identity` tests.
+    #[cfg(test)]
+    pub fn seed_test_private_data(
+        &mut self,
+        identity_id: &IdentityId,
+        private_key: Vec<u8>,
+        public_key: Vec<u8>,
+    ) {
+        self.private_data.insert(
+            identity_id.clone(),
+            PrivateIdentityData::new(private_key, public_key, vec![]),
+        );
+    }
+
     /// Register an externally-created identity (client-side key generation)
     ///
     /// This method registers an identity where the keys were generated on the client
@@ -1017,46 +1031,61 @@ impl IdentityManager {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        let message_to_sign = [data, identity_id.0.as_slice(), &timestamp.to_le_bytes()].concat();
+        // Domain-separated from transaction signing hashes (see sign_transaction).
+        const IDENTITY_SIGN_DOMAIN: &[u8] = b"ZHTP-identity-sig-v1\0";
+        let message_to_sign = [
+            IDENTITY_SIGN_DOMAIN,
+            data,
+            identity_id.0.as_slice(),
+            &timestamp.to_le_bytes(),
+        ]
+        .concat();
 
-        // Generate quantum-resistant signature using CRYSTALS-Dilithium approach
-        // Derive seed from private key (removed hardcoded zero-seed per identity architecture)
-        let derived_seed = lib_crypto::hash_blake3(private_data.private_key());
-        let signature_seed = lib_crypto::hash_blake3(
-            &[
-                private_data.private_key(),
-                &derived_seed.to_vec(),
-                &message_to_sign,
-            ]
-            .concat(),
-        );
+        let keypair = lib_crypto::KeyPair::from_dilithium_bytes(
+            private_data.private_key(),
+            private_data.public_key(),
+        )
+        .map_err(|e| anyhow!("Failed to load identity signing key: {}", e))?;
 
-        // Create the signature using proper post-quantum methods
-        let signature_bytes =
-            lib_crypto::hash_blake3(&[signature_seed.as_slice(), &message_to_sign].concat());
-
-        // FIXME: This function creates fake signatures using hashing instead of real Dilithium signing.
-        // It needs to be rewritten to use the actual Dilithium private key for signing.
-        // For now, we create properly-sized zero arrays to satisfy type requirements.
-        
-        // Create key ID from identity
-        let mut key_id = [0u8; 32];
-        key_id.copy_from_slice(&identity_id.0);
-
-        // FIXME: These should be real Dilithium5 keys from the identity's keypair
-        let dilithium_pk = [0u8; 2592];
-        let kyber_pk = [0u8; 1568];
+        let signature = keypair
+            .sign(&message_to_sign)
+            .map_err(|e| anyhow!("Dilithium5 signing failed: {}", e))?;
 
         Ok(PostQuantumSignature {
-            signature: signature_bytes.to_vec(),
-            public_key: lib_crypto::PublicKey {
-                dilithium_pk,
-                kyber_pk,
-                key_id,
-            },
-            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT, // Updated to match consensus
+            signature: signature.signature,
+            public_key: signature.public_key,
+            algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
             timestamp,
         })
+    }
+
+    /// Verify an attestation produced by [`Self::sign_with_identity`].
+    pub fn verify_identity_attestation(
+        &self,
+        identity_id: &IdentityId,
+        data: &[u8],
+        attestation: &PostQuantumSignature,
+    ) -> Result<bool> {
+        let identity = self
+            .identities
+            .get(identity_id)
+            .ok_or_else(|| anyhow!("Identity not found"))?;
+
+        const IDENTITY_SIGN_DOMAIN: &[u8] = b"ZHTP-identity-sig-v1\0";
+        let message = [
+            IDENTITY_SIGN_DOMAIN,
+            data,
+            identity_id.0.as_slice(),
+            &attestation.timestamp.to_le_bytes(),
+        ]
+        .concat();
+
+        lib_crypto::verify_signature(
+            &message,
+            &attestation.signature,
+            &identity.public_key.dilithium_pk,
+        )
+        .map_err(|e| anyhow!("Identity attestation verification failed: {}", e))
     }
 
     /// Import an identity from 20-word recovery phrase (enables password functionality)
@@ -1447,6 +1476,54 @@ impl IdentityManager {
 impl Default for IdentityManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod identity_signing_tests {
+    use super::*;
+
+    fn seeded_identity(seed: [u8; 64]) -> ZhtpIdentity {
+        ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "laptop",
+            Some(seed),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sign_with_identity_roundtrips_through_verify_helper() {
+        let mut manager = IdentityManager::new();
+        let identity = seeded_identity([0x44u8; 64]);
+        let identity_id = identity.id.clone();
+        let private_key = identity
+            .private_key
+            .as_ref()
+            .expect("seeded identity must include private key")
+            .dilithium_sk
+            .to_vec();
+        let public_key = identity.public_key.dilithium_pk.to_vec();
+        manager.add_identity(identity);
+        manager.seed_test_private_data(&identity_id, private_key, public_key);
+
+        let payload = b"attestation payload for integration test";
+        let attestation = manager
+            .sign_with_identity(&identity_id, payload)
+            .await
+            .expect("sign");
+
+        let ok = manager
+            .verify_identity_attestation(&identity_id, payload, &attestation)
+            .expect("verify");
+        assert!(ok);
+
+        let tampered = manager
+            .verify_identity_attestation(&identity_id, b"tampered", &attestation)
+            .expect("verify tampered");
+        assert!(!tampered);
     }
 }
 

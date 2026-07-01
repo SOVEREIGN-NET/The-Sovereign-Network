@@ -82,6 +82,13 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
     Ok(pk.verify(message, &sig_arr))
 }
 
+/// Verify that a Dilithium5 secret key matches the given public key.
+pub fn dilithium5_sk_matches_pk(secret_key: &[u8], public_key: &[u8]) -> Result<bool> {
+    const BIND_CHALLENGE: &[u8] = b"ZHTP-Dilithium-SK-PK-Bind-v1";
+    let signature = dilithium5_sign(BIND_CHALLENGE, secret_key)?;
+    dilithium5_verify(BIND_CHALLENGE, &signature, public_key)
+}
+
 /// Alias for dilithium5_verify (crystals-dilithium is now the only implementation).
 pub fn dilithium5_verify_crystals(
     message: &[u8],

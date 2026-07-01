@@ -23,6 +23,7 @@ pub mod client;
 pub mod content_publisher;
 pub mod content_service;
 pub mod domain_registry;
+pub mod domain_signing;
 pub mod name_resolver;
 pub mod types;
 
@@ -31,6 +32,10 @@ pub use client::Web4Client;
 pub use content_publisher::*;
 pub use content_service::*;
 pub use domain_registry::*;
+pub use domain_signing::{
+    domain_update_signing_message, has_owner_signing_key, verify_domain_update_signature,
+    validate_domain_owner_signature_hex, DILITHIUM5_HEX_SIGNATURE_LEN,
+};
 pub use name_resolver::NameResolver;
 #[cfg(feature = "quic")]
 pub use trust::{

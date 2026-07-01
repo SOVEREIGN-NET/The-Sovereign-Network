@@ -46,13 +46,44 @@ mod key_rotation_policy_tests {
     fn test_key_rotation_policy_constant() {
         assert_eq!(KEY_ROTATION_POLICY, "no_rotation");
     }
+
+    #[test]
+    fn from_private_key_signs_with_stored_material() -> Result<()> {
+        let keypair = KeyPair::generate()?;
+        let derived = KeyPair::from_private_key(&keypair.private_key)?;
+        let message = b"caller-key-bind-test";
+        let signature = derived.sign(message)?;
+        assert!(derived.public_key.verify(message, &signature)?);
+
+        let other = KeyPair::generate()?;
+        assert!(!other.public_key.verify(message, &signature)?);
+        Ok(())
+    }
+
+    #[test]
+    fn from_private_key_rejects_sk_pk_mismatch() -> Result<()> {
+        let keypair = KeyPair::generate()?;
+        let mut corrupted = keypair.private_key.clone();
+        corrupted.dilithium_pk[0] ^= 0xFF;
+        assert!(KeyPair::from_private_key(&corrupted).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn from_private_key_key_id_matches_public_key_new() -> Result<()> {
+        let keypair = KeyPair::generate()?;
+        let derived = KeyPair::from_private_key(&keypair.private_key)?;
+        let expected = PublicKey::new(keypair.private_key.dilithium_pk);
+        assert_eq!(derived.public_key.key_id, expected.key_id);
+        Ok(())
+    }
 }
 
 use crate::types::{PrivateKey, PublicKey};
 use anyhow::Result;
 use blake3::Hasher as Blake3Hasher;
 use crystals_dilithium::dilithium5::Keypair as DilithiumKeypair;
-use pqc_kyber;
+use pqc_kyber_edit as pqc_kyber;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
@@ -120,6 +151,59 @@ impl KeyPair {
         keypair.validate()?;
 
         Ok(keypair)
+    }
+
+    /// Build a signing keypair from stored Dilithium private key material.
+    ///
+    /// Used when the caller already holds a `PrivateKey` (keystore, identity store)
+    /// and must sign with that key — not a freshly generated one.
+    pub fn from_private_key(private_key: &PrivateKey) -> Result<Self> {
+        if private_key.dilithium_sk.iter().all(|&x| x == 0) {
+            return Err(anyhow::anyhow!("Invalid Dilithium private key: all zeros"));
+        }
+
+        let dilithium_pk = private_key.dilithium_pk;
+        let sk_matches_pk = crate::post_quantum::dilithium::dilithium5_sk_matches_pk(
+            &private_key.dilithium_sk,
+            &dilithium_pk,
+        )?;
+        if !sk_matches_pk {
+            return Err(anyhow::anyhow!(
+                "Dilithium secret key does not match stored public key"
+            ));
+        }
+
+        // key_id matches PublicKey::new (blake3 of dilithium_pk only). Full KeyPair::generate
+        // uses blake3(dilithium_pk || kyber_pk); callers needing that form must supply kyber_pk.
+        Ok(Self {
+            private_key: private_key.clone(),
+            public_key: PublicKey::new(dilithium_pk),
+        })
+    }
+
+    /// Build a signing keypair from raw Dilithium key byte slices (identity store layout).
+    pub fn from_dilithium_bytes(secret_key: &[u8], public_key: &[u8]) -> Result<Self> {
+        if secret_key.is_empty() || secret_key.iter().all(|&x| x == 0) {
+            return Err(anyhow::anyhow!("Invalid Dilithium secret key"));
+        }
+        if public_key.is_empty() {
+            return Err(anyhow::anyhow!("Invalid Dilithium public key"));
+        }
+
+        let mut dilithium_sk = [0u8; 4896];
+        let sk_len = secret_key.len().min(4896);
+        dilithium_sk[..sk_len].copy_from_slice(&secret_key[..sk_len]);
+
+        let mut dilithium_pk = [0u8; 2592];
+        let pk_len = public_key.len().min(2592);
+        dilithium_pk[..pk_len].copy_from_slice(&public_key[..pk_len]);
+
+        Self::from_private_key(&PrivateKey {
+            dilithium_sk,
+            dilithium_pk,
+            kyber_sk: [0u8; 3168],
+            master_seed: [0u8; 64],
+        })
     }
 
     /// Validate that the keypair is properly formed and secure

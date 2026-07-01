@@ -302,8 +302,7 @@ mod tests {
             .await.expect("Failed to sign with identity");
         
         assert!(!signature.signature.is_empty());
-        assert!(!signature.public_key.dilithium_pk.is_empty());
-        assert!(!signature.public_key.kyber_pk.is_empty());
+        assert!(!signature.public_key.dilithium_pk.iter().all(|&b| b == 0));
         assert_eq!(signature.algorithm, lib_crypto::SignatureAlgorithm::DEFAULT);
         assert!(signature.timestamp > 0);
     }

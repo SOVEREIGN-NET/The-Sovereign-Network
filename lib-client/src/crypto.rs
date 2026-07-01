@@ -147,7 +147,7 @@ mod wasm_crypto {
     use crystals_dilithium::dilithium5::{
         Keypair as DilithiumKeypair, PublicKey, SecretKey, SIGNBYTES,
     };
-    use pqc_kyber::*;
+    use pqc_kyber_edit::*;
 
     /// Dilithium5 post-quantum digital signatures (pure Rust implementation)
     /// Uses crystals-dilithium crate for WASM compatibility
