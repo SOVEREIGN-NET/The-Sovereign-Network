@@ -135,22 +135,38 @@ fn export_fixture(sled_path: &Path, out_dir: &Path, to_height: Option<u64>) -> R
     Ok(())
 }
 
+fn sample_wallet_ids(cfg: &GenesisConfig) -> Result<Vec<[u8; 32]>> {
+    let sov_entries = cfg.sov_allocation_entries().context("sov entries")?;
+    if sov_entries.len() >= 3 {
+        return Ok(sov_entries.into_iter().take(3).map(|(id, _)| id).collect());
+    }
+
+    let mut out = Vec::new();
+    for wallet in cfg.allocations.wallets.iter().take(3) {
+        let bytes = hex::decode(&wallet.wallet_id).context("wallet_id hex")?;
+        anyhow::ensure!(bytes.len() == 32, "wallet_id must be 32 bytes");
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&bytes);
+        out.push(id);
+    }
+    anyhow::ensure!(
+        out.len() >= 3,
+        "need >= 3 sample wallets (sov_balances or [[allocations.wallets]])"
+    );
+    Ok(out)
+}
+
 fn build_snapshot(store: &dyn BlockchainStore, checkpoint_height: u64) -> Result<ReplayCheckpointSnapshot> {
     let cfg = GenesisConfig::from_embedded().context("embedded genesis")?;
-    let entries = cfg.sov_allocation_entries().context("sov entries")?;
-    anyhow::ensure!(
-        entries.len() >= 3,
-        "need >= 3 sov_balances in genesis for snapshot sample"
-    );
+    let sample_ids = sample_wallet_ids(&cfg)?;
 
     let sov_token = TokenId::new(generate_lib_token_id());
     let cbe_token = TokenId::new(Blockchain::derive_cbe_token_id_pub());
     let treasury = treasury_address();
 
-    let sov_wallets: Vec<SovWalletBalance> = entries
+    let sov_wallets: Vec<SovWalletBalance> = sample_ids
         .iter()
-        .take(3)
-        .map(|(wallet_id, _)| {
+        .map(|wallet_id| {
             let balance = store
                 .get_token_balance(&sov_token, &Address::new(*wallet_id))
                 .unwrap_or(0);

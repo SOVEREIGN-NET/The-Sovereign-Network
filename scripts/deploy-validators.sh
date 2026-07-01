@@ -37,8 +37,6 @@ NODES=(
     "zhtp-g1|77.42.37.161|"
     "zhtp-g2|77.42.74.80|"
     "zhtp-g3|178.105.9.247|"
-    "zhtp-g4|148.113.140.176|sudo"
-    "zhtp-g5|51.75.62.133|sudo"
 )
 
 REMOTE_BIN=/opt/zhtp/zhtp
@@ -104,8 +102,8 @@ fi
 #   2. Wait for the broadcast to settle.
 #   3. Verify the actual outcome by reading journalctl on each — `HALTED`
 #      log entry within the last 2 minutes.
-#   4. Abort if fewer than 4/5 are actually halted (quorum threshold is 4,
-#      so 4 halted is sufficient to guarantee no block production).
+#   4. Abort if fewer than TOTAL-1 are actually halted (3-node set: 2 halted
+#      blocks quorum; no block production).
 
 if [[ $SKIP_HALT -eq 1 ]]; then
     log "skip-halt requested — chain must already be stopped"
@@ -153,10 +151,8 @@ else
 
         TOTAL=${#NODES[@]}
         # Safety: require at least TOTAL-1 actually halted, regardless of cause.
-        # With 5 nodes and a 4/5 quorum threshold, 4 halted means no node set
-        # of size 4 can vote — chain cannot produce. If we permit 2 unhalted
-        # we'd allow the chain to keep producing during deploy, which is the
-        # exact fork-causing scenario this script exists to prevent.
+        # With 3 validators, 2 halted means no quorum (need 2f+1=3 or 2/3 per
+        # active set). Permitting 2 unhalted nodes during deploy risks forks.
         if [[ $ACTUALLY_HALTED -lt $((TOTAL - 1)) ]]; then
             fail "only $ACTUALLY_HALTED/$TOTAL halted (unreachable: $UNREACHABLE) — abort, chain may still be producing"
         fi

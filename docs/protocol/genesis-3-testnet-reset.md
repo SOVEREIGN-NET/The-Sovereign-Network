@@ -2,8 +2,8 @@
 
 **Issue:** [#2731 GENESIS-3](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2731)  
 **Epic:** [#2727 GENESIS](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727)  
-**Status:** Draft — execute only after GENESIS-2 gates are green  
-**Audience:** Testnet operators (validators g1–g5, gateways)
+**Status:** Scheduled — execute only after prerequisites below are checked
+**Audience:** Testnet operators (validators g1–g3 only; gateways retired)
 
 ---
 
@@ -40,25 +40,49 @@ Do **not** reset until every item is checked:
 ## Reset datetime
 
 ```
-GENESIS-3 reset_time (UTC):  TBD — fill in before announcing (placeholder was 2026-07-02T12:00:00Z)
-halt_lead_time:              T-30 minutes (stop accepting user txs / announce maintenance)
+GENESIS-3 reset_time (UTC):  2026-07-07T12:00:00Z   (Monday)
+operator_notice_deadline:    2026-07-05T12:00:00Z   (≥48h before reset — announce maintenance now)
+halt_lead_time:              T-30 minutes → 2026-07-07T11:30:00Z
 ```
+
+| Phase | UTC | Local hint (Europe/London, BST) |
+|-------|-----|----------------------------------|
+| Operator notice sent | by 2026-07-05T12:00:00Z | Sat 05 Jul, 13:00 |
+| Phase 0 snapshot (optional) | 2026-07-06T12:00:00Z | Sun 06 Jul, 13:00 |
+| Phase 1 halt | 2026-07-07T11:30:00Z | Mon 07 Jul, 12:30 |
+| Phase 2–3 deploy + wipe | 2026-07-07T12:00:00Z | Mon 07 Jul, 13:00 |
+| Phase 4 bootstrap g1 | 2026-07-07T12:02:00Z | Mon 07 Jul, 13:02 |
+| Phase 5 start followers | 2026-07-07T12:05:00Z | Mon 07 Jul, 13:05 (30s stagger) |
+| Phase 6 verification | from 2026-07-07T12:30:00Z | allow up to **T+3h** for catch-up |
+
+**Slip rule:** if #2744 is not merged and deployed by 2026-07-06T12:00:00Z, postpone one week (2026-07-14T12:00:00Z) and re-announce.
 
 ---
 
-## Validator inventory
+## Topology (post-reset)
 
-| Host (SSH alias) | sudo | Role |
-|------------------|------|------|
-| zhtp-g1 | no | bootstrap leader |
-| zhtp-g2 | no | validator |
-| zhtp-g3 | no | validator |
-| zhtp-g4 | yes | validator |
-| zhtp-g5 | yes | validator |
+| Host (SSH alias) | IP | sudo | Role |
+|------------------|-----|------|------|
+| zhtp-g1 | 77.42.37.161 | no | bootstrap leader |
+| zhtp-g2 | 77.42.74.80 | no | validator |
+| zhtp-g3 | 178.105.9.247 | no | validator |
 
-IP inventory lives in private ops config (not in-repo).
+**Retired (decommission at reset — do not restart):**
 
-Data path (all nodes): `/opt/zhtp/.zhtp/data/testnet/sled`
+| Host | IP | Former role |
+|------|-----|-------------|
+| zhtp-g4 | 148.113.140.176 | validator |
+| zhtp-g5 | 51.75.62.133 | validator |
+| zhtp-gateway | 91.98.113.188 | observer gateway |
+| zhtp-gateway-2 | 57.128.30.74 | observer gateway |
+
+BFT quorum with **3 validators** requires **3/3** votes (`(n×2/3)+1` = 3). All three nodes must be active for commits.
+
+Clients connect to validators directly (`<ip>:9334`). No gateway layer.
+
+Config source of truth: `tools/node-configs/shared.toml` (3 `bootstrap_peers`, 3 `bootstrap_validators`).
+
+Data path (active validators): `/opt/zhtp/.zhtp/data/testnet/sled`
 
 ---
 
@@ -80,51 +104,57 @@ Data path (all nodes): `/opt/zhtp/.zhtp/data/testnet/sled`
 
 ---
 
-## Phase 1 — Halt (T-30m)
+## Phase 1 — Halt + decommission (T-30m)
 
-Run **simultaneously** on all validators:
+### 1a — Stop active validators (g1–g3)
 
 ```bash
-for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
+for node in zhtp-g1 zhtp-g2 zhtp-g3; do
   ssh $node 'sudo systemctl stop zhtp --wait-timeout 120' &
 done
 wait
 ```
 
-If a node does not reach `inactive` within 120s (wedged FSM, locked sled), force-kill and verify:
+### 1b — Decommission retired nodes (g4, g5, gateways)
+
+Stop and **disable** so they do not rejoin after reboot:
 
 ```bash
-for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
-  ssh $node 'sudo systemctl is-active zhtp 2>/dev/null || echo stopped'
+for node in zhtp-g4 zhtp-g5 zhtp-gateway zhtp-gateway-2; do
+  ssh $node 'sudo systemctl stop zhtp --wait-timeout 120; sudo systemctl disable zhtp' &
 done
-# If still active after 120s:
-# ssh $node 'sudo systemctl kill -s SIGKILL zhtp && sleep 5 && sudo systemctl is-active zhtp || echo killed'
+wait
 ```
+
+Optional: take final sled backup on g4/g5 before power-down. Do **not** deploy new binary or wipe sled on retired hosts.
 
 Verify all stopped:
 
 ```bash
-for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
-  ssh $node 'sudo systemctl is-active zhtp || echo stopped'
+for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5 zhtp-gateway zhtp-gateway-2; do
+  ssh $node 'sudo systemctl is-active zhtp 2>/dev/null || echo stopped'
 done
 ```
 
 ---
 
-## Phase 2 — Deploy binary (T-0)
+## Phase 2 — Deploy binary + config (T-0)
 
-From dev machine with built binary:
-
-```bash
-./scripts/deploy-validators.sh target/release/zhtp
-```
-
-Or per-node rsync (g4/g5 need sudo):
+From dev machine with built binary. **Do not use** full `deploy-validators.sh` for wipe-reset (it restarts nodes) — rsync binary only, then wipe, then staggered start.
 
 ```bash
-rsync -az target/release/zhtp zhtp-g1:/opt/zhtp/zhtp
-# repeat for g2–g5
+# Binary to g1–g3 only
+BINARY=target/release/zhtp
+for node in zhtp-g1 zhtp-g2 zhtp-g3; do
+  scp -q "$BINARY" "$node:/tmp/zhtp.new"
+  ssh "$node" 'cp /opt/zhtp/zhtp /opt/zhtp/zhtp.bak.$(date +%Y%m%d-%H%M%S) && mv /tmp/zhtp.new /opt/zhtp/zhtp && chmod +x /opt/zhtp/zhtp'
+done
+
+# Trimmed 3-validator mesh config (bootstrap_peers + bootstrap_validators)
+./tools/deploy-config.sh zhtp-g1 zhtp-g2 zhtp-g3
 ```
+
+Rolling upgrades on a live chain (no wipe): `./scripts/deploy-validators.sh target/release/zhtp` (g1–g3 table only).
 
 ---
 
@@ -136,7 +166,7 @@ Wipe canonical sled **and** legacy sidecar state under the testnet data dir:
 
 ```bash
 DATA=/opt/zhtp/.zhtp/data/testnet
-for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
+for node in zhtp-g1 zhtp-g2 zhtp-g3; do
   ssh $node "sudo rm -rf \
     $DATA/sled \
     $DATA/blockchain.dat \
@@ -160,7 +190,7 @@ sleep 30
 ssh zhtp-g1 'sudo journalctl -u zhtp -n 30 --no-pager | grep -iE "genesis|height|Loaded blockchain"'
 ```
 
-Confirm g1 loads genesis and **creates block proposals**. g1 alone cannot **commit** blocks — BFT needs 4/5 quorum. Expect **no committed blocks** until followers join (Phase 5). Proposals waiting for votes is normal; do not panic on "height stuck at 0" for the first few minutes.
+Confirm g1 loads genesis and **creates block proposals**. g1 alone cannot **commit** blocks — BFT needs **3/3** with the trimmed set. Expect **no committed blocks** until g2 and g3 join (Phase 5). Proposals waiting for votes is normal; do not panic on "height stuck at 0" for the first few minutes.
 
 ---
 
@@ -169,18 +199,19 @@ Confirm g1 loads genesis and **creates block proposals**. g1 alone cannot **comm
 Stagger 30s apart to reduce handshake storms:
 
 ```bash
-for node in zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
+for node in zhtp-g2 zhtp-g3; do
   ssh $node 'sudo systemctl start zhtp'
   sleep 30
 done
 ```
 
-**Catch-up duration:** canonical import replays every block through the full runtime (~10–30 blocks/sec on real testnet history, not the ~225/s synthetic estimate). A follower importing ~177k blocks from genesis may need **1–3 hours** — plan maintenance accordingly.
+**Catch-up duration:** after a **wipe**, all nodes rebuild from genesis locally — minutes, not hours. (Long catch-up only applies if you restore old sled without wipe.)
 
 Watch for:
 - `Caught up` / catch-up sync completing
-- `5/5` validators in consensus (no sustained `PARTITION`)
+- `3/3` validators in consensus (no sustained `PARTITION`)
 - No `Insufficient token balance` during initial sync
+- Network directory shows **0 gateways**
 
 **Partition noise:** ignore `PARTITION SUSPECTED` in the first **60 seconds** after start on any node — handshake window false positives are common during healthy startups.
 
@@ -192,7 +223,8 @@ Watch for:
 |-------|------------------|
 | All services active | `systemctl is-active zhtp` on each node |
 | Heights aligned | API tip or logs within 1 block |
-| g4 caught up | g4 committing at chain tip within 3 blocks of other validators |
+| Validator count | Exactly 3 active in logs / `node status` |
+| No gateway peers | Retired gateways not in bootstrap_peers |
 | Replay gate (optional) | Re-export fixture at new tip post-reset; manual gate green |
 
 Allow extra time (up to T+3h) if followers are still catching up from genesis.
@@ -220,7 +252,7 @@ If reset fails (consensus partition, replay errors, mass crash-loop):
 4. Start g1, then followers
 5. File incident on [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) with height + error line
 
-**Peer sled transplant** (g1 → g4 relay) is a valid recovery if a single node fails catch-up — do not wipe that node's sled again until pagination fix is confirmed on deployed binary.
+**Peer sled transplant** (g1 → follower) is valid if a single validator fails catch-up — do not wipe that node's sled again until pagination fix is confirmed on deployed binary.
 
 ---
 
@@ -230,7 +262,7 @@ On reset commit:
 
 - Remove bulk `[[allocations.sov_balances]]` from active `genesis.toml`
 - Set `[sov] initial_supply = 0`
-- Archive migrated allocations to `archive/genesis-v1-pre-cutover.toml` (forensic only)
+- Archive migrated allocations to `archive/genesis-testnet-sov-balances-pre-genesis3.toml` (forensic only)
 - Retire `[cbe_curve]` / block-0 CBE seed when GENESIS-6 lands
 
 ---

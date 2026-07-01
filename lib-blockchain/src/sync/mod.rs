@@ -660,10 +660,10 @@ mod tests {
     }
 
     #[test]
-    fn test_genesis_bootstrap_import_seeds_sov_balances() {
+    fn test_genesis_bootstrap_import_installs_sov_shell_only() {
         use crate::contracts::utils::generate_lib_token_id;
         use crate::genesis::GenesisConfig;
-        use crate::storage::{Address, TokenId};
+        use crate::storage::TokenId;
 
         let (_dir, store) = create_test_store();
         let sync = ChainSync::new(Arc::clone(&store));
@@ -673,15 +673,17 @@ mod tests {
         sync.import_blocks(vec![genesis, block1]).unwrap();
 
         let cfg = GenesisConfig::from_embedded().unwrap();
-        let entries = cfg.sov_allocation_entries().unwrap();
-        assert!(!entries.is_empty());
+        assert!(
+            cfg.sov_allocation_entries().unwrap().is_empty(),
+            "GENESIS-3 genesis must not seed bulk sov_balances"
+        );
 
         let token = TokenId::new(generate_lib_token_id());
-        let (wallet_id, expected_balance) = entries[0];
-        let bal = store
-            .get_token_balance(&token, &Address::new(wallet_id))
-            .unwrap();
-        assert_eq!(bal, expected_balance);
+        let contract = store
+            .get_token_contract(&token)
+            .unwrap()
+            .expect("SOV native contract after bootstrap");
+        assert_eq!(contract.symbol, "SOV");
         assert_eq!(store.latest_height().unwrap(), 1);
     }
 

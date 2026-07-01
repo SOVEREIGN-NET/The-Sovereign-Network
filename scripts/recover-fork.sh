@@ -12,13 +12,13 @@
 # This script enforces that rule before destroying anything:
 #   1. Reads local tip hash from <target>.
 #   2. Reads tip hash from each peer.
-#   3. Refuses to wipe if local hash matches a majority of peers (≥3/4).
+#   3. Refuses to wipe if local hash matches a majority of peers (≥2/3).
 #   4. Snapshots the divergent sled (mv, not rm).
 #   5. Restarts. Catch-up sync resolves to majority.
 #
 # Usage:
-#   scripts/recover-fork.sh zhtp-g4
-#   scripts/recover-fork.sh --force zhtp-g4    # bypass majority check (last resort)
+#   scripts/recover-fork.sh zhtp-g3
+#   scripts/recover-fork.sh --force zhtp-g3    # bypass majority check (last resort)
 
 set -euo pipefail
 
@@ -27,8 +27,6 @@ PEERS=(
     "zhtp-g1|77.42.37.161|"
     "zhtp-g2|77.42.74.80|"
     "zhtp-g3|178.105.9.247|"
-    "zhtp-g4|148.113.140.176|sudo"
-    "zhtp-g5|51.75.62.133|sudo"
 )
 SERVICE=zhtp
 
