@@ -19,6 +19,9 @@ use blake3::Hasher as Blake3Hasher;
 use lib_crypto::types::keys::PublicKey as CryptoPublicKey;
 use serde::Serialize;
 
+/// Mirror of lib-blockchain `TX_VERSION_V8`.
+const BLOCKCHAIN_TX_VERSION_V8: u32 = 8;
+
 /// Economy transaction data needed for blockchain conversion
 /// This struct provides the necessary data without importing blockchain types
 #[derive(Debug, Clone)]
@@ -163,9 +166,11 @@ pub fn to_blockchain_data(
     )
     .into_bytes();
 
-    let chain_id_u8 = chain_id.min(u8::MAX as u32) as u8;
+    let chain_id_u8: u8 = chain_id
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("chain_id {} exceeds u8 wire format", chain_id))?;
     let signing_hash = hash_for_signature_mirror(
-        1,
+        BLOCKCHAIN_TX_VERSION_V8,
         chain_id_u8,
         BlockchainMirrorTxType::Transfer,
         &mirror_outputs,
@@ -176,7 +181,7 @@ pub fn to_blockchain_data(
     let signature = sign_message(system_keypair, &signing_hash)?;
 
     Ok(BlockchainTransactionData {
-        version: 1,
+        version: BLOCKCHAIN_TX_VERSION_V8,
         chain_id,
         tx_type_name,
         inputs,
@@ -273,6 +278,29 @@ mod tests {
         assert_eq!(data.fee, 0);
         assert!(data.inputs.is_empty());
         assert_eq!(data.outputs.len(), 1);
+    }
+
+    #[test]
+    fn hash_for_signature_mirror_is_deterministic_with_sorted_outputs() {
+        let pk = CryptoPublicKey::new([7u8; 2592]);
+        let outputs = vec![
+            BlockchainMirrorOutput {
+                commitment: BlockchainMirrorHash([2u8; 32]),
+                note: BlockchainMirrorHash([1u8; 32]),
+                recipient: pk.clone(),
+                merkle_leaf: BlockchainMirrorHash([0u8; 32]),
+            },
+            BlockchainMirrorOutput {
+                commitment: BlockchainMirrorHash([1u8; 32]),
+                note: BlockchainMirrorHash([2u8; 32]),
+                recipient: pk,
+                merkle_leaf: BlockchainMirrorHash([0u8; 32]),
+            },
+        ];
+        let memo = b"determinism-test";
+        let h1 = hash_for_signature_mirror(8, 0x03, BlockchainMirrorTxType::Transfer, &outputs, 0, memo);
+        let h2 = hash_for_signature_mirror(8, 0x03, BlockchainMirrorTxType::Transfer, &outputs, 0, memo);
+        assert_eq!(h1, h2);
     }
 
     #[test]
