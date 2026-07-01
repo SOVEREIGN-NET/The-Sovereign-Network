@@ -26,38 +26,50 @@ use tracing::{error, info, warn};
 use super::Web4Handler;
 use std::collections::HashMap;
 
-/// Sign a domain registration/update system transaction with the owner's keypair.
-fn sign_domain_system_transaction(
-    owner_identity: &ZhtpIdentity,
+fn domain_chain_id() -> u8 {
+    std::env::var("ZHTP_CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(0x03)
+}
+
+/// Attach a client-provided Dilithium5 signature to a domain system transaction.
+///
+/// The server builds the unsigned skeleton (memo, type, timestamp) and verifies
+/// `domain_tx_signature_hex` over `signing_hash()` using the owner's public key.
+/// Private keys never leave the client.
+fn attach_client_domain_tx_signature(
+    owner_dilithium_pk: &[u8],
+    domain_tx_signature_hex: &str,
     tx_type: lib_blockchain::TransactionType,
     memo: Vec<u8>,
     timestamp: u64,
-    chain_id: u8,
 ) -> anyhow::Result<lib_blockchain::Transaction> {
     use lib_blockchain::integration::crypto_integration::{
         PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm,
     };
 
-    let private_key = owner_identity.private_key.clone().ok_or_else(|| {
-        anyhow!(
-            "Owner signing key unavailable — domain blockchain tx requires an identity session with private key"
-        )
-    })?;
-    let keypair = lib_crypto::KeyPair {
-        public_key: owner_identity.public_key.clone(),
-        private_key,
-    };
+    if let Some(err) = validate_domain_owner_signature_hex(domain_tx_signature_hex) {
+        return Err(anyhow!(
+            "domain_tx_signature_hex invalid: {}",
+            err
+        ));
+    }
+
+    let owner_pk: [u8; 2592] = owner_dilithium_pk
+        .try_into()
+        .map_err(|_| anyhow!("owner dilithium_pk must be exactly 2592 bytes"))?;
 
     let mut tx = lib_blockchain::Transaction {
         version: 8,
-        chain_id,
+        chain_id: domain_chain_id(),
         transaction_type: tx_type,
         inputs: Vec::new(),
         outputs: Vec::new(),
         fee: 0,
         signature: BcSignature {
             signature: Vec::new(),
-            public_key: BcPublicKey::new(keypair.public_key.dilithium_pk),
+            public_key: BcPublicKey::new(owner_pk),
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp,
         },
@@ -66,10 +78,24 @@ fn sign_domain_system_transaction(
     };
 
     let signing_hash = tx.signing_hash();
-    let crypto_signature = lib_crypto::sign_message(&keypair, signing_hash.as_bytes())?;
+    let signature_bytes = hex::decode(domain_tx_signature_hex)
+        .map_err(|e| anyhow!("Invalid domain_tx_signature_hex: {}", e))?;
+
+    let verified = lib_crypto::verify_signature(
+        signing_hash.as_bytes(),
+        &signature_bytes,
+        owner_dilithium_pk,
+    )
+    .map_err(|e| anyhow!("Domain system tx signature verification failed: {}", e))?;
+    if !verified {
+        return Err(anyhow!(
+            "domain_tx_signature_hex does not match the domain system transaction"
+        ));
+    }
+
     tx.signature = BcSignature {
-        signature: crypto_signature.signature,
-        public_key: BcPublicKey::new(keypair.public_key.dilithium_pk),
+        signature: signature_bytes,
+        public_key: BcPublicKey::new(owner_pk),
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp,
     };
@@ -124,6 +150,9 @@ pub struct ManifestDomainRegistrationRequest {
     /// Request timestamp used in the registration signature
     #[serde(default)]
     pub timestamp: u64,
+    /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
+    #[serde(default)]
+    pub domain_tx_signature_hex: String,
 }
 
 /// Simple domain registration request (for easier testing)
@@ -154,6 +183,9 @@ pub struct SimpleDomainRegistrationRequest {
     /// `build_domain_register_request_with_fee_payment`.
     #[serde(default)]
     pub fee_payment_tx: Option<String>,
+    /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
+    #[serde(default)]
+    pub domain_tx_signature_hex: String,
 }
 
 /// Content mapping for simple registration
@@ -833,12 +865,19 @@ impl Web4Handler {
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
             };
 
-            let domain_tx = sign_domain_system_transaction(
-                &owner_identity,
+            if simple_request.domain_tx_signature_hex.is_empty() {
+                return Err(anyhow!(
+                    "domain_tx_signature_hex required — sign the domain system tx client-side \
+                     (signing_hash over version=8, chain_id, tx_type, memo, timestamp={})",
+                    simple_request.timestamp
+                ));
+            }
+            let domain_tx = attach_client_domain_tx_signature(
+                owner_identity.public_key.dilithium_pk.as_slice(),
+                &simple_request.domain_tx_signature_hex,
                 tx_type,
                 memo,
-                now,
-                0x03,
+                simple_request.timestamp,
             )?;
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx, "web4_domain_register") {
@@ -1166,12 +1205,19 @@ impl Web4Handler {
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
             };
 
-            let domain_tx = sign_domain_system_transaction(
-                &owner_identity,
+            if request.domain_tx_signature_hex.is_empty() {
+                return Err(anyhow!(
+                    "domain_tx_signature_hex required — sign the domain system tx client-side \
+                     (signing_hash over version=8, chain_id, tx_type, memo, timestamp={})",
+                    request.timestamp
+                ));
+            }
+            let domain_tx = attach_client_domain_tx_signature(
+                owner_identity.public_key.dilithium_pk.as_slice(),
+                &request.domain_tx_signature_hex,
                 tx_type,
                 memo,
-                now,
-                0x03,
+                request.timestamp,
             )?;
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx, "web4_domain_update") {
