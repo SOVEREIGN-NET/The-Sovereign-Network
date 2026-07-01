@@ -2,11 +2,17 @@
 //!
 //! Enforces treasury-kernel governance for SOV mints and closes memo-based
 //! authorization bypasses for UBI and migration flows at validation time.
+//!
+//! Treasury authorization accepts either `governance_authority` (policy signer)
+//! or `kernel_address` (execution signer) — two roles, not two interchangeable hot keys.
 
 use crate::blockchain::Blockchain;
 use crate::integration::crypto_integration::PublicKey;
 use crate::transaction::core::Transaction;
 use crate::transaction::validation::ValidationError;
+
+/// Dilithium5 public key byte length used by migration memos.
+const DILITHIUM_PUBKEY_LEN: usize = 2592;
 
 /// Returns true when `token_id` is the canonical native SOV identifier.
 pub fn is_canonical_sov_token_id(token_id: &[u8; 32]) -> bool {
@@ -49,6 +55,16 @@ fn validate_ubi_distribution_memo(
     Ok(())
 }
 
+fn validate_ubi_sov_recipient_match(
+    mint_to: &[u8; 32],
+    memo_wallet_id: &str,
+) -> Result<(), ValidationError> {
+    if hex::encode(mint_to) != memo_wallet_id {
+        return Err(ValidationError::InvalidTransaction);
+    }
+    Ok(())
+}
+
 fn validate_token_migrate_memo(memo: &str) -> Result<(), ValidationError> {
     let rest = memo
         .strip_prefix("TOKEN_MIGRATE_V1:")
@@ -56,7 +72,10 @@ fn validate_token_migrate_memo(memo: &str) -> Result<(), ValidationError> {
     if rest.is_empty() {
         return Err(ValidationError::InvalidMemo);
     }
-    hex::decode(rest).map_err(|_| ValidationError::InvalidMemo)?;
+    let decoded = hex::decode(rest).map_err(|_| ValidationError::InvalidMemo)?;
+    if decoded.len() != DILITHIUM_PUBKEY_LEN {
+        return Err(ValidationError::InvalidMemo);
+    }
     Ok(())
 }
 
@@ -82,20 +101,21 @@ pub fn validate_token_mint_authorization(
         let memo = memo_str.ok_or(ValidationError::InvalidMemo)?;
         validate_ubi_distribution_memo(blockchain, memo)?;
 
-        if is_canonical_sov_token_id(&mint_data.token_id)
-            && !is_treasury_authorized_signer(blockchain, signer)
-        {
-            return Err(ValidationError::Unauthorized);
-        }
-
-        if !is_canonical_sov_token_id(&mint_data.token_id) {
-            let token = blockchain
-                .token_contracts
-                .get(&mint_data.token_id)
-                .ok_or(ValidationError::InvalidTransaction)?;
+        if is_canonical_sov_token_id(&mint_data.token_id) {
+            let wallet_id = memo
+                .strip_prefix("UBI_DISTRIBUTION_V1:")
+                .and_then(|rest| rest.split(':').nth(1))
+                .ok_or(ValidationError::InvalidMemo)?;
+            validate_ubi_sov_recipient_match(&mint_data.to, wallet_id)?;
+            if !is_treasury_authorized_signer(blockchain, signer) {
+                return Err(ValidationError::Unauthorized);
+            }
+        } else if let Some(token) = blockchain.get_token_contract(&mint_data.token_id) {
             token
                 .check_mint_authorization(signer)
                 .map_err(|_| ValidationError::Unauthorized)?;
+        } else {
+            return Err(ValidationError::InvalidTransaction);
         }
 
         return Ok(());
@@ -120,8 +140,7 @@ pub fn validate_token_mint_authorization(
     }
 
     let token = blockchain
-        .token_contracts
-        .get(&mint_data.token_id)
+        .get_token_contract(&mint_data.token_id)
         .ok_or(ValidationError::InvalidTransaction)?;
     token
         .check_mint_authorization(signer)
@@ -229,17 +248,18 @@ mod tests {
         let authority = test_public_key(40);
         let mut blockchain = blockchain_with_treasury(authority.clone());
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let memo = "UBI_DISTRIBUTION_V1:identity-1:wallet-1";
+        let wallet_hex = hex::encode([0xAA; 32]);
+        let memo = format!("UBI_DISTRIBUTION_V1:identity-1:{wallet_hex}");
 
         let missing_registry =
-            validate_token_mint_authorization(&blockchain, &mint_tx(&authority, sov_id, memo, false));
+            validate_token_mint_authorization(&blockchain, &mint_tx(&authority, sov_id, &memo, false));
         assert!(matches!(missing_registry, Err(ValidationError::InvalidTransaction)));
 
         blockchain.ubi_registry.insert(
             "identity-1".to_string(),
             crate::blockchain::UbiRegistryEntry {
                 identity_id: "identity-1".to_string(),
-                ubi_wallet_id: "wallet-1".to_string(),
+                ubi_wallet_id: wallet_hex.clone(),
                 daily_amount: 33,
                 monthly_amount: 1_000,
                 registered_at_block: 1,
@@ -252,12 +272,74 @@ mod tests {
 
         let unauthorized = validate_token_mint_authorization(
             &blockchain,
-            &mint_tx(&test_public_key(41), sov_id, memo, false),
+            &mint_tx(&test_public_key(41), sov_id, &memo, false),
         );
         assert!(matches!(unauthorized, Err(ValidationError::Unauthorized)));
 
-        let authorized = validate_token_mint_authorization(&blockchain, &mint_tx(&authority, sov_id, memo, false));
+        let authorized = validate_token_mint_authorization(&blockchain, &mint_tx(&authority, sov_id, &memo, false));
         assert!(authorized.is_ok());
+    }
+
+    #[test]
+    fn ubi_mint_rejects_recipient_wallet_mismatch_for_sov() {
+        let authority = test_public_key(42);
+        let mut blockchain = blockchain_with_treasury(authority.clone());
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let wallet_hex = hex::encode([0xAA; 32]);
+        let wrong_wallet_hex = hex::encode([0xBB; 32]);
+        let memo = format!("UBI_DISTRIBUTION_V1:identity-1:{wrong_wallet_hex}");
+
+        blockchain.ubi_registry.insert(
+            "identity-1".to_string(),
+            crate::blockchain::UbiRegistryEntry {
+                identity_id: "identity-1".to_string(),
+                ubi_wallet_id: wrong_wallet_hex,
+                daily_amount: 33,
+                monthly_amount: 1_000,
+                registered_at_block: 1,
+                last_payout_block: None,
+                total_received: 0,
+                remainder_balance: 0,
+                is_active: true,
+            },
+        );
+
+        let result = validate_token_mint_authorization(&blockchain, &mint_tx(&authority, sov_id, &memo, false));
+        assert!(matches!(result, Err(ValidationError::InvalidTransaction)));
+    }
+
+    #[test]
+    fn ubi_bypass_rejects_fake_identity_in_memo() {
+        let authority = test_public_key(43);
+        let blockchain = blockchain_with_treasury(authority.clone());
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let wallet_hex = hex::encode([0xAA; 32]);
+        let memo = format!("UBI_DISTRIBUTION_V1:fake-identity:{wallet_hex}");
+
+        let result = validate_token_mint_authorization(&blockchain, &mint_tx(&authority, sov_id, &memo, false));
+        assert!(matches!(result, Err(ValidationError::InvalidTransaction)));
+    }
+
+    #[test]
+    fn genesis_exception_does_not_fire_when_blocks_present() {
+        let mut blockchain = Blockchain::default();
+        blockchain.height = 0;
+        let sov_id = crate::contracts::utils::generate_lib_token_id();
+        let signer = test_public_key(44);
+
+        let result = validate_token_mint_authorization(&blockchain, &mint_tx(&signer, sov_id, "", true));
+        assert!(matches!(result, Err(ValidationError::Unauthorized)));
+    }
+
+    #[test]
+    fn token_migrate_rejects_wrong_pubkey_length() {
+        let authority = test_public_key(45);
+        let blockchain = blockchain_with_treasury(authority.clone());
+        let custom_id = [0xCD; 32];
+        let memo = format!("TOKEN_MIGRATE_V1:{}", hex::encode([0x11; 32]));
+
+        let result = validate_token_mint_authorization(&blockchain, &mint_tx(&authority, custom_id, &memo, false));
+        assert!(matches!(result, Err(ValidationError::InvalidMemo)));
     }
 
     #[test]
