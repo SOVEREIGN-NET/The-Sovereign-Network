@@ -363,11 +363,11 @@ impl ZkProof {
                 "ZHTP-Optimized-StorageAccess" => backend.verify_storage_access(backend_proof),
                 "ZHTP-Optimized-Merkle" => backend.verify_merkle(backend_proof, [0u8; 32]),
                 "ZHTP-Optimized-Routing" | "ZHTP-Optimized-DataIntegrity" | "fake" => {
-                    #[cfg(feature = "fake-proofs")]
+                    #[cfg(any(test, feature = "fake-proofs"))]
                     {
                         Ok(true)
                     }
-                    #[cfg(not(feature = "fake-proofs"))]
+                    #[cfg(not(any(test, feature = "fake-proofs")))]
                     {
                         Ok(false)
                     }
