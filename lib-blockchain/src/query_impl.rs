@@ -174,7 +174,7 @@ impl crate::query::BlockchainMutate for Blockchain {
     fn submit_system_transaction(
         &mut self,
         tx: Transaction,
-        originator: &'static str,
+        originator: crate::blockchain::SystemOriginator,
     ) -> anyhow::Result<()> {
         self.add_system_transaction(tx, originator)
     }

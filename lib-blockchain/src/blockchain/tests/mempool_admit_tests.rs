@@ -56,11 +56,14 @@ fn admit_gate_rejects_when_tx_count_cap_exceeded() {
 fn system_tx_originator_counter_increments_per_call() {
     let mut bc = Blockchain::new().expect("blockchain construct");
 
-    bc.add_system_transaction(make_tx(TransactionType::Coinbase), "test_originator")
+    bc.add_system_transaction(make_tx(TransactionType::Coinbase), crate::blockchain::SystemOriginator::TestOriginator)
         .expect("system tx accept");
-    bc.add_system_transaction(make_tx(TransactionType::Coinbase), "test_originator")
+    bc.add_system_transaction(make_tx(TransactionType::Coinbase), crate::blockchain::SystemOriginator::TestOriginator)
         .expect("system tx accept");
-    bc.add_system_transaction(make_tx(TransactionType::Coinbase), "other_originator")
+    bc.add_system_transaction(
+        make_tx(TransactionType::Coinbase),
+        crate::blockchain::SystemOriginator::Other("other_originator"),
+    )
         .expect("system tx accept");
 
     assert_eq!(
@@ -86,7 +89,7 @@ fn pending_tx_survives_store_reattach() {
 
     let tx = make_tx(TransactionType::Coinbase);
     let tx_hash = tx.hash();
-    bc1.add_system_transaction(tx, "durability_test")
+    bc1.add_system_transaction(tx, crate::blockchain::SystemOriginator::DurabilityTest)
         .expect("system tx accept");
     assert_eq!(bc1.pending_transactions.len(), 1);
 
@@ -130,7 +133,7 @@ fn system_injection_rejects_unsigned_token_mint_from_unknown_originator() {
     }, b"not-a-pouw-mint".to_vec());
 
     let err = bc
-        .add_system_transaction(tx, "evil_originator")
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::Other("evil_originator"))
         .expect_err("unsigned mint must be rejected");
     assert!(
         err.to_string().contains("untrusted originator"),
@@ -157,7 +160,8 @@ fn system_injection_allows_pouw_mint_with_pouw_memo_prefix() {
         timestamp: 0,
     }, memo);
 
-    bc.add_system_transaction(tx, "pouw_mint").expect("pouw mint allowed");
+    bc.add_system_transaction(tx, crate::blockchain::SystemOriginator::PouwMint)
+        .expect("pouw mint allowed");
     assert_eq!(bc.pending_transactions.len(), 1);
 }
 
@@ -180,7 +184,7 @@ fn system_injection_rejects_pouw_mint_with_mismatched_recipient() {
     }, memo);
 
     let err = bc
-        .add_system_transaction(tx, "pouw_mint")
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::PouwMint)
         .expect_err("mismatched recipient must be rejected");
     assert!(err.to_string().contains("recipient does not match"));
 }
@@ -201,7 +205,7 @@ fn system_injection_rejects_token_mint_from_ipc_external() {
     }, b"signed-but-untrusted".to_vec());
 
     let err = bc
-        .add_system_transaction(tx, "ipc_external")
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::IpcExternal)
         .expect_err("ipc TokenMint must be rejected");
     assert!(err.to_string().contains("untrusted originator"));
 }
@@ -212,7 +216,7 @@ fn system_injection_rejects_wallet_registration_without_wallet_data() {
     let tx = make_tx(TransactionType::WalletRegistration);
 
     let err = bc
-        .add_system_transaction(tx, "auto_wallet_registration")
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::AutoWalletRegistration)
         .expect_err("wallet registration without payload must be rejected");
     assert!(err.to_string().contains("missing wallet_data"));
 }
@@ -246,7 +250,7 @@ fn system_injection_rejects_funded_wallet_registration_from_non_treasury() {
     );
 
     let err = bc
-        .add_system_transaction(tx, "auto_wallet_registration")
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::AutoWalletRegistration)
         .expect_err("funded wallet registration must be rejected");
     assert!(err.to_string().contains("initial_balance=1000"));
 }

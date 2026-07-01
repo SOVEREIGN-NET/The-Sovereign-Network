@@ -42,6 +42,8 @@ mod validators;
 mod gateways;
 mod wallets;
 mod utxo;
+mod system_originator;
+pub use system_originator::SystemOriginator;
 
 pub use persistence::PersistenceStats;
 pub use utxo::SpendableOutputView;
@@ -2468,29 +2470,42 @@ impl Blockchain {
     /// System injectors bypass signature verification at admission time; this gate
     /// enforces minimum structural trust per originator class.
     fn validate_system_injection(
-        originator: &'static str,
+        originator: SystemOriginator,
         tx: &Transaction,
     ) -> anyhow::Result<()> {
         use crate::types::transaction_type::TransactionType;
 
         let empty_sig = tx.signature.signature.is_empty();
+        let label = originator.as_str();
 
         if tx.transaction_type == TransactionType::TokenMint {
-            if matches!(originator, "pouw_mint" | "pouw_reward") {
-                if !empty_sig {
+            match originator {
+                SystemOriginator::PouwMint | SystemOriginator::PouwReward => {
+                    if !empty_sig {
+                        return Err(anyhow::anyhow!(
+                            "rejecting signed PoUW TokenMint from originator '{}'",
+                            label
+                        ));
+                    }
+                    Self::validate_pouw_mint_memo(tx)?;
+                }
+                o if o.is_treasury() => {}
+                SystemOriginator::Other(unknown) => {
+                    tracing::warn!(
+                        originator = unknown,
+                        "rejecting TokenMint from untyped Other originator"
+                    );
                     return Err(anyhow::anyhow!(
-                        "rejecting signed PoUW TokenMint from originator '{}'",
+                        "rejecting TokenMint from untrusted originator '{}'",
+                        unknown
+                    ));
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "rejecting TokenMint from untrusted originator '{:?}'",
                         originator
                     ));
                 }
-                Self::validate_pouw_mint_memo(tx)?;
-            } else if Self::is_treasury_system_originator(originator) {
-                // Treasury bootstrap paths may inject unsigned mints until admin handler removal.
-            } else {
-                return Err(anyhow::anyhow!(
-                    "rejecting TokenMint from untrusted originator '{}'",
-                    originator
-                ));
             }
         }
 
@@ -2498,10 +2513,9 @@ impl Blockchain {
             let wallet_data = tx
                 .wallet_data()
                 .ok_or_else(|| anyhow::anyhow!("WalletRegistration missing wallet_data"))?;
-            if wallet_data.initial_balance > 0 && !Self::is_treasury_system_originator(originator)
-            {
+            if wallet_data.initial_balance > 0 && !originator.is_treasury() {
                 return Err(anyhow::anyhow!(
-                    "rejecting WalletRegistration with initial_balance={} from originator '{}': \
+                    "rejecting WalletRegistration with initial_balance={} from originator '{:?}': \
                      treasury originator required for funded wallet bootstrap",
                     wallet_data.initial_balance,
                     originator
@@ -2512,11 +2526,11 @@ impl Blockchain {
         if empty_sig
             && matches!(
                 originator,
-                "web4_domain_register" | "web4_domain_update"
+                SystemOriginator::Web4DomainRegister | SystemOriginator::Web4DomainUpdate
             )
         {
             return Err(anyhow::anyhow!(
-                "rejecting unsigned domain system tx from originator '{}'",
+                "rejecting unsigned domain system tx from originator '{:?}'",
                 originator
             ));
         }
@@ -2570,33 +2584,22 @@ impl Blockchain {
         Ok(())
     }
 
-    fn is_treasury_system_originator(originator: &str) -> bool {
-        matches!(
-            originator,
-            "admin_sov_mint"
-                | "genesis_bootstrap"
-                | "genesis_wallet"
-                | "migration_wallet"
-                | "treasury_kernel"
-                | "treasury_allocation"
-        )
-    }
-
     pub fn add_system_transaction(
         &mut self,
         transaction: Transaction,
-        originator: &'static str,
+        originator: SystemOriginator,
     ) -> Result<()> {
         Self::validate_system_injection(originator, &transaction)?;
 
+        let label = originator.as_str();
         tracing::info!(
-            originator = originator,
+            originator = label,
             tx_hash = %hex::encode(&transaction.hash().as_bytes()[..8]),
             "system tx (bypass admission + verify)",
         );
         *self
             .system_tx_originators
-            .entry(originator)
+            .entry(label)
             .or_insert(0) += 1;
 
         // Keep `mempool_state` paired with the pending pool. We bypass
@@ -2621,7 +2624,7 @@ impl Blockchain {
         if let Some(store) = &self.store {
             if let Err(e) = store.put_pending_transaction(&transaction) {
                 tracing::warn!(
-                    originator = originator,
+                    originator = label,
                     "system tx persistence failed: {}",
                     e
                 );
@@ -6736,7 +6739,7 @@ impl Blockchain {
 
         let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
         let tx_hash = mint_tx.hash();
-        self.add_system_transaction(mint_tx, "pouw_mint")?;
+        self.add_system_transaction(mint_tx, SystemOriginator::PouwMint)?;
         Ok(tx_hash)
     }
 }

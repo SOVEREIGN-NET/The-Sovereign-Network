@@ -101,7 +101,7 @@ pub use block::{
 // Blockchain module
 pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
-    EconomicsTransaction, PouwMintRecord, ValidatorInfo, GatewayInfo,
+    EconomicsTransaction, PouwMintRecord, SystemOriginator, ValidatorInfo, GatewayInfo,
     ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
 pub use query::{BlockchainQuery, BlockchainMutate};

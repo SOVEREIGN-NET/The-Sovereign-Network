@@ -148,6 +148,6 @@ pub trait BlockchainMutate {
     fn submit_system_transaction(
         &mut self,
         tx: Transaction,
-        originator: &'static str,
+        originator: crate::blockchain::SystemOriginator,
     ) -> anyhow::Result<()>;
 }

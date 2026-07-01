@@ -223,7 +223,7 @@ async fn dispatch_request(
             match crate::query::BlockchainMutate::submit_system_transaction(
                 &mut *bc,
                 tx.clone(),
-                "ipc_external",
+                crate::blockchain::SystemOriginator::IpcExternal,
             ) {
                 Ok(()) => IpcResponse::Ok,
                 Err(e) => IpcResponse::Error(e.to_string()),
