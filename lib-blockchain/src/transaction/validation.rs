@@ -8,9 +8,7 @@ use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
-use crate::transaction::mint_authorization::{
-    is_treasury_authorized_signer, validate_token_mint_authorization,
-};
+use crate::transaction::mint_authorization::validate_token_mint_authorization;
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
     decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -1482,7 +1480,7 @@ impl TransactionValidator {
     fn validate_wallet_registration_transaction(
         &self,
         transaction: &Transaction,
-        blockchain: Option<&crate::blockchain::Blockchain>,
+        _blockchain: Option<&crate::blockchain::Blockchain>,
     ) -> ValidationResult {
         // Check that wallet_data exists
         let wallet_data = transaction
@@ -1517,6 +1515,10 @@ impl TransactionValidator {
                 // Valid wallet types
             }
             _ => return Err(ValidationError::InvalidWalletType),
+        }
+
+        if wallet_data.initial_balance > 0 {
+            return Err(ValidationError::InvalidTransaction);
         }
 
         Ok(())

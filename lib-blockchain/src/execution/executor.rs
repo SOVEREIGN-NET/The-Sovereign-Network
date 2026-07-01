@@ -3264,22 +3264,6 @@ impl BlockExecutor {
                     },
                 )?;
 
-                if wallet_data.initial_balance > 0 {
-                    let recipient = Address::new(wallet_data.wallet_id.as_array());
-                    let token = Self::canonical_sov_token_id();
-                    tx_apply::apply_token_mint(
-                        mutator,
-                        &token,
-                        &recipient,
-                        wallet_data.initial_balance as u128,
-                    )?;
-                    self.sync_canonical_sov_contract_after_mint(
-                        mutator,
-                        &recipient,
-                        wallet_data.initial_balance as u128,
-                    )?;
-                }
-
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::WalletUpdate => {
