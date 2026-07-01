@@ -2,7 +2,7 @@
 
 **Issue:** [#2731 GENESIS-3](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2731)  
 **Epic:** [#2727 GENESIS](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727)  
-**Status:** Draft — execute only after GENESIS-2 gates are green  
+**Status:** Scheduled — execute only after prerequisites below are checked
 **Audience:** Testnet operators (validators g1–g5, gateways)
 
 ---
@@ -40,9 +40,22 @@ Do **not** reset until every item is checked:
 ## Reset datetime
 
 ```
-GENESIS-3 reset_time (UTC):  TBD — fill in before announcing (placeholder was 2026-07-02T12:00:00Z)
-halt_lead_time:              T-30 minutes (stop accepting user txs / announce maintenance)
+GENESIS-3 reset_time (UTC):  2026-07-07T12:00:00Z   (Monday)
+operator_notice_deadline:    2026-07-05T12:00:00Z   (≥48h before reset — announce maintenance now)
+halt_lead_time:              T-30 minutes → 2026-07-07T11:30:00Z
 ```
+
+| Phase | UTC | Local hint (Europe/London, BST) |
+|-------|-----|----------------------------------|
+| Operator notice sent | by 2026-07-05T12:00:00Z | Sat 05 Jul, 13:00 |
+| Phase 0 snapshot (optional) | 2026-07-06T12:00:00Z | Sun 06 Jul, 13:00 |
+| Phase 1 halt | 2026-07-07T11:30:00Z | Mon 07 Jul, 12:30 |
+| Phase 2–3 deploy + wipe | 2026-07-07T12:00:00Z | Mon 07 Jul, 13:00 |
+| Phase 4 bootstrap g1 | 2026-07-07T12:02:00Z | Mon 07 Jul, 13:02 |
+| Phase 5 start followers | 2026-07-07T12:05:00Z | Mon 07 Jul, 13:05 (30s stagger) |
+| Phase 6 verification | from 2026-07-07T12:30:00Z | allow up to **T+3h** for catch-up |
+
+**Slip rule:** if #2744 is not merged and deployed by 2026-07-06T12:00:00Z, postpone one week (2026-07-14T12:00:00Z) and re-announce.
 
 ---
 
