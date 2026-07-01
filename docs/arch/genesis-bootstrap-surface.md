@@ -122,8 +122,9 @@ Empirical gate for the live chain shape. **Who:** testnet maintainer / validator
 Export (versioned fixture — `blocks.v1.bin` + `checkpoint.json`):
 
 ```bash
+# <sled-path>: common locations are /opt/zhtp/.zhtp/data/testnet/sled or /opt/zhtp/data/testnet/sled
 cargo run -p tools --bin export_replay_fixture -- \
-  /opt/zhtp/data/testnet/sled /tmp/g4-fixture --to-height 74010
+  <sled-path> /tmp/g4-fixture --to-height 74010
 ```
 
 Replay:

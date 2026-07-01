@@ -33,7 +33,9 @@
 pub mod replay_fixture;
 pub mod snapshot;
 
-pub use replay_fixture::{ReplayBlocksFixture, REPLAY_BLOCKS_FIXTURE_VERSION};
+pub use replay_fixture::{
+    ReplayBlocksFixture, MAX_REPLAY_FIXTURE_BYTES, REPLAY_BLOCKS_FIXTURE_VERSION,
+};
 pub use snapshot::{SnapshotError, SnapshotId, SnapshotInfo, SnapshotManager, SnapshotResult};
 
 use std::sync::Arc;
@@ -310,12 +312,6 @@ impl ChainSync {
             blocks_imported: 1 + canonical.blocks_imported,
             final_height: canonical.final_height,
         })
-    }
-
-    /// Contract/DAO/domain variants currently execute through canonical `Blockchain` flow,
-    /// not `BlockExecutor`'s phase-2 transaction applicator.
-    fn requires_canonical_runtime_import(blocks: &[Block]) -> bool {
-        blocks.iter().any(Self::block_needs_canonical_runtime)
     }
 
     fn import_blocks_via_canonical_runtime(
@@ -826,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn test_requires_canonical_runtime_import_detection() {
+    fn test_block_needs_canonical_runtime_detection() {
         let normal_block = create_block_at_height(0, Hash::default());
         let canonical_header = create_block_at_height(1, normal_block.header.block_hash).header;
         let canonical_block = Block::new(
@@ -834,13 +830,8 @@ mod tests {
             vec![create_test_tx(TransactionType::ContractExecution)],
         );
 
-        assert!(!ChainSync::requires_canonical_runtime_import(&[
-            normal_block.clone()
-        ]));
-        assert!(ChainSync::requires_canonical_runtime_import(&[
-            normal_block,
-            canonical_block
-        ]));
+        assert!(!ChainSync::block_needs_canonical_runtime(&normal_block));
+        assert!(ChainSync::block_needs_canonical_runtime(&canonical_block));
     }
 
     #[test]

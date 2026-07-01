@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
-use lib_blockchain::sync::{ChainSync, ReplayBlocksFixture};
+use lib_blockchain::sync::{ChainSync, ReplayBlocksFixture, MAX_REPLAY_FIXTURE_BYTES};
 use lib_blockchain::transaction::TransactionPayload;
 use lib_blockchain::types::TransactionType;
 use std::path::Path;
@@ -12,11 +12,16 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 fn load_fixture(path: &Path) -> Result<Vec<lib_blockchain::block::Block>> {
-    let data = std::fs::read(path)?;
-    if let Ok(fixture) = ReplayBlocksFixture::decode(&data) {
+    if let Ok(fixture) = ReplayBlocksFixture::load(path) {
         return Ok(fixture.blocks);
     }
-    bincode::deserialize(&data).context("decode blocks fixture")
+    let data = std::fs::read(path)?;
+    anyhow::ensure!(
+        data.len() <= MAX_REPLAY_FIXTURE_BYTES,
+        "fixture file too large ({} bytes)",
+        data.len()
+    );
+    bincode::deserialize(&data).context("decode legacy blocks fixture (try re-exporting v1)")
 }
 
 fn sov_token() -> TokenId {
@@ -29,7 +34,11 @@ fn balance_at(store: &dyn BlockchainStore, wallet: &[u8; 32]) -> Result<u128> {
         .unwrap_or(0))
 }
 
-fn replay_to_height(blocks: &[lib_blockchain::block::Block], height: u64) -> Result<Arc<dyn BlockchainStore>> {
+fn replay_balance_at(
+    blocks: &[lib_blockchain::block::Block],
+    height: u64,
+    wallet: &[u8; 32],
+) -> Result<u128> {
     let slice: Vec<_> = blocks
         .iter()
         .filter(|b| b.header.height <= height)
@@ -40,11 +49,12 @@ fn replay_to_height(blocks: &[lib_blockchain::block::Block], height: u64) -> Res
         slice.last().map(|b| b.header.height) == Some(height),
         "fixture missing block at height {height}"
     );
+    // Keep TempDir alive for the lifetime of the sled store.
     let dir = TempDir::new()?;
     let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(dir.path())?);
     let sync = ChainSync::new(Arc::clone(&store));
     sync.import_blocks(slice).context("replay import")?;
-    Ok(store)
+    balance_at(store.as_ref(), wallet)
 }
 
 fn inspect_block(path: &Path, height: u64) -> Result<()> {
@@ -329,8 +339,7 @@ fn main() -> Result<()> {
             height,
         } => {
             let w = parse_wallet_hex(&wallet)?;
-            let store = replay_to_height(&load_fixture(&blocks)?, height)?;
-            let bal = balance_at(store.as_ref(), &w)?;
+            let bal = replay_balance_at(&load_fixture(&blocks)?, height, &w)?;
             println!("replay height={height} balance={bal}");
         }
         Commands::LiveBalance { sled, wallet } => {

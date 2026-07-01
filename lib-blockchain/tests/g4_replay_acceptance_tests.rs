@@ -29,7 +29,7 @@
 //!
 //! ## Manual g4 fixture
 //! ```bash
-//! cargo run -p tools --bin export_replay_fixture -- /opt/zhtp/data/testnet/sled /tmp/g4 --to-height 74010
+//! cargo run -p tools --bin export_replay_fixture -- <sled-path> /tmp/g4 --to-height 74010
 //! G4_REPLAY_BLOCKS_PATH=/tmp/g4/blocks.v1.bin G4_REPLAY_SNAPSHOT_PATH=/tmp/g4/checkpoint.json \
 //!   cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
 //!   test_g4_checkpoint_replay_acceptance -- --ignored --nocapture

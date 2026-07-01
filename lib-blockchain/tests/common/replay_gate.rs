@@ -297,16 +297,15 @@ pub fn within_tolerance(expected: u128, actual: u128, tolerance: u128) -> bool {
 
 /// Load a versioned replay fixture (`blocks.v1.bin`) or legacy raw `Vec<Block>` bincode.
 pub fn load_blocks_fixture(path: &Path) -> anyhow::Result<Vec<lib_blockchain::block::Block>> {
-    let data = std::fs::read(path)?;
-    if let Ok(fixture) = ReplayBlocksFixture::decode(&data) {
-        anyhow::ensure!(
-            fixture.version == lib_blockchain::sync::REPLAY_BLOCKS_FIXTURE_VERSION,
-            "unsupported fixture version {} (expected {})",
-            fixture.version,
-            lib_blockchain::sync::REPLAY_BLOCKS_FIXTURE_VERSION
-        );
+    if let Ok(fixture) = ReplayBlocksFixture::load(path) {
         return Ok(fixture.blocks);
     }
+    let data = std::fs::read(path)?;
+    anyhow::ensure!(
+        data.len() <= lib_blockchain::sync::MAX_REPLAY_FIXTURE_BYTES,
+        "fixture file too large ({} bytes)",
+        data.len()
+    );
     // Legacy: unversioned Vec<Block> — may break across bincode layout changes.
     bincode::deserialize(&data)
         .map_err(|e| anyhow::anyhow!("block fixture decode failed (try re-exporting v1): {e}"))

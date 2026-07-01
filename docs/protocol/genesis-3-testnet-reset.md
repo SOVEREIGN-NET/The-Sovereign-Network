@@ -48,13 +48,15 @@ halt_lead_time:              T-30 minutes (stop accepting user txs / announce ma
 
 ## Validator inventory
 
-| Host | IP | sudo | Role |
-|------|-----|------|------|
-| zhtp-g1 | 77.42.37.161 | no | bootstrap leader |
-| zhtp-g2 | 77.42.74.80 | no | validator |
-| zhtp-g3 | 51.75.62.133 | no | validator |
-| zhtp-g4 | 148.113.140.176 | yes | validator |
-| zhtp-g5 | 178.105.9.247 | yes | validator |
+| Host (SSH alias) | sudo | Role |
+|------------------|------|------|
+| zhtp-g1 | no | bootstrap leader |
+| zhtp-g2 | no | validator |
+| zhtp-g3 | no | validator |
+| zhtp-g4 | yes | validator |
+| zhtp-g5 | yes | validator |
+
+IP inventory lives in private ops config (not in-repo).
 
 Data path (all nodes): `/opt/zhtp/.zhtp/data/testnet/sled`
 
