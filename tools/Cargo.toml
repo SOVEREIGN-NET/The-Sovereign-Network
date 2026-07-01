@@ -34,6 +34,7 @@ lib-blockchain = { path = "../lib-blockchain" }
 lib-types = { path = "../lib-types" }
 hex = "0.4"
 anyhow = "1"
+clap = { version = "4.0", features = ["derive"] }
 sled = "0.34"
 bincode = "1.3"
 serde = { version = "1.0", features = ["derive"] }

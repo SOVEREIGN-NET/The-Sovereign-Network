@@ -7366,6 +7366,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "blake3",
+ "clap",
  "dirs",
  "hex",
  "lib-blockchain",

@@ -22,7 +22,7 @@ Do **not** reset until every item is checked:
 - [ ] **GENESIS-1 merged** — `project_chain_bootstrap_to_store()` at h=0 ([#2741](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/pull/2741))
 - [ ] **GENESIS-2 CI green** — `./scripts/validate-genesis-replay-gate.sh`
 - [ ] **Pagination sync fix deployed** — `ChainSync::import_blocks` uses canonical runtime on page 2+ (fixes g4 @ h=74010 wipe failure)
-- [ ] **Manual g4 fixture green** — export from live sled, replay to checkpoint:
+- [ ] **Pre-reset g4 fixture documents divergence class** — manual gate is **expected red** on pre-reset chain (replay cannot reproduce h=73982 write-path history). Re-run after reset; gate must be **green** on post-reset chain before declaring success:
   ```bash
   cargo run --release -p tools --bin export_replay_fixture -- \
     <source-sled> /tmp/g4-fixture --to-height 74010
@@ -40,7 +40,7 @@ Do **not** reset until every item is checked:
 ## Reset datetime
 
 ```
-GENESIS-3 reset_time (UTC):  2026-07-02T12:00:00Z   (Wednesday — adjust if needed)
+GENESIS-3 reset_time (UTC):  TBD — fill in before announcing (placeholder was 2026-07-02T12:00:00Z)
 halt_lead_time:              T-30 minutes (stop accepting user txs / announce maintenance)
 ```
 
@@ -84,9 +84,19 @@ Run **simultaneously** on all validators:
 
 ```bash
 for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
-  ssh $node 'sudo systemctl stop zhtp' &
+  ssh $node 'sudo systemctl stop zhtp --wait-timeout 120' &
 done
 wait
+```
+
+If a node does not reach `inactive` within 120s (wedged FSM, locked sled), force-kill and verify:
+
+```bash
+for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
+  ssh $node 'sudo systemctl is-active zhtp 2>/dev/null || echo stopped'
+done
+# If still active after 120s:
+# ssh $node 'sudo systemctl kill -s SIGKILL zhtp && sleep 5 && sudo systemctl is-active zhtp || echo killed'
 ```
 
 Verify all stopped:
@@ -118,11 +128,21 @@ rsync -az target/release/zhtp zhtp-g1:/opt/zhtp/zhtp
 
 ## Phase 3 — Wipe sled (T+0)
 
-**All validators together** — empty sled triggers peer catch-up from block 0:
+**All validators together** — empty sled triggers peer catch-up from block 0.
+
+Wipe canonical sled **and** legacy sidecar state under the testnet data dir:
 
 ```bash
+DATA=/opt/zhtp/.zhtp/data/testnet
 for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
-  ssh $node 'sudo rm -rf /opt/zhtp/.zhtp/data/testnet/sled && sudo mkdir -p /opt/zhtp/.zhtp/data/testnet/sled'
+  ssh $node "sudo rm -rf \
+    $DATA/sled \
+    $DATA/blockchain.dat \
+    $DATA/rewards.sled \
+    $DATA/rewards.dat \
+    $DATA/notifications.sled \
+    $DATA/storage \
+    && sudo mkdir -p $DATA/sled"
 done
 ```
 
@@ -138,7 +158,7 @@ sleep 30
 ssh zhtp-g1 'sudo journalctl -u zhtp -n 30 --no-pager | grep -iE "genesis|height|Loaded blockchain"'
 ```
 
-Confirm g1 loads genesis and begins producing blocks.
+Confirm g1 loads genesis and **creates block proposals**. g1 alone cannot **commit** blocks — BFT needs 4/5 quorum. Expect **no committed blocks** until followers join (Phase 5). Proposals waiting for votes is normal; do not panic on "height stuck at 0" for the first few minutes.
 
 ---
 
@@ -153,10 +173,14 @@ for node in zhtp-g2 zhtp-g3 zhtp-g4 zhtp-g5; do
 done
 ```
 
+**Catch-up duration:** canonical import replays every block through the full runtime (~10–30 blocks/sec on real testnet history, not the ~225/s synthetic estimate). A follower importing ~177k blocks from genesis may need **1–3 hours** — plan maintenance accordingly.
+
 Watch for:
 - `Caught up` / catch-up sync completing
-- `5/5` validators in consensus (no `PARTITION`)
+- `5/5` validators in consensus (no sustained `PARTITION`)
 - No `Insufficient token balance` during initial sync
+
+**Partition noise:** ignore `PARTITION SUSPECTED` in the first **60 seconds** after start on any node — handshake window false positives are common during healthy startups.
 
 ---
 
@@ -166,8 +190,10 @@ Watch for:
 |-------|------------------|
 | All services active | `systemctl is-active zhtp` on each node |
 | Heights aligned | API tip or logs within 1 block |
-| g4 caught up | g4 logs show commit at peer height, not stuck at 74009 |
-| Replay gate (optional) | Re-export fixture at h=74010 post-reset; manual gate green |
+| g4 caught up | g4 committing at chain tip within 3 blocks of other validators |
+| Replay gate (optional) | Re-export fixture at new tip post-reset; manual gate green |
+
+Allow extra time (up to T+3h) if followers are still catching up from genesis.
 
 ---
 

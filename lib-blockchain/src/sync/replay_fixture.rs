@@ -9,9 +9,6 @@ use crate::block::Block;
 /// Fixture format version — bump when `ReplayBlocksFixture` layout changes.
 pub const REPLAY_BLOCKS_FIXTURE_VERSION: u32 = 1;
 
-/// g4 wipe-and-replay first wedged here (Insufficient SOV @ payroll). Floor for manual gates.
-pub const G4_CHECKPOINT_HEIGHT_FLOOR: u64 = 74_010;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayBlocksFixture {
     pub version: u32,

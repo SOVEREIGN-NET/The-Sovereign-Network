@@ -6,7 +6,8 @@
 //! # Design Principles
 //!
 //! 1. **Genesis bootstrap (h=0)** - Block 0 via executor, blocks 1+ via canonical runtime
-//! 2. **Continuation (h≥1)** - Always canonical `Blockchain` runtime (matches live validators)
+//! 2. **Continuation (h≥1)** - Always canonical `Blockchain` runtime (matches live validators).
+//!    `ChainSync` validates `previous_hash` before each import (trusted-replay executor skips it).
 //! 3. **No direct state writes** - Import never writes directly to store
 //! 4. **Atomic failure** - If any block fails, stop immediately; state reflects last committed block
 //! 5. **Deterministic** - Same blocks always produce same state
@@ -32,9 +33,7 @@
 pub mod replay_fixture;
 pub mod snapshot;
 
-pub use replay_fixture::{
-    ReplayBlocksFixture, G4_CHECKPOINT_HEIGHT_FLOOR, REPLAY_BLOCKS_FIXTURE_VERSION,
-};
+pub use replay_fixture::{ReplayBlocksFixture, REPLAY_BLOCKS_FIXTURE_VERSION};
 pub use snapshot::{SnapshotError, SnapshotId, SnapshotInfo, SnapshotManager, SnapshotResult};
 
 use std::sync::Arc;
@@ -260,11 +259,10 @@ impl ChainSync {
     /// `finish_block_processing` hooks (domain fees, identity, wallet, …) match
     /// the incremental live-validator path.
     ///
-    /// Correctness over speed: canonical import is slower than executor-only (~225
-    /// blocks/sec observed) but required because live validators built state via
-    /// `process_and_commit_block`, not raw `BlockExecutor::apply_block` alone.
-    /// A 177k-block fresh sync is on the order of tens of minutes — acceptable for
-    /// wipe-and-recover, not the steady-state hot path.
+    /// Correctness over speed: canonical import is slower than executor-only.
+    /// Synthetic SOV-only chains: ~100–225 blocks/sec. Real testnet blocks with
+    /// mixed tx types: ~10–30 blocks/sec (empirical). A 177k-block wipe-and-catch-up
+    /// is roughly 90 min–3 h per follower — acceptable for recovery, not steady-state.
     fn import_blocks_from_genesis_bootstrap<F>(
         &self,
         blocks: Vec<Block>,
@@ -358,6 +356,7 @@ impl ChainSync {
 
                 for block in prefix {
                     let height = block.header.height;
+                    Self::validate_block_previous_hash(&*self.store, &block)?;
                     executor
                         .apply_block(&block)
                         .map_err(|e| SyncError::BlockApplyFailed { height, error: e })?;
@@ -415,6 +414,45 @@ impl ChainSync {
         })
     }
 
+    /// Enforce `previous_hash` chain continuity before trusted-replay import.
+    ///
+    /// `BlockExecutor::from_config_trusted_replay` sets `skip_prev_hash_validation=true`;
+    /// `Blockchain::add_block_from_network` uses that executor, so ChainSync must check.
+    fn validate_block_previous_hash(
+        store: &dyn BlockchainStore,
+        block: &Block,
+    ) -> SyncResult<()> {
+        let height = block.header.height;
+        if height == 0 {
+            return Ok(());
+        }
+
+        use lib_types::primitives::BlockHash;
+
+        let expected_hash = store
+            .get_block_hash_by_height(height - 1)?
+            .ok_or_else(|| SyncError::BlockApplyFailed {
+                height,
+                error: BlockApplyError::ValidationFailed(format!(
+                    "Previous block at height {} not found",
+                    height - 1
+                )),
+            })?;
+
+        let actual_hash = BlockHash::new(block.header.previous_hash);
+        if expected_hash != actual_hash {
+            return Err(SyncError::BlockApplyFailed {
+                height,
+                error: BlockApplyError::InvalidPreviousHash {
+                    expected: expected_hash,
+                    actual: actual_hash,
+                },
+            });
+        }
+
+        Ok(())
+    }
+
     fn run_canonical_import(&self, blocks: Vec<Block>) -> SyncResult<CanonicalImportResult> {
         if tokio::runtime::Handle::try_current().is_ok() {
             let store = Arc::clone(&self.store);
@@ -457,6 +495,7 @@ fn run_canonical_import_inner(
         let mut heights = Vec::with_capacity(blocks.len());
         for block in blocks {
             let height = block.header.height;
+            ChainSync::validate_block_previous_hash(&*store, &block)?;
             blockchain
                 .add_block_from_network(block)
                 .await

@@ -11,7 +11,10 @@ use lib_blockchain::contracts::utils::{generate_custom_token_id, generate_lib_to
 use lib_blockchain::genesis::GenesisConfig;
 use lib_blockchain::protocol::ProtocolParams;
 use lib_blockchain::storage::{Address, BlockchainStore, TokenId};
-use lib_blockchain::sync::{G4_CHECKPOINT_HEIGHT_FLOOR, ReplayBlocksFixture};
+use lib_blockchain::sync::ReplayBlocksFixture;
+
+/// Pre-GENESIS-3 testnet incident height (g4 wedged @ h=74_010). Meaningless after reset.
+pub const G4_CHECKPOINT_HEIGHT_FLOOR: u64 = 74_010;
 use lib_blockchain::Blockchain;
 use serde::{Deserialize, Serialize};
 

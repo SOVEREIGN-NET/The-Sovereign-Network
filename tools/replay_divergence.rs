@@ -1,10 +1,7 @@
 //! Hunt replay vs live-sled balance divergence for GENESIS-2 forensics.
-//!
-//! Usage:
-//!   replay_divergence inspect-block <blocks.v1.bin> <height>
-//!   replay_divergence find-divergence <live-sled> <blocks.v1.bin> <wallet-hex> [max-height]
 
 use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
 use lib_blockchain::sync::{ChainSync, ReplayBlocksFixture};
@@ -235,61 +232,110 @@ fn find_wallet_in_chain(blocks_path: &Path, wallet_hex: &str) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
-    let cmd = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "help".to_string());
+#[derive(Parser)]
+#[command(
+    name = "replay_divergence",
+    about = "Hunt replay vs live-sled balance divergence for GENESIS-2 forensics",
+    version
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    match cmd.as_str() {
-        "inspect-block" => {
-            let path = Path::new(args.get(1).context("blocks path")?);
-            let height: u64 = args.get(2).context("height")?.parse()?;
-            inspect_block(path, height)?;
+#[derive(Subcommand)]
+enum Commands {
+    /// Print txs in a fixture block at a given height.
+    InspectBlock {
+        /// Path to blocks.v1.bin (or raw bincode fixture).
+        blocks: std::path::PathBuf,
+        /// Block height to inspect.
+        height: u64,
+    },
+    /// List TokenTransfer debits/credits for a wallet in a height range.
+    ScanWallet {
+        blocks: std::path::PathBuf,
+        /// 32-byte wallet id as hex.
+        wallet: String,
+        /// Start height (default 73900).
+        #[arg(long, default_value_t = 73_900)]
+        from_height: u64,
+        /// End height (default 74010).
+        #[arg(long, default_value_t = 74_010)]
+        to_height: u64,
+    },
+    /// Scan all fixture blocks for wallet-related txs.
+    FindWallet {
+        blocks: std::path::PathBuf,
+        wallet: String,
+    },
+    /// Incremental replay with balance samples at milestone heights.
+    Milestones {
+        blocks: std::path::PathBuf,
+        wallet: String,
+        /// Last height to replay (default 74010).
+        #[arg(long, default_value_t = 74_010)]
+        max_height: u64,
+    },
+    /// Replay fixture to height and print wallet SOV balance.
+    BalanceAt {
+        blocks: std::path::PathBuf,
+        wallet: String,
+        height: u64,
+    },
+    /// Read wallet SOV balance + nonce from a live sled store.
+    LiveBalance {
+        sled: std::path::PathBuf,
+        wallet: String,
+    },
+}
+
+fn parse_wallet_hex(wallet: &str) -> Result<[u8; 32]> {
+    let wallet_bytes = hex::decode(wallet).context("wallet hex")?;
+    anyhow::ensure!(wallet_bytes.len() == 32, "wallet must be 32 bytes");
+    let mut w = [0u8; 32];
+    w.copy_from_slice(&wallet_bytes);
+    Ok(w)
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::InspectBlock { blocks, height } => {
+            inspect_block(&blocks, height)?;
         }
-        "scan-wallet" => {
-            let blocks = Path::new(args.get(1).context("blocks path")?);
-            let wallet = args.get(2).context("wallet hex")?;
-            let from_h: u64 = args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(73_900);
-            let to_h: u64 = args.get(4).map(|s| s.parse()).transpose()?.unwrap_or(74_010);
-            scan_wallet_transfers(blocks, wallet, from_h, to_h)?;
+        Commands::ScanWallet {
+            blocks,
+            wallet,
+            from_height,
+            to_height,
+        } => {
+            scan_wallet_transfers(&blocks, &wallet, from_height, to_height)?;
         }
-        "find-wallet" => {
-            let blocks = Path::new(args.get(1).context("blocks path")?);
-            let wallet = args.get(2).context("wallet hex")?;
-            find_wallet_in_chain(blocks, wallet)?;
+        Commands::FindWallet { blocks, wallet } => {
+            find_wallet_in_chain(&blocks, &wallet)?;
         }
-        "milestones" => {
-            let blocks = Path::new(args.get(1).context("blocks path")?);
-            let wallet = args.get(2).context("wallet hex")?;
-            let max_h: u64 = args
-                .get(3)
-                .map(|s| s.parse())
-                .transpose()?
-                .unwrap_or(74_010);
-            incremental_milestones(blocks, wallet, max_h)?;
+        Commands::Milestones {
+            blocks,
+            wallet,
+            max_height,
+        } => {
+            incremental_milestones(&blocks, &wallet, max_height)?;
         }
-        "balance-at" => {
-            let blocks = Path::new(args.get(1).context("blocks path")?);
-            let wallet = args.get(2).context("wallet hex")?;
-            let height: u64 = args.get(3).context("height")?.parse()?;
-            let wallet_bytes = hex::decode(wallet).context("wallet hex")?;
-            anyhow::ensure!(wallet_bytes.len() == 32, "wallet must be 32 bytes");
-            let mut w = [0u8; 32];
-            w.copy_from_slice(&wallet_bytes);
-            let store = replay_to_height(&load_fixture(blocks)?, height)?;
+        Commands::BalanceAt {
+            blocks,
+            wallet,
+            height,
+        } => {
+            let w = parse_wallet_hex(&wallet)?;
+            let store = replay_to_height(&load_fixture(&blocks)?, height)?;
             let bal = balance_at(store.as_ref(), &w)?;
             println!("replay height={height} balance={bal}");
         }
-        "live-balance" => {
-            let sled = Path::new(args.get(1).context("sled path")?);
-            let wallet = args.get(2).context("wallet hex")?;
-            let wallet_bytes = hex::decode(wallet).context("wallet hex")?;
-            anyhow::ensure!(wallet_bytes.len() == 32, "wallet must be 32 bytes");
-            let mut w = [0u8; 32];
-            w.copy_from_slice(&wallet_bytes);
-            let store = SledStore::open(sled)?;
+        Commands::LiveBalance { sled, wallet } => {
+            let w = parse_wallet_hex(&wallet)?;
+            let store = SledStore::open(&sled)?;
             let h = store.latest_height().unwrap_or(0);
             let bal = balance_at(&store, &w)?;
             let token = sov_token();
@@ -297,17 +343,6 @@ fn main() -> Result<()> {
                 .get_token_nonce(&token, &Address::new(w))
                 .unwrap_or(0);
             println!("live sled height={h} balance={bal} nonce={nonce}");
-        }
-        _ => {
-            eprintln!(
-                "Usage:\n  \
-                 replay_divergence inspect-block <blocks.v1.bin> <height>\n  \
-                 replay_divergence scan-wallet <blocks.v1.bin> <wallet-hex> [from-h] [to-h]\n  \
-                 replay_divergence find-wallet <blocks.v1.bin> <wallet-hex>\n  \
-                 replay_divergence milestones <blocks.v1.bin> <wallet-hex> [max-height]\n  \
-                 replay_divergence balance-at <blocks.v1.bin> <wallet-hex> <height>\n  \
-                 replay_divergence live-balance <sled-path> <wallet-hex>"
-            );
         }
     }
     Ok(())

@@ -115,7 +115,7 @@ Failures print `token_id`, `address`, `have`, `need` via `common/replay_gate.rs`
 
 **Who runs CI:** every PR touching `lib-blockchain` execution/sync/genesis (CI or `./scripts/validate-genesis-replay-gate.sh` locally).
 
-### Manual g4 fixture (≥ `G4_CHECKPOINT_HEIGHT_FLOOR` = 74_010)
+### Manual g4 fixture (≥ h = 74_010 — pre-GENESIS-3 incident height)
 
 Empirical gate for the live chain shape. **Who:** testnet maintainer / validator operator with sled SSH access. **When:** before each testnet binary deploy that touches genesis, replay, or executor paths; mandatory before GENESIS-7 (delete seed-sled). **On failure:** block deploy, file issue on [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) / [#2730](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2730) with height + `Insufficient token balance` line (token/address/have/need).
 

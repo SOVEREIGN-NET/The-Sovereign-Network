@@ -1,5 +1,19 @@
 //! GENESIS-2 (#2730): replay acceptance gates.
 //!
+//! ## Test map
+//!
+//! | Test | Guards |
+//! |------|--------|
+//! | `test_sov_native_wipe_replay_parity` | SOV genesis bootstrap + transfer wipe-replay (#2725/#2741) |
+//! | `test_dao_token_creation_wipe_replay_parity` | `TokenCreation` + custom-token transfer (BUBL class) |
+//! | `test_paginated_fresh_sync_replay_parity` | Page-2+ paginated sync regression (canonical import on continuation) |
+//! | `test_g4_wallet74010_sequence_isolated_replay` | h=74010 forensics — **expected replay failure** until GENESIS-3 |
+//! | `test_g4_wallet74010_sequence_tx_version_eight` | Rules out tx-version-8 as divergence cause |
+//! | `test_genesis_bootstrap_checkpoint_balances` | Block-0 SOV shell + CBE treasury seed |
+//! | `test_g4_checkpoint_replay_acceptance` | Manual ≥74k fixture — full-chain empirical gate (ignored) |
+//! | `test_g4_checkpoint_paginated_replay_acceptance` | Manual ≥74k fixture via paginated import (ignored) |
+//! | `test_canonical_import_throughput_benchmark_10k` | `#[ignore]` ops floor — blocks/sec on 10k synthetic chain |
+//!
 //! ## CI scope (honest)
 //! - `test_sov_native_wipe_replay_parity` — SOV genesis bootstrap + SOV transfers (#2725/#2741 fix class)
 //! - `test_dao_token_creation_wipe_replay_parity` — `TokenCreation` + custom-token transfer (BUBL class)
@@ -27,7 +41,7 @@ use lib_blockchain::contracts::bonding_curve::canonical::GENESIS_TREASURY_ALLOCA
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::genesis::GenesisConfig;
 use lib_blockchain::storage::{Address, TokenId};
-use lib_blockchain::sync::G4_CHECKPOINT_HEIGHT_FLOOR;
+
 use lib_blockchain::transaction::{
     token_creation::TokenCreationPayloadV1, TokenTransferData, Transaction, TransactionPayload,
     WalletTransactionData,
@@ -44,6 +58,7 @@ use common::crypto_fixtures::{dummy_public_key, dummy_signature};
 use common::replay_gate::{
     bubl_like_token_id, cbe_treasury_address, compare_snapshots, first_n_genesis_sov_wallets,
     load_blocks_fixture, open_fresh_store, DaoTokenExpectation, ReplayCheckpointSnapshot,
+    G4_CHECKPOINT_HEIGHT_FLOOR,
 };
 
 use lib_blockchain::sync::ChainSync;
@@ -275,6 +290,13 @@ fn run_wipe_replay_parity(
 
 /// Isolated repro of g4 wallet `0e2962d5…` activity through the failing h=74010 tx.
 /// Pins current executor semantics without replaying 74k prefix blocks.
+///
+/// **This test PASSES because replay diverges from live chain history at h=74010.**
+/// The `import_blocks(vec![h4]).expect_err(...)` failure **is** the acceptance criterion
+/// until GENESIS-3 reset ([#2731](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2731)).
+/// Do **not** "fix" this to make h4 succeed unless the reset is complete **or** you are
+/// intentionally reintroducing the pre-#2641 write-path bug that double-credited the
+/// h=73982 self-transfer on live validators.
 #[test]
 fn test_g4_wallet74010_sequence_isolated_replay() {
     const ATOMS: u128 = 1_000_000_000_000_000_000;
@@ -404,6 +426,36 @@ fn test_g4_wallet74010_sequence_tx_version_eight() {
 fn test_sov_native_wipe_replay_parity() {
     let sample = first_n_genesis_sov_wallets(3);
     run_wipe_replay_parity(build_sov_activity_chain(), 6, &sample, &[]);
+}
+
+/// Floor estimate for ops: canonical-import throughput on a synthetic 10k SOV chain.
+///
+/// Run manually before estimating wipe-and-catch-up wall-clock:
+/// `cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
+///   test_canonical_import_throughput_benchmark_10k -- --ignored --nocapture`
+#[test]
+#[ignore = "benchmark — run manually for canonical import throughput floor estimate"]
+fn test_canonical_import_throughput_benchmark_10k() {
+    const HEIGHT: u64 = 10_000;
+    let blocks = build_sov_activity_chain_to_height(HEIGHT);
+
+    let dir = TempDir::new().expect("tempdir");
+    let store = open_fresh_store(&dir);
+    let sync = ChainSync::new(Arc::clone(&store));
+
+    let start = std::time::Instant::now();
+    sync.import_blocks(blocks).expect("10k canonical import");
+    let elapsed = start.elapsed();
+    let secs = elapsed.as_secs_f64();
+    let blocks_per_sec = HEIGHT as f64 / secs;
+
+    eprintln!(
+        "canonical import throughput: {HEIGHT} blocks in {secs:.1}s ({blocks_per_sec:.1} blocks/sec)"
+    );
+    eprintln!(
+        "ops estimate: 177k blocks at {blocks_per_sec:.0}/s ≈ {:.0} min",
+        177_000.0 / blocks_per_sec / 60.0
+    );
 }
 
 /// Paginated fresh sync must match single-shot wipe-and-replay (g4 page-2+ bug class).
