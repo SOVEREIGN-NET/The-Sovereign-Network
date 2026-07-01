@@ -2475,30 +2475,37 @@ impl Blockchain {
 
         let empty_sig = tx.signature.signature.is_empty();
 
-        if tx.transaction_type == TransactionType::TokenMint && empty_sig {
-            let allowed_originator =
-                matches!(originator, "pouw_mint" | "pouw_reward");
-            let memo_ok = tx.memo.starts_with(b"pouw:mint:");
-            if !allowed_originator || !memo_ok {
+        if tx.transaction_type == TransactionType::TokenMint {
+            if matches!(originator, "pouw_mint" | "pouw_reward") {
+                if !empty_sig {
+                    return Err(anyhow::anyhow!(
+                        "rejecting signed PoUW TokenMint from originator '{}'",
+                        originator
+                    ));
+                }
+                Self::validate_pouw_mint_memo(tx)?;
+            } else if Self::is_treasury_system_originator(originator) {
+                // Treasury bootstrap paths may inject unsigned mints until admin handler removal.
+            } else {
                 return Err(anyhow::anyhow!(
-                    "rejecting unsigned TokenMint from originator '{}': \
-                     only pouw_mint/pouw_reward with pouw:mint: memo are permitted",
+                    "rejecting TokenMint from untrusted originator '{}'",
                     originator
                 ));
             }
         }
 
         if tx.transaction_type == TransactionType::WalletRegistration {
-            if let Some(wallet_data) = tx.wallet_data() {
-                if wallet_data.initial_balance > 0 && !Self::is_treasury_system_originator(originator)
-                {
-                    return Err(anyhow::anyhow!(
-                        "rejecting WalletRegistration with initial_balance={} from originator '{}': \
-                         treasury originator required for funded wallet bootstrap",
-                        wallet_data.initial_balance,
-                        originator
-                    ));
-                }
+            let wallet_data = tx
+                .wallet_data()
+                .ok_or_else(|| anyhow::anyhow!("WalletRegistration missing wallet_data"))?;
+            if wallet_data.initial_balance > 0 && !Self::is_treasury_system_originator(originator)
+            {
+                return Err(anyhow::anyhow!(
+                    "rejecting WalletRegistration with initial_balance={} from originator '{}': \
+                     treasury originator required for funded wallet bootstrap",
+                    wallet_data.initial_balance,
+                    originator
+                ));
             }
         }
 
@@ -2517,12 +2524,62 @@ impl Blockchain {
         Ok(())
     }
 
+    fn validate_pouw_mint_memo(tx: &Transaction) -> anyhow::Result<()> {
+        let mint_data = tx
+            .token_mint_data()
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint missing mint data"))?;
+        let memo_str = std::str::from_utf8(&tx.memo)
+            .map_err(|_| anyhow::anyhow!("PoUW TokenMint memo is not valid UTF-8"))?;
+        let rest = memo_str
+            .strip_prefix("pouw:mint:")
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint memo missing pouw:mint: prefix"))?;
+        let mut parts = rest.splitn(2, ':');
+        let recipient_hex = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint memo missing recipient"))?;
+        let amount_str = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint memo missing amount"))?;
+
+        let decoded = hex::decode(recipient_hex)
+            .map_err(|_| anyhow::anyhow!("PoUW TokenMint memo recipient is not valid hex"))?;
+        if decoded.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "PoUW TokenMint memo recipient must decode to 32 bytes"
+            ));
+        }
+        let mut recipient = [0u8; 32];
+        recipient.copy_from_slice(&decoded);
+        if recipient != mint_data.to {
+            return Err(anyhow::anyhow!(
+                "PoUW TokenMint memo recipient does not match mint_data.to"
+            ));
+        }
+
+        let amount: u128 = amount_str
+            .parse()
+            .map_err(|_| anyhow::anyhow!("PoUW TokenMint memo amount is not a valid integer"))?;
+        if amount != mint_data.amount {
+            return Err(anyhow::anyhow!(
+                "PoUW TokenMint memo amount does not match mint_data.amount"
+            ));
+        }
+
+        Ok(())
+    }
+
     fn is_treasury_system_originator(originator: &str) -> bool {
-        originator.contains("treasury")
-            || matches!(
-                originator,
-                "admin_sov_mint" | "genesis_bootstrap" | "genesis_wallet" | "migration_wallet"
-            )
+        matches!(
+            originator,
+            "admin_sov_mint"
+                | "genesis_bootstrap"
+                | "genesis_wallet"
+                | "migration_wallet"
+                | "treasury_kernel"
+                | "treasury_allocation"
+        )
     }
 
     pub fn add_system_transaction(
