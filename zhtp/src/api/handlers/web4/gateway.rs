@@ -493,23 +493,15 @@ mod tests {
             "observer-web4-gateway-owner",
             None,
         )?;
-        let registration_proof = ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            lib_crypto::hash_blake3(b"observer-web4-gateway-proof").to_vec(),
-            owner.id.0.to_vec(),
-            owner.id.0.to_vec(),
-            None,
-        );
-
         let mut initial_content = HashMap::new();
         initial_content.insert(path.to_string(), content);
 
         registry
-            .register_domain(DomainRegistrationRequest {
-                domain: domain.to_string(),
+            .register_domain_with_content(
+                domain.to_string(),
                 owner,
-                duration_days: 365,
-                metadata: DomainMetadata {
+                initial_content,
+                DomainMetadata {
                     title: "Observer Gateway".to_string(),
                     description: "Observer gateway test".to_string(),
                     category: "test".to_string(),
@@ -522,10 +514,8 @@ mod tests {
                         hosting_budget: 0.0,
                     },
                 },
-                initial_content,
-                registration_proof,
-                deploy_manifest_cid: None,
-            })
+                None,
+            )
             .await?;
 
         Ok(Web4GatewayHandler::new(registry))

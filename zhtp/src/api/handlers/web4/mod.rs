@@ -893,20 +893,12 @@ mod tests {
             Web4Handler::new_with_registry(registry.clone(), publisher, identity_manager, blockchain)
                 .await?;
 
-        let registration_proof = ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            lib_crypto::hash_blake3(b"observer-web4-proof").to_vec(),
-            owner.id.0.to_vec(),
-            owner.id.0.to_vec(),
-            None,
-        );
-
         registry
-            .register_domain(DomainRegistrationRequest {
-                domain: domain.to_string(),
-                owner: owner.clone(),
-                duration_days: 365,
-                metadata: DomainMetadata {
+            .register_domain_with_content(
+                domain.to_string(),
+                owner.clone(),
+                initial_content,
+                DomainMetadata {
                     title: "Observer Web4".to_string(),
                     description: "Observer-readiness Web4 test".to_string(),
                     category: "test".to_string(),
@@ -919,10 +911,8 @@ mod tests {
                         hosting_budget: 0.0,
                     },
                 },
-                initial_content,
-                registration_proof,
-                deploy_manifest_cid: None,
-            })
+                None,
+            )
             .await?;
 
         Ok((handler, owner))

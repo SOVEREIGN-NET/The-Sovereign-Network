@@ -10,6 +10,9 @@ use lib_identity::{types::IdentityView, ZhtpIdentity};
 use lib_access_control::{SecurityPrincipal, Role};
 use lib_types::NodeType;
 use lib_network::web4::{
+    domain_signing::{
+        has_owner_signing_key, validate_domain_owner_signature_hex, verify_domain_update_signature,
+    },
     DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
     PublicOwnerInfo,
 };
@@ -21,6 +24,57 @@ use tracing::{error, info, warn};
 
 use super::Web4Handler;
 use std::collections::HashMap;
+
+/// Sign a domain registration/update system transaction with the owner's keypair.
+fn sign_domain_system_transaction(
+    owner_identity: &ZhtpIdentity,
+    tx_type: lib_blockchain::TransactionType,
+    memo: Vec<u8>,
+    timestamp: u64,
+    chain_id: u8,
+) -> anyhow::Result<lib_blockchain::Transaction> {
+    use lib_blockchain::integration::crypto_integration::{
+        PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm,
+    };
+
+    let private_key = owner_identity.private_key.clone().ok_or_else(|| {
+        anyhow!(
+            "Owner signing key unavailable — domain blockchain tx requires an identity session with private key"
+        )
+    })?;
+    let keypair = lib_crypto::KeyPair {
+        public_key: owner_identity.public_key.clone(),
+        private_key,
+    };
+
+    let mut tx = lib_blockchain::Transaction {
+        version: 8,
+        chain_id,
+        transaction_type: tx_type,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        fee: 0,
+        signature: BcSignature {
+            signature: Vec::new(),
+            public_key: BcPublicKey::new(keypair.public_key.dilithium_pk),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp,
+        },
+        memo,
+        payload: lib_blockchain::transaction::TransactionPayload::None,
+    };
+
+    let signing_hash = tx.signing_hash();
+    let crypto_signature = lib_crypto::sign_message(&keypair, signing_hash.as_bytes())?;
+    tx.signature = BcSignature {
+        signature: crypto_signature.signature,
+        public_key: BcPublicKey::new(keypair.public_key.dilithium_pk),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp,
+    };
+
+    Ok(tx)
+}
 
 /// Domain registration request from API
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +117,12 @@ pub struct ManifestDomainRegistrationRequest {
     /// Optional declared fee amount in SOV tokens (minimum 10 SOV)
     #[serde(default)]
     pub fee: Option<u64>,
+    /// Owner Dilithium signature over `domain|timestamp|fee` (hex)
+    #[serde(default)]
+    pub signature: String,
+    /// Request timestamp used in the registration signature
+    #[serde(default)]
+    pub timestamp: u64,
 }
 
 /// Simple domain registration request (for easier testing)
@@ -680,6 +740,11 @@ impl Web4Handler {
                 owner_identity.clone(), // Clone since we need it later for wallet operations
                 initial_content,
                 metadata,
+                Some((
+                    simple_request.signature.clone(),
+                    simple_request.timestamp,
+                    user_provided_fee,
+                )),
             )
             .await;
 
@@ -765,26 +830,13 @@ impl Web4Handler {
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
             };
 
-            let domain_tx = lib_blockchain::Transaction {
-                version: 8,
-                chain_id: 0x03,
-                transaction_type: tx_type,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                fee: 0,
-                signature: lib_blockchain::integration::crypto_integration::Signature {
-                    signature: Vec::new(),
-                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
-                        dilithium_pk: [0u8; 2592],
-                        kyber_pk: [0u8; 1568],
-                        key_id: [0u8; 32],
-                    },
-                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-                    timestamp: now,
-                },
+            let domain_tx = sign_domain_system_transaction(
+                &owner_identity,
+                tx_type,
                 memo,
-                payload: lib_blockchain::transaction::TransactionPayload::None,
-            };
+                now,
+                0x03,
+            )?;
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx, "web4_domain_register") {
                 warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
@@ -987,20 +1039,23 @@ impl Web4Handler {
             },
         };
 
-        // Create registration proof (simplified for manifest-based registration)
+        if request.timestamp == 0 || request.signature.is_empty() {
+            return Err(anyhow!(
+                "Manifest domain registration requires owner signature and timestamp \
+                 (sign domain|timestamp|fee with Dilithium5)"
+            ));
+        }
+
+        let signature_bytes = hex::decode(&request.signature)
+            .map_err(|e| anyhow!("Invalid manifest registration signature hex: {}", e))?;
         let registration_proof = ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            lib_crypto::hash_blake3(
-                &[owner_identity.id.0.as_slice(), request.domain.as_bytes()].concat(),
-            )
-            .to_vec(),
-            owner_identity.id.0.to_vec(),
+            "dilithium-domain-registration".to_string(),
+            signature_bytes,
+            request.timestamp.to_le_bytes().to_vec(),
             owner_identity.id.0.to_vec(),
             None,
         );
 
-        // Create domain registration request with deploy_manifest_cid
-        // This will be converted to web4_manifest_cid during registration
         let domain_request = DomainRegistrationRequest {
             domain: request.domain.clone(),
             owner: owner_identity.clone(),
@@ -1009,6 +1064,9 @@ impl Web4Handler {
             initial_content: HashMap::new(), // Content already uploaded via manifest
             registration_proof,
             deploy_manifest_cid: Some(request.deploy_manifest_cid.clone()),
+            owner_signature_hex: request.signature.clone(),
+            registration_timestamp: request.timestamp,
+            registration_fee_whole: user_provided_fee,
         };
 
         // Register domain
@@ -1090,26 +1148,13 @@ impl Web4Handler {
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
             };
 
-            let domain_tx = lib_blockchain::Transaction {
-                version: 8,
-                chain_id: 0x03,
-                transaction_type: tx_type,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                fee: 0,
-                signature: lib_blockchain::integration::crypto_integration::Signature {
-                    signature: Vec::new(),
-                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
-                        dilithium_pk: [0u8; 2592],
-                        kyber_pk: [0u8; 1568],
-                        key_id: [0u8; 32],
-                    },
-                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-                    timestamp: now,
-                },
+            let domain_tx = sign_domain_system_transaction(
+                &owner_identity,
+                tx_type,
                 memo,
-                payload: lib_blockchain::transaction::TransactionPayload::None,
-            };
+                now,
+                0x03,
+            )?;
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx, "web4_domain_update") {
                 warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
@@ -1195,6 +1240,9 @@ impl Web4Handler {
             initial_content,
             registration_proof,
             deploy_manifest_cid: None, // Auto-generate for non-manifest registration
+            owner_signature_hex: String::new(),
+            registration_timestamp: 0,
+            registration_fee_whole: 10,
         };
 
         // Process registration
@@ -1338,20 +1386,19 @@ impl Web4Handler {
             .deserialize_identity(&api_request.to_owner)
             .map_err(|e| anyhow!("Invalid to_owner identity: {}", e))?;
 
-        // Create transfer proof (simplified for now)
+        let signature_bytes = hex::decode(&api_request.transfer_proof)
+            .map_err(|e| anyhow!("Invalid transfer_proof hex encoding: {}", e))?;
+        if signature_bytes.is_empty() {
+            return Err(anyhow!(
+                "Domain transfer requires a non-empty Dilithium signature in transfer_proof"
+            ));
+        }
+
         let transfer_proof = lib_proofs::ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            lib_crypto::hash_blake3(
-                &[
-                    from_owner.id.0.as_slice(),
-                    to_owner.id.0.as_slice(),
-                    api_request.domain.as_bytes(),
-                ]
-                .concat(),
-            )
-            .to_vec(),
+            "dilithium-domain-transfer".to_string(),
+            signature_bytes,
+            vec![],
             from_owner.id.0.to_vec(),
-            to_owner.id.0.to_vec(),
             None,
         );
 
@@ -1969,7 +2016,8 @@ impl Web4Handler {
         #[derive(Deserialize)]
         struct RollbackRequest {
             to_version: u64,
-            _signature: Option<String>,
+            signature: String,
+            timestamp: u64,
         }
 
         // Extract domain from path
@@ -1991,11 +2039,52 @@ impl Web4Handler {
             domain, rollback_req.to_version
         );
 
-        // TODO: Verify signature matches domain owner
-        let owner_did = request
-            .headers
-            .get("x-owner-did")
-            .unwrap_or_else(|| "anonymous".to_string());
+        if let Some(error) = validate_domain_owner_signature_hex(&rollback_req.signature) {
+            return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, error));
+        }
+
+        let lookup = self
+            .domain_registry
+            .lookup_domain(domain)
+            .await
+            .map_err(|e| anyhow!("Failed to look up domain for rollback: {}", e))?;
+        let record = lookup.record.ok_or_else(|| {
+            anyhow!("Domain not found for rollback signature verification: {}", domain)
+        })?;
+
+        if !has_owner_signing_key(&record.owner_dilithium_pk) {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Domain owner signing key not available — re-register domain to enable rollback"
+                    .to_string(),
+            ));
+        }
+
+        let current_cid = record.current_web4_manifest_cid.clone();
+        let target_cid = self
+            .domain_registry
+            .get_manifest_cid_at_version(domain, rollback_req.to_version)
+            .await
+            .map_err(|e| anyhow!("Failed to resolve rollback target manifest: {}", e))?;
+
+        let signature_valid = verify_domain_update_signature(
+            &record.owner_dilithium_pk,
+            domain,
+            &current_cid,
+            &target_cid,
+            rollback_req.timestamp,
+            &rollback_req.signature,
+        )
+        .map_err(|e| anyhow!("Rollback signature verification failed: {}", e))?;
+
+        if !signature_valid {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Invalid rollback signature: does not match domain owner".to_string(),
+            ));
+        }
+
+        let owner_did = format!("did:zhtp:{}", hex::encode(record.owner.0));
 
         match self
             .domain_registry
