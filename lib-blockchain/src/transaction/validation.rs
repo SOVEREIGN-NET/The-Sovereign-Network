@@ -3008,14 +3008,9 @@ impl<'a> StatefulTransactionValidator<'a> {
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
         tracing::debug!("[BREADCRUMB] validate_sender_identity_exists ENTER");
 
-        // If we don't have blockchain access, skip this check (backward compatibility)
-        let blockchain = match self.blockchain {
-            Some(blockchain) => blockchain,
-            None => {
-                tracing::warn!("SECURITY WARNING: Identity verification skipped - no blockchain state available");
-                return Ok(());
-            }
-        };
+        let blockchain = self
+            .blockchain
+            .ok_or(ValidationError::InvalidTransaction)?;
 
         // Extract the public key from the transaction signature
         let sender_public_key = transaction.signature.public_key.as_bytes();
