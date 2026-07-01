@@ -39,6 +39,31 @@ use lib_blockchain::{
 
 // Removed unused cryptographic imports
 
+/// Queue a treasury-signed SOV TokenMint for a welcome bonus (post wallet registration).
+async fn queue_welcome_bonus_token_mint(
+    blockchain: &mut lib_blockchain::Blockchain,
+    wallet_id: [u8; 32],
+    amount: u128,
+) {
+    let memo = format!("WELCOME_BONUS_V1:{}", hex::encode(wallet_id)).into_bytes();
+    match crate::runtime::token_utils::build_sov_mint_tx(&wallet_id, amount, memo).await {
+        Ok(mint_tx) => {
+            if let Err(e) =
+                blockchain.add_system_transaction(mint_tx, "treasury_wallet_bootstrap")
+            {
+                tracing::warn!("Failed to queue welcome bonus TokenMint: {}", e);
+            } else {
+                tracing::info!(
+                    "💰 Welcome bonus TokenMint queued ({} atoms → wallet {})",
+                    amount,
+                    hex::encode(&wallet_id[..8])
+                );
+            }
+        }
+        Err(e) => tracing::warn!("Failed to build welcome bonus TokenMint: {}", e),
+    }
+}
+
 /// Clean identity handler implementation
 pub struct IdentityHandler {
     identity_manager: Arc<RwLock<IdentityManager>>,
@@ -2182,18 +2207,16 @@ impl IdentityHandler {
             }
         };
 
-        // Wallet registrations are queued here; wallet_registry updates and the welcome-bonus
-        // mint happen when the WalletRegistration transactions are committed in a block.
+        // Wallet registrations are queued here; welcome-bonus SOV is credited via a
+        // separate treasury-signed TokenMint (not initial_balance on WalletRegistration).
+        let primary_wallet_id_arr = citizenship_result.primary_wallet_id.0;
         if let Ok(blockchain_arc) =
             crate::runtime::blockchain_provider::get_global_blockchain().await
         {
             let mut blockchain = blockchain_arc.write().await;
 
-            // Primary wallet gets welcome bonus
             let primary_wallet_data = lib_blockchain::transaction::WalletTransactionData {
-                wallet_id: lib_blockchain::Hash::from_slice(
-                    &citizenship_result.primary_wallet_id.0,
-                ),
+                wallet_id: lib_blockchain::Hash::from_slice(&primary_wallet_id_arr),
                 wallet_type: "Primary".to_string(),
                 wallet_name: "Primary Wallet".to_string(),
                 alias: Some("primary".to_string()),
@@ -2203,13 +2226,19 @@ impl IdentityHandler {
                 created_at,
                 registration_fee: 50,
                 capabilities: 0xFF,
-                initial_balance: welcome_bonus_amount, // 5,000 SOV welcome bonus (atomic units)
+                initial_balance: 0,
             };
             if let Err(e) = blockchain.register_wallet(primary_wallet_data) {
                 tracing::warn!("Failed to register primary wallet: {}", e);
             } else {
+                queue_welcome_bonus_token_mint(
+                    &mut blockchain,
+                    primary_wallet_id_arr,
+                    welcome_bonus_amount,
+                )
+                .await;
                 tracing::info!(
-                    "💰 Primary wallet queued with {} SOV welcome bonus pending block inclusion",
+                    "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
                     SOV_WELCOME_BONUS_SOV
                 );
             }
