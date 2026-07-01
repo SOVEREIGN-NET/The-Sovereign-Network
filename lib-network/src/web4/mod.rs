@@ -33,7 +33,9 @@ pub use content_publisher::*;
 pub use content_service::*;
 pub use domain_registry::*;
 pub use domain_signing::{
-    domain_update_signing_message, has_owner_signing_key, verify_domain_update_signature,
+    domain_registration_signing_message, domain_transfer_signing_candidates,
+    domain_update_signing_message, has_owner_signing_key, verify_domain_registration_signature,
+    verify_domain_transfer_signature, verify_domain_update_signature,
     validate_domain_owner_signature_hex, DILITHIUM5_HEX_SIGNATURE_LEN,
 };
 pub use name_resolver::NameResolver;
