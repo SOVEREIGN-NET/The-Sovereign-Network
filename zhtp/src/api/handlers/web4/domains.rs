@@ -10,6 +10,7 @@ use lib_identity::{types::IdentityView, ZhtpIdentity};
 use lib_access_control::{SecurityPrincipal, Role};
 use lib_types::NodeType;
 use lib_network::web4::{
+    domain_signing::validate_domain_owner_signature_hex,
     DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
     PublicOwnerInfo,
 };
@@ -21,6 +22,83 @@ use tracing::{error, info, warn};
 
 use super::Web4Handler;
 use std::collections::HashMap;
+
+fn domain_chain_id() -> u8 {
+    std::env::var("ZHTP_CHAIN_ID")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(0x03)
+}
+
+/// Attach a client-provided Dilithium5 signature to a domain system transaction.
+///
+/// The server builds the unsigned skeleton (memo, type, timestamp) and verifies
+/// `domain_tx_signature_hex` over `signing_hash()` using the owner's public key.
+/// Private keys never leave the client.
+fn attach_client_domain_tx_signature(
+    owner_dilithium_pk: &[u8],
+    domain_tx_signature_hex: &str,
+    tx_type: lib_blockchain::TransactionType,
+    memo: Vec<u8>,
+    timestamp: u64,
+) -> anyhow::Result<lib_blockchain::Transaction> {
+    use lib_blockchain::integration::crypto_integration::{
+        PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm,
+    };
+
+    if let Some(err) = validate_domain_owner_signature_hex(domain_tx_signature_hex) {
+        return Err(anyhow!(
+            "domain_tx_signature_hex invalid: {}",
+            err
+        ));
+    }
+
+    let owner_pk: [u8; 2592] = owner_dilithium_pk
+        .try_into()
+        .map_err(|_| anyhow!("owner dilithium_pk must be exactly 2592 bytes"))?;
+
+    let mut tx = lib_blockchain::Transaction {
+        version: 8,
+        chain_id: domain_chain_id(),
+        transaction_type: tx_type,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        fee: 0,
+        signature: BcSignature {
+            signature: Vec::new(),
+            public_key: BcPublicKey::new(owner_pk),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp,
+        },
+        memo,
+        payload: lib_blockchain::transaction::TransactionPayload::None,
+    };
+
+    let signing_hash = tx.signing_hash();
+    let signature_bytes = hex::decode(domain_tx_signature_hex)
+        .map_err(|e| anyhow!("Invalid domain_tx_signature_hex: {}", e))?;
+
+    let verified = lib_crypto::verify_signature(
+        signing_hash.as_bytes(),
+        &signature_bytes,
+        owner_dilithium_pk,
+    )
+    .map_err(|e| anyhow!("Domain system tx signature verification failed: {}", e))?;
+    if !verified {
+        return Err(anyhow!(
+            "domain_tx_signature_hex does not match the domain system transaction"
+        ));
+    }
+
+    tx.signature = BcSignature {
+        signature: signature_bytes,
+        public_key: BcPublicKey::new(owner_pk),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp,
+    };
+
+    Ok(tx)
+}
 
 /// Domain registration request from API
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +141,15 @@ pub struct ManifestDomainRegistrationRequest {
     /// Optional declared fee amount in SOV tokens (minimum 10 SOV)
     #[serde(default)]
     pub fee: Option<u64>,
+    /// Owner Dilithium signature over `domain|timestamp|fee` (hex)
+    #[serde(default)]
+    pub signature: String,
+    /// Request timestamp used in the registration signature
+    #[serde(default)]
+    pub timestamp: u64,
+    /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
+    #[serde(default)]
+    pub domain_tx_signature_hex: String,
 }
 
 /// Simple domain registration request (for easier testing)
@@ -93,6 +180,9 @@ pub struct SimpleDomainRegistrationRequest {
     /// `build_domain_register_request_with_fee_payment`.
     #[serde(default)]
     pub fee_payment_tx: Option<String>,
+    /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
+    #[serde(default)]
+    pub domain_tx_signature_hex: String,
 }
 
 /// Content mapping for simple registration
@@ -770,26 +860,20 @@ impl Web4Handler {
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
             };
 
-            let domain_tx = lib_blockchain::Transaction {
-                version: 8,
-                chain_id: 0x03,
-                transaction_type: tx_type,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                fee: 0,
-                signature: lib_blockchain::integration::crypto_integration::Signature {
-                    signature: Vec::new(),
-                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
-                        dilithium_pk: [0u8; 2592],
-                        kyber_pk: [0u8; 1568],
-                        key_id: [0u8; 32],
-                    },
-                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-                    timestamp: now,
-                },
+            if simple_request.domain_tx_signature_hex.is_empty() {
+                return Err(anyhow!(
+                    "domain_tx_signature_hex required — sign the domain system tx client-side \
+                     (signing_hash over version=8, chain_id, tx_type, memo, timestamp={})",
+                    simple_request.timestamp
+                ));
+            }
+            let domain_tx = attach_client_domain_tx_signature(
+                owner_identity.public_key.dilithium_pk.as_slice(),
+                &simple_request.domain_tx_signature_hex,
+                tx_type,
                 memo,
-                payload: lib_blockchain::transaction::TransactionPayload::None,
-            };
+                simple_request.timestamp,
+            )?;
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx, lib_blockchain::SystemOriginator::Web4DomainRegister) {
                 warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
@@ -1098,26 +1182,20 @@ impl Web4Handler {
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
             };
 
-            let domain_tx = lib_blockchain::Transaction {
-                version: 8,
-                chain_id: 0x03,
-                transaction_type: tx_type,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                fee: 0,
-                signature: lib_blockchain::integration::crypto_integration::Signature {
-                    signature: Vec::new(),
-                    public_key: lib_blockchain::integration::crypto_integration::PublicKey {
-                        dilithium_pk: [0u8; 2592],
-                        kyber_pk: [0u8; 1568],
-                        key_id: [0u8; 32],
-                    },
-                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
-                    timestamp: now,
-                },
+            if request.domain_tx_signature_hex.is_empty() {
+                return Err(anyhow!(
+                    "domain_tx_signature_hex required — sign the domain system tx client-side \
+                     (signing_hash over version=8, chain_id, tx_type, memo, timestamp={})",
+                    request.timestamp
+                ));
+            }
+            let domain_tx = attach_client_domain_tx_signature(
+                owner_identity.public_key.dilithium_pk.as_slice(),
+                &request.domain_tx_signature_hex,
+                tx_type,
                 memo,
-                payload: lib_blockchain::transaction::TransactionPayload::None,
-            };
+                request.timestamp,
+            )?;
             let mut blockchain = self.blockchain.write().await;
             if let Err(e) = blockchain.add_system_transaction(domain_tx, lib_blockchain::SystemOriginator::Web4DomainUpdate) {
                 warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
