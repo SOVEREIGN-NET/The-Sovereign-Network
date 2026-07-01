@@ -786,17 +786,11 @@ impl DaoEngine {
     #[allow(dead_code)]
     async fn sign_dao_vote(
         &self,
-        keypair: Option<&KeyPair>,
+        keypair: &KeyPair,
         voter: &IdentityId,
         proposal_id: &Hash,
         vote_choice: &DaoVoteChoice,
     ) -> Result<lib_crypto::Signature> {
-        let keypair = keypair.ok_or_else(|| {
-            anyhow::anyhow!(
-                "sign_dao_vote requires a real KeyPair; hash-as-signature stub removed"
-            )
-        })?;
-
         let vote_data = [
             voter.as_bytes(),
             proposal_id.as_bytes(),
