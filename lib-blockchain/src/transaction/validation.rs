@@ -349,7 +349,7 @@ impl TransactionValidator {
             }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
-                self.validate_wallet_registration_transaction(transaction)?;
+                self.validate_wallet_registration_transaction(transaction, None)?;
             }
             TransactionType::WalletUpdate => {
                 self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
@@ -671,7 +671,7 @@ impl TransactionValidator {
             }
             TransactionType::WalletRegistration => {
                 // Wallet registration transactions - validate wallet data and ownership
-                self.validate_wallet_registration_transaction(transaction)?;
+                self.validate_wallet_registration_transaction(transaction, None)?;
             }
             TransactionType::WalletUpdate => {
                 self.validate_wallet_update_transaction(transaction, is_system_transaction)?;
@@ -1480,6 +1480,7 @@ impl TransactionValidator {
     fn validate_wallet_registration_transaction(
         &self,
         transaction: &Transaction,
+        _blockchain: Option<&crate::blockchain::Blockchain>,
     ) -> ValidationResult {
         // Check that wallet_data exists
         let wallet_data = transaction
@@ -1516,6 +1517,10 @@ impl TransactionValidator {
             _ => return Err(ValidationError::InvalidWalletType),
         }
 
+        if wallet_data.initial_balance > 0 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
         Ok(())
     }
 
@@ -1530,7 +1535,7 @@ impl TransactionValidator {
         is_system_transaction: bool,
     ) -> ValidationResult {
         // Must carry wallet_data
-        self.validate_wallet_registration_transaction(transaction)?;
+        self.validate_wallet_registration_transaction(transaction, None)?;
 
         // Restrict to system transactions for now (no user-auth path implemented yet).
         if !is_system_transaction {
@@ -1807,8 +1812,11 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::WalletRegistration => {
-                // Wallet registration transactions - validate wallet data and ownership
                 stateless_validator.validate_transaction(transaction)?;
+                stateless_validator.validate_wallet_registration_transaction(
+                    transaction,
+                    self.blockchain,
+                )?;
             }
             TransactionType::WalletUpdate => {
                 stateless_validator.validate_transaction(transaction)?;

@@ -3249,6 +3249,12 @@ impl BlockExecutor {
                         "WalletRegistration requires wallet_data field".to_string(),
                     )
                 })?;
+                if wallet_data.initial_balance > 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "WalletRegistration initial_balance must be 0; use treasury-authorized TokenMint"
+                            .to_string(),
+                    ));
+                }
                 let wallet_id = wallet_data.wallet_id.as_array();
                 mutator.put_wallet_projection(
                     &wallet_id,
@@ -3257,22 +3263,6 @@ impl BlockExecutor {
                         committed_at_height: block_height,
                     },
                 )?;
-
-                if wallet_data.initial_balance > 0 {
-                    let recipient = Address::new(wallet_data.wallet_id.as_array());
-                    let token = Self::canonical_sov_token_id();
-                    tx_apply::apply_token_mint(
-                        mutator,
-                        &token,
-                        &recipient,
-                        wallet_data.initial_balance as u128,
-                    )?;
-                    self.sync_canonical_sov_contract_after_mint(
-                        mutator,
-                        &recipient,
-                        wallet_data.initial_balance as u128,
-                    )?;
-                }
 
                 Ok(TxOutcome::LegacySystem)
             }
