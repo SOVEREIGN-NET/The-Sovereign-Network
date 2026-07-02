@@ -15,7 +15,9 @@ use tracing::{error, info, warn};
 
 use super::content_publisher::ContentPublisher;
 use super::domain_signing::{
-    has_owner_signing_key, validate_domain_owner_signature_hex, verify_domain_update_signature,
+    domain_registration_signing_message, has_owner_signing_key,
+    validate_domain_owner_signature_hex, verify_domain_registration_signature,
+    verify_domain_transfer_signature, verify_domain_update_signature,
 };
 use super::types::*;
 use crate::dht::ZkDHTIntegration;
@@ -602,12 +604,20 @@ impl DomainRegistry {
         owner: ZhtpIdentity,
         initial_content: HashMap<String, Vec<u8>>,
         metadata: DomainMetadata,
+        registration_auth: Option<(String, u64, u64)>,
     ) -> Result<DomainRegistrationResponse> {
-        // Create registration proof (simplified for now)
+        let (registration_timestamp, owner_signature_hex, registration_fee_whole) =
+            match registration_auth {
+                Some((owner_signature_hex, registration_timestamp, registration_fee_whole)) => {
+                    (registration_timestamp, owner_signature_hex, registration_fee_whole)
+                }
+                None => Self::sign_registration_fields(&owner, &domain)?,
+            };
+
         let registration_proof = ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            hash_blake3(&[owner.id.0.as_slice(), domain.as_bytes()].concat()).to_vec(),
-            owner.id.0.to_vec(),
+            "dilithium-domain-registration".to_string(),
+            hex::decode(&owner_signature_hex).unwrap_or_default(),
+            registration_timestamp.to_le_bytes().to_vec(),
             owner.id.0.to_vec(),
             None,
         );
@@ -620,9 +630,48 @@ impl DomainRegistry {
             initial_content,
             registration_proof,
             deploy_manifest_cid: None, // Auto-generate
+            owner_signature_hex,
+            registration_timestamp,
+            registration_fee_whole,
         };
 
         self.register_domain(request).await
+    }
+
+    /// Whole-SOV registration fee used in the registration signing preimage.
+    fn expected_registration_fee_whole(domain: &str, duration_days: u64) -> u64 {
+        let base_fee = 10.0_f64;
+        let per_day_fee = 0.01_f64;
+        let premium_multiplier = if domain.len() <= 6 { 3.0 } else { 1.0 };
+        let total = (base_fee + (duration_days as f64 * per_day_fee)) * premium_multiplier;
+        total.round() as u64
+    }
+
+    fn sign_registration_fields(
+        owner: &ZhtpIdentity,
+        domain: &str,
+    ) -> Result<(u64, String, u64)> {
+        use lib_crypto::{KeyPair, sign_message};
+
+        let private_key = owner
+            .private_key
+            .as_ref()
+            .ok_or_else(|| anyhow!("Domain registration requires owner private key for signing"))?;
+        let keypair =
+            KeyPair::from_private_key(private_key).map_err(|e| anyhow!("Invalid owner keypair: {}", e))?;
+
+        let registration_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let registration_fee_whole = Self::expected_registration_fee_whole(domain, 365);
+        let message = domain_registration_signing_message(domain, registration_timestamp, registration_fee_whole);
+        let sig = sign_message(&keypair, &message).map_err(|e| anyhow!("Failed to sign registration: {}", e))?;
+
+        Ok((
+            registration_timestamp,
+            hex::encode(&sig.signature),
+            registration_fee_whole,
+        ))
     }
 
     /// Look up domain information
@@ -984,27 +1033,111 @@ impl DomainRegistry {
         ))
     }
 
-    /// Verify registration proof
+    /// Verify registration proof — requires owner Dilithium signature over
+    /// `domain|registration_timestamp|registration_fee_whole` (lib-client pattern).
     async fn verify_registration_proof(&self, request: &DomainRegistrationRequest) -> Result<bool> {
-        // In production, this would verify the ZK proof
-        // For now, just check that proof is present and valid format
-        Ok(!request.registration_proof.proof_data.is_empty()
-            && !request.registration_proof.verification_key.is_empty())
+        if request.registration_timestamp == 0 {
+            warn!(
+                "Domain registration rejected: missing registration_timestamp for {}",
+                request.domain
+            );
+            return Ok(false);
+        }
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let time_diff = if current_time > request.registration_timestamp {
+            current_time - request.registration_timestamp
+        } else {
+            request.registration_timestamp - current_time
+        };
+        if time_diff > 300 {
+            warn!(
+                "Domain registration rejected: expired timestamp for {} (diff={}s)",
+                request.domain,
+                time_diff
+            );
+            return Ok(false);
+        }
+
+        if request.owner_signature_hex.is_empty() {
+            warn!(
+                "Domain registration rejected: missing owner_signature_hex for {}",
+                request.domain
+            );
+            return Ok(false);
+        }
+
+        if !has_owner_signing_key(&request.owner.public_key.dilithium_pk) {
+            warn!(
+                "Domain registration rejected: owner has no Dilithium5 public key for {}",
+                request.domain
+            );
+            return Ok(false);
+        }
+
+        let expected_fee =
+            Self::expected_registration_fee_whole(&request.domain, request.duration_days);
+        if request.registration_fee_whole != expected_fee {
+            warn!(
+                "Domain registration rejected: fee {} does not match expected {} for {}",
+                request.registration_fee_whole, expected_fee, request.domain
+            );
+            return Ok(false);
+        }
+
+        verify_domain_registration_signature(
+            request.owner.public_key.dilithium_pk.as_slice(),
+            &request.domain,
+            request.registration_timestamp,
+            request.registration_fee_whole,
+            &request.owner_signature_hex,
+        )
     }
 
-    /// Verify transfer proof
+    /// Verify transfer proof — requires real Dilithium signature from current owner.
     async fn verify_transfer_proof(
         &self,
-        _from_owner: &ZhtpIdentity,
-        _to_owner: &ZhtpIdentity,
+        from_owner: &ZhtpIdentity,
+        to_owner: &ZhtpIdentity,
         domain: &str,
         proof: &ZeroKnowledgeProof,
     ) -> Result<bool> {
-        // In production, this would verify the ZK proof for transfer authorization
-        // For now, just check proof format and that it references both identities
-        Ok(!proof.proof_data.is_empty() && 
-           proof.verification_key.len() >= 32 && // Must contain both identity references
-           !domain.is_empty())
+        if proof.proof_data.is_empty() {
+            return Ok(false);
+        }
+
+        if !has_owner_signing_key(&from_owner.public_key.dilithium_pk) {
+            warn!(
+                "Domain transfer rejected: from_owner has no Dilithium5 public key for {}",
+                domain
+            );
+            return Ok(false);
+        }
+
+        let timestamp = if proof.public_inputs.len() == 8 {
+            Some(u64::from_le_bytes(
+                proof.public_inputs[..8]
+                    .try_into()
+                    .map_err(|_| anyhow!("invalid transfer timestamp in proof public_inputs"))?,
+            ))
+        } else {
+            warn!(
+                "Domain transfer rejected: missing timestamp in proof public_inputs for {}",
+                domain
+            );
+            return Ok(false);
+        };
+
+        verify_domain_transfer_signature(
+            from_owner.public_key.dilithium_pk.as_slice(),
+            domain,
+            &from_owner.did,
+            &to_owner.did,
+            &proof.proof_data,
+            timestamp,
+        )
     }
 
     /// Calculate registration fee based on domain and duration
@@ -1587,6 +1720,26 @@ impl DomainRegistry {
         Ok(None)
     }
 
+    /// Resolve the manifest CID for a specific historical version.
+    pub async fn get_manifest_cid_at_version(
+        &self,
+        domain: &str,
+        target_version: u64,
+    ) -> Result<String> {
+        let manifests = self.manifest_history.read().await;
+        let domain_manifests = manifests
+            .get(domain)
+            .ok_or_else(|| anyhow!("No history found for domain: {}", domain))?;
+
+        let target_manifest = domain_manifests
+            .iter()
+            .find(|m| m.version == target_version)
+            .ok_or_else(|| anyhow!("Version {} not found for domain {}", target_version, domain))?
+            .clone();
+
+        Ok(target_manifest.compute_cid())
+    }
+
     /// Rollback domain to a previous version
     pub async fn rollback_domain(
         &self,
@@ -1660,27 +1813,17 @@ impl Web4Manager {
         owner: ZhtpIdentity,
         initial_content: HashMap<String, Vec<u8>>,
         metadata: DomainMetadata,
+        registration_auth: Option<(String, u64, u64)>,
     ) -> Result<DomainRegistrationResponse> {
-        // Create registration proof (simplified for now)
-        let registration_proof = ZeroKnowledgeProof::new(
-            "Plonky2".to_string(),
-            hash_blake3(&[owner.id.0.as_slice(), domain.as_bytes()].concat()).to_vec(),
-            owner.id.0.to_vec(),
-            owner.id.0.to_vec(),
-            None,
-        );
-
-        let request = DomainRegistrationRequest {
-            domain,
-            owner,
-            duration_days: 365, // 1 year default
-            metadata,
-            initial_content,
-            registration_proof,
-            deploy_manifest_cid: None, // Auto-generate
-        };
-
-        self.registry.register_domain(request).await
+        self.registry
+            .register_domain_with_content(
+                domain,
+                owner,
+                initial_content,
+                metadata,
+                registration_auth,
+            )
+            .await
     }
 
     /// Get domain info (public method)
@@ -1697,6 +1840,26 @@ mod tests {
     use lib_identity::{IdentityType, ZhtpIdentity};
     use std::sync::RwLock as StdRwLock;
     use tempfile::TempDir;
+
+    fn sign_domain_registration(
+        owner: &ZhtpIdentity,
+        domain: &str,
+        timestamp: u64,
+        fee_whole: u64,
+    ) -> String {
+        use crate::web4::domain_signing::domain_registration_signing_message;
+        use lib_crypto::{KeyPair, sign_message};
+
+        let private_key = owner
+            .private_key
+            .as_ref()
+            .expect("test identity must include private key");
+        let keypair =
+            KeyPair::from_private_key(private_key).expect("reconstruct owner signing keypair");
+        let message = domain_registration_signing_message(domain, timestamp, fee_whole);
+        let sig = sign_message(&keypair, &message).expect("sign domain registration");
+        hex::encode(&sig.signature)
+    }
 
     fn sign_domain_update(
         owner: &ZhtpIdentity,
@@ -1722,6 +1885,40 @@ mod tests {
         );
         let sig = sign_message(&keypair, &message).expect("sign domain update");
         hex::encode(&sig.signature)
+    }
+
+    fn make_registration_request(
+        owner: &ZhtpIdentity,
+        domain: &str,
+        metadata: DomainMetadata,
+        initial_content: HashMap<String, Vec<u8>>,
+    ) -> DomainRegistrationRequest {
+        let registration_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let registration_fee_whole = 10u64;
+        let owner_signature_hex =
+            sign_domain_registration(owner, domain, registration_timestamp, registration_fee_whole);
+
+        DomainRegistrationRequest {
+            domain: domain.to_string(),
+            owner: owner.clone(),
+            duration_days: 365,
+            metadata,
+            initial_content,
+            registration_proof: ZeroKnowledgeProof::new(
+                "dilithium-domain-registration".to_string(),
+                hex::decode(&owner_signature_hex).unwrap_or_default(),
+                registration_timestamp.to_le_bytes().to_vec(),
+                owner.id.0.to_vec(),
+                None,
+            ),
+            deploy_manifest_cid: None,
+            owner_signature_hex,
+            registration_timestamp,
+            registration_fee_whole,
+        }
     }
 
     /// Test storage implementation that actually persists data in memory
@@ -1844,20 +2041,10 @@ mod tests {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
             let registry = DomainRegistry::new(storage).await.unwrap();
 
-            // Register domain
-            let registration_proof = ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                hash_blake3(b"test_proof").to_vec(),
-                owner.id.0.to_vec(),
-                owner.id.0.to_vec(),
-                None,
-            );
-
-            let request = DomainRegistrationRequest {
-                domain: domain_name.to_string(),
-                owner: owner.clone(),
-                duration_days: 365,
-                metadata: DomainMetadata {
+            let request = make_registration_request(
+                &owner,
+                domain_name,
+                DomainMetadata {
                     title: "Test App".to_string(),
                     description: "A test application".to_string(),
                     category: "test".to_string(),
@@ -1870,10 +2057,8 @@ mod tests {
                         hosting_budget: 100.0,
                     },
                 },
-                initial_content: HashMap::new(),
-                registration_proof,
-                deploy_manifest_cid: None,
-            };
+                HashMap::new(),
+            );
 
             let response = registry.register_domain(request).await.unwrap();
             assert!(response.success, "Domain registration should succeed");
@@ -1926,20 +2111,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            // Register domain
-            let registration_proof = ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                hash_blake3(b"test_proof").to_vec(),
-                owner.id.0.to_vec(),
-                owner.id.0.to_vec(),
-                None,
-            );
-
-            let request = DomainRegistrationRequest {
-                domain: domain_name.to_string(),
-                owner: owner.clone(),
-                duration_days: 365,
-                metadata: DomainMetadata {
+            let request = make_registration_request(
+                &owner,
+                domain_name,
+                DomainMetadata {
                     title: "Update Test".to_string(),
                     description: "Testing updates".to_string(),
                     category: "test".to_string(),
@@ -1952,10 +2127,8 @@ mod tests {
                         hosting_budget: 100.0,
                     },
                 },
-                initial_content: HashMap::new(),
-                registration_proof,
-                deploy_manifest_cid: None,
-            };
+                HashMap::new(),
+            );
 
             let response = registry.register_domain(request).await.unwrap();
             assert!(response.success);
@@ -2031,19 +2204,10 @@ mod tests {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
             let registry = DomainRegistry::new(storage).await.unwrap();
 
-            let registration_proof = ZeroKnowledgeProof::new(
-                "Plonky2".to_string(),
-                hash_blake3(b"test_proof").to_vec(),
-                owner.id.0.to_vec(),
-                owner.id.0.to_vec(),
-                None,
-            );
-
-            let request = DomainRegistrationRequest {
-                domain: domain_name.to_string(),
-                owner: owner.clone(),
-                duration_days: 365,
-                metadata: DomainMetadata {
+            let request = make_registration_request(
+                &owner,
+                domain_name,
+                DomainMetadata {
                     title: "Release Test".to_string(),
                     description: "Testing release".to_string(),
                     category: "test".to_string(),
@@ -2056,10 +2220,8 @@ mod tests {
                         hosting_budget: 100.0,
                     },
                 },
-                initial_content: HashMap::new(),
-                registration_proof,
-                deploy_manifest_cid: None,
-            };
+                HashMap::new(),
+            );
 
             let response = registry.register_domain(request).await.unwrap();
             assert!(response.success);

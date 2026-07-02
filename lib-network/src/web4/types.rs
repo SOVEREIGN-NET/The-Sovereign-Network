@@ -361,6 +361,10 @@ pub struct DomainTransfer {
     pub fee_paid: f64,
 }
 
+fn default_registration_fee_whole() -> u64 {
+    10
+}
+
 /// Domain registration request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainRegistrationRequest {
@@ -380,6 +384,15 @@ pub struct DomainRegistrationRequest {
     /// This will be converted to web4_manifest_cid during registration
     #[serde(default)]
     pub deploy_manifest_cid: Option<String>,
+    /// Owner Dilithium5 signature (hex) over `domain|registration_timestamp|registration_fee_whole`
+    #[serde(default)]
+    pub owner_signature_hex: String,
+    /// Unix timestamp included in the registration signature (must be recent)
+    #[serde(default)]
+    pub registration_timestamp: u64,
+    /// Whole-SOV fee amount included in the registration signature
+    #[serde(default = "default_registration_fee_whole")]
+    pub registration_fee_whole: u64,
 }
 
 /// Domain registration response

@@ -57,6 +57,87 @@ pub fn validate_domain_owner_signature_hex(signature: &str) -> Option<String> {
     None
 }
 
+/// Build the canonical domain-registration signing message (lib-client / zhtp API).
+pub fn domain_registration_signing_message(domain: &str, timestamp: u64, fee_whole: u64) -> Vec<u8> {
+    format!("{}|{}|{}", domain, timestamp, fee_whole).into_bytes()
+}
+
+/// Verify a domain registration signature against the owner's Dilithium5 public key.
+pub fn verify_domain_registration_signature(
+    owner_dilithium_pk: &[u8],
+    domain: &str,
+    timestamp: u64,
+    fee_whole: u64,
+    signature_hex: &str,
+) -> Result<bool> {
+    if let Some(error) = validate_domain_owner_signature_hex(signature_hex) {
+        return Err(anyhow!(error));
+    }
+
+    let owner_pk = owner_pk_array(owner_dilithium_pk)?;
+    let message = domain_registration_signing_message(domain, timestamp, fee_whole);
+    let signature_bytes = hex::decode(signature_hex)
+        .map_err(|e| anyhow!("Invalid signature hex: {}", e))?;
+
+    verify_signature(&message, &signature_bytes, owner_pk.as_slice())
+        .map_err(|e| anyhow!("Domain registration signature verification failed: {}", e))
+}
+
+/// Maximum age of a domain transfer authorization signature (5 minutes).
+pub const DOMAIN_TRANSFER_SIGNATURE_MAX_AGE_SECS: u64 = 300;
+
+/// Candidate signing messages for domain transfer.
+///
+/// When a timestamp is present, only the timestamped format is accepted so
+/// freshness checks cannot be bypassed via legacy preimages.
+pub fn domain_transfer_signing_candidates(
+    domain: &str,
+    from_did: &str,
+    to_did: &str,
+    timestamp: Option<u64>,
+) -> Vec<Vec<u8>> {
+    if let Some(ts) = timestamp {
+        return vec![format!("{}|{}|{}|{}", domain, from_did, to_did, ts).into_bytes()];
+    }
+    vec![
+        format!("{}|{}|{}", domain, from_did, to_did).into_bytes(),
+        format!("{}|{}", domain, to_did).into_bytes(),
+    ]
+}
+
+/// Verify a domain transfer signature against the current owner's Dilithium5 public key.
+pub fn verify_domain_transfer_signature(
+    owner_dilithium_pk: &[u8],
+    domain: &str,
+    from_did: &str,
+    to_did: &str,
+    signature_bytes: &[u8],
+    timestamp: Option<u64>,
+) -> Result<bool> {
+    if signature_bytes.is_empty() {
+        return Ok(false);
+    }
+
+    if let Some(ts) = timestamp {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("system time error: {}", e))?
+            .as_secs();
+        let age = now.abs_diff(ts);
+        if age > DOMAIN_TRANSFER_SIGNATURE_MAX_AGE_SECS {
+            return Ok(false);
+        }
+    }
+
+    let owner_pk = owner_pk_array(owner_dilithium_pk)?;
+    for message in domain_transfer_signing_candidates(domain, from_did, to_did, timestamp) {
+        if verify_signature(&message, signature_bytes, owner_pk.as_slice()).unwrap_or(false) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Verify a domain update signature against the stored owner Dilithium5 public key.
 pub fn verify_domain_update_signature(
     owner_dilithium_pk: &[u8],
@@ -90,6 +171,50 @@ pub fn verify_domain_update_signature(
 mod tests {
     use super::*;
     use lib_crypto::{generate_keypair, sign_message};
+
+    #[test]
+    fn domain_registration_roundtrip_sign_and_verify() {
+        let keypair = generate_keypair().expect("keypair");
+        let domain = "app.zhtp";
+        let timestamp = 1_700_000_000u64;
+        let fee = 10u64;
+
+        let message = domain_registration_signing_message(domain, timestamp, fee);
+        let sig = sign_message(&keypair, &message).expect("sign");
+        let sig_hex = hex::encode(&sig.signature);
+
+        let ok = verify_domain_registration_signature(
+            keypair.public_key.dilithium_pk.as_slice(),
+            domain,
+            timestamp,
+            fee,
+            &sig_hex,
+        )
+        .expect("verify");
+        assert!(ok);
+    }
+
+    #[test]
+    fn domain_transfer_roundtrip_sign_and_verify() {
+        let keypair = generate_keypair().expect("keypair");
+        let domain = "app.zhtp";
+        let from = "did:zhtp:abc";
+        let to = "did:zhtp:def";
+
+        let message = format!("{}|{}", domain, to);
+        let sig = sign_message(&keypair, message.as_bytes()).expect("sign");
+
+        let ok = verify_domain_transfer_signature(
+            keypair.public_key.dilithium_pk.as_slice(),
+            domain,
+            from,
+            to,
+            &sig.signature,
+            None,
+        )
+        .expect("verify");
+        assert!(ok);
+    }
 
     #[test]
     fn domain_update_roundtrip_sign_and_verify() {
