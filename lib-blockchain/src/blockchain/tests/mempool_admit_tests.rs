@@ -143,7 +143,7 @@ fn system_injection_rejects_unsigned_token_mint_from_unknown_originator() {
 }
 
 #[test]
-fn system_injection_allows_pouw_mint_with_pouw_memo_prefix() {
+fn system_injection_allows_pouw_mint_with_matching_memo() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     let recipient = [9u8; 32];
     let amount = 500u128;

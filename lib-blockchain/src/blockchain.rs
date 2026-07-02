@@ -2479,6 +2479,12 @@ impl Blockchain {
         let label = originator.as_str();
 
         if tx.transaction_type == TransactionType::TokenMint {
+            if tx.token_mint_data().is_none() {
+                return Err(anyhow::anyhow!(
+                    "rejecting TokenMint from originator '{:?}' with missing mint payload",
+                    originator
+                ));
+            }
             match originator {
                 SystemOriginator::PouwMint | SystemOriginator::PouwReward => {
                     if !empty_sig {
