@@ -10,6 +10,7 @@ use tracing::info;
 
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::{TokenMintData, Transaction};
+use lib_blockchain::SystemOriginator;
 
 use super::budget_tracker::RewardSource;
 
@@ -64,7 +65,7 @@ impl RewardMinter {
         // Write lock only for mempool insertion
         {
             let mut bc = self.blockchain.write().await;
-            bc.add_system_transaction(mint_tx, "pouw_reward")?;
+            bc.add_system_transaction(mint_tx, SystemOriginator::PouwReward)?;
         }
 
         info!(

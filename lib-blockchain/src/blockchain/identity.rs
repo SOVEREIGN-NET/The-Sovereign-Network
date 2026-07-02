@@ -1137,7 +1137,10 @@ impl Blockchain {
             b"Auto-registration for wallet identity".to_vec(),
         );
 
-        self.add_system_transaction(registration_tx.clone(), "auto_identity_registration")?;
+        self.add_system_transaction(
+            registration_tx.clone(),
+            super::SystemOriginator::AutoIdentityRegistration,
+        )?;
         self.identity_registry
             .insert(identity_did.clone(), identity_data.clone());
         self.identity_blocks.insert(identity_did, self.height + 1);

@@ -42,6 +42,8 @@ mod validators;
 mod gateways;
 mod wallets;
 mod utxo;
+mod system_originator;
+pub use system_originator::SystemOriginator;
 
 pub use persistence::PersistenceStats;
 pub use utxo::SpendableOutputView;
@@ -2463,19 +2465,147 @@ impl Blockchain {
     /// the bypass itself is load-bearing (see #2647 Patterns A and B). This
     /// path does NOT run `lib_mempool::admit()` nor `verify_transaction`;
     /// each caller is responsible for the trust it implicitly grants.
+    /// Validate a system-originated transaction before it enters the pending pool.
+    ///
+    /// System injectors bypass signature verification at admission time; this gate
+    /// enforces minimum structural trust per originator class.
+    fn validate_system_injection(
+        originator: SystemOriginator,
+        tx: &Transaction,
+    ) -> anyhow::Result<()> {
+        use crate::types::transaction_type::TransactionType;
+
+        let empty_sig = tx.signature.signature.is_empty();
+        let label = originator.as_str();
+
+        if tx.transaction_type == TransactionType::TokenMint {
+            if tx.token_mint_data().is_none() {
+                return Err(anyhow::anyhow!(
+                    "rejecting TokenMint from originator '{:?}' with missing mint payload",
+                    originator
+                ));
+            }
+            match originator {
+                SystemOriginator::PouwMint | SystemOriginator::PouwReward => {
+                    if !empty_sig {
+                        return Err(anyhow::anyhow!(
+                            "rejecting signed PoUW TokenMint from originator '{}'",
+                            label
+                        ));
+                    }
+                    Self::validate_pouw_mint_memo(tx)?;
+                }
+                o if o.is_treasury() => {}
+                SystemOriginator::Other(unknown) => {
+                    tracing::warn!(
+                        originator = unknown,
+                        "rejecting TokenMint from untyped Other originator"
+                    );
+                    return Err(anyhow::anyhow!(
+                        "rejecting TokenMint from untrusted originator '{}'",
+                        unknown
+                    ));
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "rejecting TokenMint from untrusted originator '{:?}'",
+                        originator
+                    ));
+                }
+            }
+        }
+
+        if tx.transaction_type == TransactionType::WalletRegistration {
+            let wallet_data = tx
+                .wallet_data()
+                .ok_or_else(|| anyhow::anyhow!("WalletRegistration missing wallet_data"))?;
+            if wallet_data.initial_balance > 0 && !originator.is_treasury() {
+                return Err(anyhow::anyhow!(
+                    "rejecting WalletRegistration with initial_balance={} from originator '{:?}': \
+                     treasury originator required for funded wallet bootstrap",
+                    wallet_data.initial_balance,
+                    originator
+                ));
+            }
+        }
+
+        if empty_sig
+            && matches!(
+                originator,
+                SystemOriginator::Web4DomainRegister | SystemOriginator::Web4DomainUpdate
+            )
+        {
+            return Err(anyhow::anyhow!(
+                "rejecting unsigned domain system tx from originator '{:?}'",
+                originator
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_pouw_mint_memo(tx: &Transaction) -> anyhow::Result<()> {
+        let mint_data = tx
+            .token_mint_data()
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint missing mint data"))?;
+        let memo_str = std::str::from_utf8(&tx.memo)
+            .map_err(|_| anyhow::anyhow!("PoUW TokenMint memo is not valid UTF-8"))?;
+        let rest = memo_str
+            .strip_prefix("pouw:mint:")
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint memo missing pouw:mint: prefix"))?;
+        let mut parts = rest.splitn(2, ':');
+        let recipient_hex = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint memo missing recipient"))?;
+        let amount_str = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("PoUW TokenMint memo missing amount"))?;
+
+        let decoded = hex::decode(recipient_hex)
+            .map_err(|_| anyhow::anyhow!("PoUW TokenMint memo recipient is not valid hex"))?;
+        if decoded.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "PoUW TokenMint memo recipient must decode to 32 bytes"
+            ));
+        }
+        let mut recipient = [0u8; 32];
+        recipient.copy_from_slice(&decoded);
+        if recipient != mint_data.to {
+            return Err(anyhow::anyhow!(
+                "PoUW TokenMint memo recipient does not match mint_data.to"
+            ));
+        }
+
+        let amount: u128 = amount_str
+            .parse()
+            .map_err(|_| anyhow::anyhow!("PoUW TokenMint memo amount is not a valid integer"))?;
+        if amount != mint_data.amount {
+            return Err(anyhow::anyhow!(
+                "PoUW TokenMint memo amount does not match mint_data.amount"
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn add_system_transaction(
         &mut self,
         transaction: Transaction,
-        originator: &'static str,
+        originator: SystemOriginator,
     ) -> Result<()> {
+        Self::validate_system_injection(originator, &transaction)?;
+
+        let label = originator.as_str();
         tracing::info!(
-            originator = originator,
+            originator = label,
             tx_hash = %hex::encode(&transaction.hash().as_bytes()[..8]),
             "system tx (bypass admission + verify)",
         );
         *self
             .system_tx_originators
-            .entry(originator)
+            .entry(label)
             .or_insert(0) += 1;
 
         // Keep `mempool_state` paired with the pending pool. We bypass
@@ -2500,7 +2630,7 @@ impl Blockchain {
         if let Some(store) = &self.store {
             if let Err(e) = store.put_pending_transaction(&transaction) {
                 tracing::warn!(
-                    originator = originator,
+                    originator = label,
                     "system tx persistence failed: {}",
                     e
                 );
@@ -6615,7 +6745,7 @@ impl Blockchain {
 
         let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
         let tx_hash = mint_tx.hash();
-        self.add_system_transaction(mint_tx, "pouw_mint")?;
+        self.add_system_transaction(mint_tx, SystemOriginator::PouwMint)?;
         Ok(tx_hash)
     }
 }

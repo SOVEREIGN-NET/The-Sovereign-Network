@@ -1677,7 +1677,7 @@ impl WalletHandler {
                     },
                     format!("Provisioned identity {}", &did[..40.min(did.len())]).into_bytes(),
                 );
-                if let Err(e) = blockchain.add_system_transaction(identity_tx, "identity_provisioning") {
+                if let Err(e) = blockchain.add_system_transaction(identity_tx, lib_blockchain::SystemOriginator::IdentityProvisioning) {
                     tracing::warn!("Failed to submit identity tx: {}", e);
                 }
                 // Cache warmup: identity must be visible immediately for QUIC handshake
@@ -1748,5 +1748,4 @@ impl WalletHandler {
             }
         }
     }
-
 }

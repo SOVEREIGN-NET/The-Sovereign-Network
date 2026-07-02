@@ -56,11 +56,14 @@ fn admit_gate_rejects_when_tx_count_cap_exceeded() {
 fn system_tx_originator_counter_increments_per_call() {
     let mut bc = Blockchain::new().expect("blockchain construct");
 
-    bc.add_system_transaction(make_tx(TransactionType::Coinbase), "test_originator")
+    bc.add_system_transaction(make_tx(TransactionType::Coinbase), crate::blockchain::SystemOriginator::TestOriginator)
         .expect("system tx accept");
-    bc.add_system_transaction(make_tx(TransactionType::Coinbase), "test_originator")
+    bc.add_system_transaction(make_tx(TransactionType::Coinbase), crate::blockchain::SystemOriginator::TestOriginator)
         .expect("system tx accept");
-    bc.add_system_transaction(make_tx(TransactionType::Coinbase), "other_originator")
+    bc.add_system_transaction(
+        make_tx(TransactionType::Coinbase),
+        crate::blockchain::SystemOriginator::Other("other_originator"),
+    )
         .expect("system tx accept");
 
     assert_eq!(
@@ -86,7 +89,7 @@ fn pending_tx_survives_store_reattach() {
 
     let tx = make_tx(TransactionType::Coinbase);
     let tx_hash = tx.hash();
-    bc1.add_system_transaction(tx, "durability_test")
+    bc1.add_system_transaction(tx, crate::blockchain::SystemOriginator::DurabilityTest)
         .expect("system tx accept");
     assert_eq!(bc1.pending_transactions.len(), 1);
 
@@ -112,6 +115,144 @@ fn pending_tx_survives_store_reattach() {
         bc2.mempool_state.tx_count, 1,
         "mempool admission state must reflect the recovered tx"
     );
+}
+
+#[test]
+fn system_injection_rejects_unsigned_token_mint_from_unknown_originator() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: [7u8; 32],
+        amount: 100,
+    };
+    let tx = Transaction::new_token_mint(mint_data, Signature {
+        signature: Vec::new(),
+        public_key: PublicKey::new([0u8; 2592]),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 0,
+    }, b"not-a-pouw-mint".to_vec());
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::Other("evil_originator"))
+        .expect_err("unsigned mint must be rejected");
+    assert!(
+        err.to_string().contains("untrusted originator"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[test]
+fn system_injection_allows_pouw_mint_with_matching_memo() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let recipient = [9u8; 32];
+    let amount = 500u128;
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: recipient,
+        amount,
+    };
+    let memo = format!("pouw:mint:{}:{}", hex::encode(recipient), amount).into_bytes();
+    let tx = Transaction::new_token_mint(mint_data, Signature {
+        signature: Vec::new(),
+        public_key: PublicKey::new([0u8; 2592]),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 0,
+    }, memo);
+
+    bc.add_system_transaction(tx, crate::blockchain::SystemOriginator::PouwMint)
+        .expect("pouw mint allowed");
+    assert_eq!(bc.pending_transactions.len(), 1);
+}
+
+#[test]
+fn system_injection_rejects_pouw_mint_with_mismatched_recipient() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let recipient = [9u8; 32];
+    let amount = 500u128;
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: [8u8; 32],
+        amount,
+    };
+    let memo = format!("pouw:mint:{}:{}", hex::encode(recipient), amount).into_bytes();
+    let tx = Transaction::new_token_mint(mint_data, Signature {
+        signature: Vec::new(),
+        public_key: PublicKey::new([0u8; 2592]),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 0,
+    }, memo);
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::PouwMint)
+        .expect_err("mismatched recipient must be rejected");
+    assert!(err.to_string().contains("recipient does not match"));
+}
+
+#[test]
+fn system_injection_rejects_token_mint_from_ipc_external() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: [7u8; 32],
+        amount: 100,
+    };
+    let tx = Transaction::new_token_mint(mint_data, Signature {
+        signature: vec![1u8; 64],
+        public_key: PublicKey::new([0u8; 2592]),
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 0,
+    }, b"signed-but-untrusted".to_vec());
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::IpcExternal)
+        .expect_err("ipc TokenMint must be rejected");
+    assert!(err.to_string().contains("untrusted originator"));
+}
+
+#[test]
+fn system_injection_rejects_wallet_registration_without_wallet_data() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let tx = make_tx(TransactionType::WalletRegistration);
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::AutoWalletRegistration)
+        .expect_err("wallet registration without payload must be rejected");
+    assert!(err.to_string().contains("missing wallet_data"));
+}
+
+#[test]
+fn system_injection_rejects_funded_wallet_registration_from_non_treasury() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let wallet_data = crate::transaction::WalletTransactionData {
+        wallet_id: crate::types::Hash::new([0x11; 32]),
+        wallet_type: "Primary".to_string(),
+        wallet_name: "test".to_string(),
+        alias: None,
+        public_key: vec![0x22; 32],
+        owner_identity_id: None,
+        seed_commitment: crate::types::Hash::new([0x33; 32]),
+        created_at: 0,
+        registration_fee: 0,
+        capabilities: 0,
+        initial_balance: 1_000,
+    };
+    let tx = Transaction::new_wallet_registration(
+        wallet_data,
+        vec![],
+        Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey::new([1u8; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        },
+        vec![],
+    );
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::AutoWalletRegistration)
+        .expect_err("funded wallet registration must be rejected");
+    assert!(err.to_string().contains("initial_balance=1000"));
 }
 
 #[test]
