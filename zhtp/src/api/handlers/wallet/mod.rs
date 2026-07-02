@@ -1632,7 +1632,7 @@ impl WalletHandler {
             created_at: now,
             registration_fee: 0,
             capabilities: if req.wallet_type == "Primary" { 0xFF } else { 0x01 },
-            initial_balance: welcome_bonus_amount,
+            initial_balance: 0,
         };
 
         // Register on blockchain — creates system transaction for block inclusion
@@ -1697,6 +1697,32 @@ impl WalletHandler {
 
             match blockchain.register_wallet(wallet_data) {
                 Ok(tx_hash) => {
+                    if req.welcome_bonus && welcome_bonus_amount > 0 {
+                        let memo = format!(
+                            "WELCOME_BONUS_V1:{}",
+                            hex::encode(wallet_id_arr)
+                        )
+                        .into_bytes();
+                        if let Ok(mint_tx) = crate::runtime::token_utils::build_sov_mint_tx(
+                            &wallet_id_arr,
+                            welcome_bonus_amount,
+                            memo,
+                        )
+                        .await
+                        {
+                            if let Err(e) = blockchain.add_system_transaction(
+                                mint_tx,
+                                "treasury_wallet_bootstrap",
+                            ) {
+                                tracing::warn!(
+                                    "Failed to queue welcome bonus TokenMint: {}",
+                                    e
+                                );
+                            }
+                        } else {
+                            tracing::warn!("Failed to build welcome bonus TokenMint");
+                        }
+                    }
                     tracing::info!(
                         "✅ Wallet provisioned: {} (type={}, owner={}, bonus={})",
                         &req.wallet_id[..16.min(req.wallet_id.len())],
