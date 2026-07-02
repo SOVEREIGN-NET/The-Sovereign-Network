@@ -104,4 +104,8 @@ impl SystemOriginator {
             other => Self::Other(other),
         }
     }
+
+    pub fn allows_unsigned_domain_tx(self) -> bool {
+        false
+    }
 }

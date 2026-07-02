@@ -9,6 +9,7 @@ use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
 use crate::transaction::mint_authorization::validate_token_mint_authorization;
+use crate::transaction::system_tx_signature::requires_system_tx_signature;
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
     decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -145,22 +146,6 @@ impl std::error::Error for ValidationError {}
 pub type ValidationResult = Result<(), ValidationError>;
 
 /// Transaction validator with state context
-
-/// Returns true when a system transaction must still carry a valid signature.
-fn requires_system_tx_signature(transaction: &Transaction) -> bool {
-    matches!(
-        transaction.transaction_type,
-        TransactionType::WalletRegistration
-            | TransactionType::IdentityRegistration
-            | TransactionType::DomainRegistration
-            | TransactionType::DomainUpdate
-            | TransactionType::TokenMint
-            | TransactionType::InitEntityRegistry
-            | TransactionType::TokenCreation
-            | TransactionType::WalletUpdate
-    ) || (transaction.transaction_type == TransactionType::Transfer
-        && (!transaction.outputs.is_empty() || transaction.fee > 0))
-}
 
 pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
@@ -2361,11 +2346,10 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
-                if blockchain.height == 0
-                    && blockchain.latest_block().is_none() // #2636: facade form of blocks.is_empty()
+                if blockchain.is_applying_genesis_state()
                     && transaction.signature.signature.is_empty()
                 {
-                    skip_signature = true; // Allow genesis TokenMint without signature
+                    skip_signature = true; // Allow genesis TokenMint only during apply_genesis_state
                 }
             }
         }
@@ -3008,14 +2992,9 @@ impl<'a> StatefulTransactionValidator<'a> {
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
         tracing::debug!("[BREADCRUMB] validate_sender_identity_exists ENTER");
 
-        // If we don't have blockchain access, skip this check (backward compatibility)
-        let blockchain = match self.blockchain {
-            Some(blockchain) => blockchain,
-            None => {
-                tracing::warn!("SECURITY WARNING: Identity verification skipped - no blockchain state available");
-                return Ok(());
-            }
-        };
+        let blockchain = self
+            .blockchain
+            .ok_or(ValidationError::InvalidTransaction)?;
 
         // Extract the public key from the transaction signature
         let sender_public_key = transaction.signature.public_key.as_bytes();

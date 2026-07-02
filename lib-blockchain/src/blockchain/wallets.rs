@@ -735,6 +735,18 @@ impl Blockchain {
             .collect()
     }
 
+    /// Register a wallet via the trusted system-injection path.
+    ///
+    /// **Trusted callers** (in-process only — not mempool-admitted):
+    /// - `zhtp` citizenship / identity handlers (`identity/mod.rs`)
+    /// - `zhtp` runtime wallet bootstrap (`runtime/mod.rs`, `runtime/components/identity.rs`)
+    /// - `zhtp` mesh identity API (`server/mesh/identity_api.rs`)
+    /// - `zhtp` wallet provisioning handler (`api/handlers/wallet/mod.rs`)
+    /// - Genesis allocation replay (`blockchain/contracts.rs`)
+    ///
+    /// Welcome-bonus SOV (`initial_balance > 0`) is only minted in-memory during
+    /// `apply_genesis_state`. At `height > 0`, callers must set `initial_balance = 0`
+    /// and submit a separate treasury-signed [`TransactionType::TokenMint`].
     pub fn register_wallet(
         &mut self,
         wallet_data: crate::transaction::WalletTransactionData,
@@ -777,6 +789,14 @@ impl Blockchain {
             .insert(wallet_id_str.clone(), self.height + 1);
 
         if wallet_data.initial_balance > 0 {
+            if !self.is_applying_genesis_state() {
+                return Err(anyhow::anyhow!(
+                    "register_wallet initial_balance={} rejected at height {}: \
+                     submit a treasury-signed TokenMint instead of in-memory mint",
+                    wallet_data.initial_balance,
+                    self.height
+                ));
+            }
             let sov_token_id = crate::contracts::utils::generate_lib_token_id();
             self.ensure_sov_token_contract();
             let mut wallet_id_bytes_arr = [0u8; 32];
@@ -786,14 +806,14 @@ impl Blockchain {
                 if token.balance_of(&recipient_pk) == 0 {
                     if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance as u128) {
                         warn!(
-                            "register_wallet: failed to mint {} SOV for {}: {}",
+                            "register_wallet: genesis bootstrap mint failed {} SOV for {}: {}",
                             wallet_data.initial_balance,
                             &wallet_id_str[..16.min(wallet_id_str.len())],
                             e
                         );
                     } else {
                         info!(
-                            "💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
+                            "💰 register_wallet: genesis bootstrap minted {} SOV for wallet {}",
                             wallet_data.initial_balance,
                             &wallet_id_str[..16.min(wallet_id_str.len())]
                         );

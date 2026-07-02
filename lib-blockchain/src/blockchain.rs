@@ -533,6 +533,9 @@ pub struct Blockchain {
     /// is load-bearing (Pattern A/B in #2647) and won't disappear in S2.
     #[serde(skip)]
     pub system_tx_originators: HashMap<&'static str, u64>,
+    /// Nesting depth while `apply_genesis_state` is running (audit follow-up: genesis mint gate).
+    #[serde(skip, default)]
+    pub(crate) genesis_apply_depth: u32,
 }
 
 /// Validator information stored on-chain.
@@ -2588,6 +2591,19 @@ impl Blockchain {
         }
 
         Ok(())
+    }
+
+    /// True while genesis state is being applied (stronger than height/heuristic checks).
+    pub fn is_applying_genesis_state(&self) -> bool {
+        self.genesis_apply_depth > 0
+    }
+
+    pub(crate) fn begin_genesis_apply(&mut self) {
+        self.genesis_apply_depth = self.genesis_apply_depth.saturating_add(1);
+    }
+
+    pub(crate) fn end_genesis_apply(&mut self) {
+        self.genesis_apply_depth = self.genesis_apply_depth.saturating_sub(1);
     }
 
     pub fn add_system_transaction(
