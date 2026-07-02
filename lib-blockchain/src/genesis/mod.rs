@@ -875,6 +875,13 @@ impl GenesisConfig {
     /// the identity/wallet registries are empty because genesis state is populated via
     /// direct inserts in build_block0(), not via transactions.
     pub fn apply_genesis_state(&self, bc: &mut crate::Blockchain) -> Result<()> {
+        bc.begin_genesis_apply();
+        let result = self.apply_genesis_state_inner(bc);
+        bc.end_genesis_apply();
+        result
+    }
+
+    fn apply_genesis_state_inner(&self, bc: &mut crate::Blockchain) -> Result<()> {
         // Load the OPAQUE server setup if `[opaque]` is present.
         // Missing section is allowed in v1 — networks without lobby auth
         // simply have `bc.opaque_server_setup = None` and the OPAQUE

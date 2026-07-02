@@ -108,6 +108,7 @@ impl Blockchain {
             mempool_config: lib_mempool::MempoolConfig::audit_only(),
             mempool_state: lib_mempool::MempoolState::default(),
             system_tx_originators: HashMap::new(),
+            genesis_apply_depth: 0,
         }
     }
 

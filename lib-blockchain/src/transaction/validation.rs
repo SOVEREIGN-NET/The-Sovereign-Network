@@ -9,6 +9,7 @@ use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
 use crate::transaction::mint_authorization::validate_token_mint_authorization;
+use crate::transaction::system_tx_signature::requires_system_tx_signature;
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
     decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -145,6 +146,7 @@ impl std::error::Error for ValidationError {}
 pub type ValidationResult = Result<(), ValidationError>;
 
 /// Transaction validator with state context
+
 pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
     // blockchain state, UTXO set, nullifier set, etc.
@@ -592,14 +594,8 @@ impl TransactionValidator {
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals; the
         //   transaction-level signature may be empty/dummy on these types.
-        let require_signature = !is_system_transaction
-            || matches!(
-                transaction.transaction_type,
-                TransactionType::WalletUpdate
-                    | TransactionType::TokenMint
-                    | TransactionType::TokenCreation
-                    | TransactionType::InitEntityRegistry
-            );
+        let require_signature =
+            !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         // Skip tx-level sig validation for threshold-approval-only types
         let is_threshold_only = matches!(
@@ -890,14 +886,8 @@ impl TransactionValidator {
         //   This prevents malformed signatures (wrong size, invalid bytes) from passing
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals.
-        let require_signature = !is_system_transaction
-            || matches!(
-                transaction.transaction_type,
-                TransactionType::WalletUpdate
-                    | TransactionType::TokenMint
-                    | TransactionType::TokenCreation
-                    | TransactionType::InitEntityRegistry
-            );
+        let require_signature =
+            !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         let is_threshold_only_sflag = matches!(
             transaction.transaction_type,
@@ -2348,22 +2338,18 @@ impl<'a> StatefulTransactionValidator<'a> {
         // Signature validation (always required except for system transactions)
         // TokenMint and InitEntityRegistry are system for fee purposes but MUST still be signed.
         // RecordOnRampTrade and TreasuryAllocation use threshold approvals — skip tx-level sig.
-        let mut skip_signature = is_system_transaction
-            && !matches!(
-                transaction.transaction_type,
-                TransactionType::TokenMint | TransactionType::InitEntityRegistry
-            );
+        let mut skip_signature =
+            is_system_transaction && !requires_system_tx_signature(transaction);
         // Always skip tx-level signature for threshold-approval-only types
         if is_threshold_type {
             skip_signature = true;
         }
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
-                if blockchain.height == 0
-                    && blockchain.latest_block().is_none() // #2636: facade form of blocks.is_empty()
+                if blockchain.is_applying_genesis_state()
                     && transaction.signature.signature.is_empty()
                 {
-                    skip_signature = true; // Allow genesis TokenMint without signature
+                    skip_signature = true; // Allow genesis TokenMint only during apply_genesis_state
                 }
             }
         }
@@ -3006,14 +2992,9 @@ impl<'a> StatefulTransactionValidator<'a> {
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
         tracing::debug!("[BREADCRUMB] validate_sender_identity_exists ENTER");
 
-        // If we don't have blockchain access, skip this check (backward compatibility)
-        let blockchain = match self.blockchain {
-            Some(blockchain) => blockchain,
-            None => {
-                tracing::warn!("SECURITY WARNING: Identity verification skipped - no blockchain state available");
-                return Ok(());
-            }
-        };
+        let blockchain = self
+            .blockchain
+            .ok_or(ValidationError::InvalidTransaction)?;
 
         // Extract the public key from the transaction signature
         let sender_public_key = transaction.signature.public_key.as_bytes();
