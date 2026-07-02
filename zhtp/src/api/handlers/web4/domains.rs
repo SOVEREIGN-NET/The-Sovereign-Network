@@ -680,6 +680,11 @@ impl Web4Handler {
                 owner_identity.clone(), // Clone since we need it later for wallet operations
                 initial_content,
                 metadata,
+                Some((
+                    simple_request.signature.clone(),
+                    simple_request.timestamp,
+                    user_provided_fee,
+                )),
             )
             .await;
 
@@ -1009,6 +1014,9 @@ impl Web4Handler {
             initial_content: HashMap::new(), // Content already uploaded via manifest
             registration_proof,
             deploy_manifest_cid: Some(request.deploy_manifest_cid.clone()),
+            owner_signature_hex: String::new(),
+            registration_timestamp: 0,
+            registration_fee_whole: registration_fee_whole,
         };
 
         // Register domain
@@ -1195,6 +1203,9 @@ impl Web4Handler {
             initial_content,
             registration_proof,
             deploy_manifest_cid: None, // Auto-generate for non-manifest registration
+            owner_signature_hex: String::new(),
+            registration_timestamp: 0,
+            registration_fee_whole: 10,
         };
 
         // Process registration

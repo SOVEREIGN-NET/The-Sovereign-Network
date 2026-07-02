@@ -525,6 +525,9 @@ mod tests {
                 initial_content,
                 registration_proof,
                 deploy_manifest_cid: None,
+                owner_signature_hex: String::new(),
+                registration_timestamp: 0,
+                registration_fee_whole: 10,
             })
             .await?;
 
