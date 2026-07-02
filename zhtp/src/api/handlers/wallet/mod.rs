@@ -1712,7 +1712,7 @@ impl WalletHandler {
                         {
                             if let Err(e) = blockchain.add_system_transaction(
                                 mint_tx,
-                                "treasury_wallet_bootstrap",
+                                lib_blockchain::SystemOriginator::TreasuryWalletBootstrap,
                             ) {
                                 tracing::warn!(
                                     "Failed to queue welcome bonus TokenMint: {}",

@@ -49,7 +49,10 @@ async fn queue_welcome_bonus_token_mint(
     match crate::runtime::token_utils::build_sov_mint_tx(&wallet_id, amount, memo).await {
         Ok(mint_tx) => {
             if let Err(e) =
-                blockchain.add_system_transaction(mint_tx, "treasury_wallet_bootstrap")
+                blockchain.add_system_transaction(
+                    mint_tx,
+                    lib_blockchain::SystemOriginator::TreasuryWalletBootstrap,
+                )
             {
                 tracing::warn!("Failed to queue welcome bonus TokenMint: {}", e);
             } else {
