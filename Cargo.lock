@@ -3592,6 +3592,8 @@ name = "lib-economy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
+ "blake3",
  "chrono",
  "criterion",
  "hex",
