@@ -13,6 +13,7 @@ pub mod credentials;
 pub mod domain;
 pub mod fee;
 pub mod hashing;
+pub mod mint_authorization;
 pub mod oracle_governance;
 pub mod signing;
 pub mod threshold_approval;
