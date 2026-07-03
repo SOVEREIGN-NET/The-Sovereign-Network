@@ -159,6 +159,66 @@ impl ConsensusEngine {
         })
     }
 
+    /// Drop a stale empty `valid_value` / lock when mempool work arrived after
+    /// round-1 empty prevotes locked the height. Without this, skipping empty
+    /// reproposal leaves peers abstaining forever on mempool-inclusive blocks.
+    pub(super) fn clear_stale_empty_valid_value_state(&mut self, empty_proposal_id: &Hash) {
+        if self.current_round.valid_proposal.as_ref() == Some(empty_proposal_id) {
+            self.current_round.valid_proposal = None;
+            self.current_round.valid_round = None;
+        }
+        if self.current_round.locked_proposal.as_ref() == Some(empty_proposal_id) {
+            tracing::info!(
+                "🔓 Clearing stale lock on empty {:?} at H={} R={} — mempool has pending work",
+                empty_proposal_id,
+                self.current_round.height,
+                self.current_round.round,
+            );
+            self.current_round.locked_proposal = None;
+            self.current_round.locked_round = None;
+        }
+    }
+
+    /// If locked on an empty block but `incoming` carries mempool txs, release
+    /// the stale lock so validators can prevote the fresh canonical block.
+    pub(super) async fn maybe_clear_stale_empty_lock_for_incoming(
+        &mut self,
+        incoming: Option<&ConsensusProposal>,
+        incoming_id: &Hash,
+    ) {
+        let Some(locked_id) = self.current_round.locked_proposal.clone() else {
+            return;
+        };
+        if locked_id == *incoming_id {
+            return;
+        }
+        if !self.mempool_has_pending_transactions().await {
+            return;
+        }
+        if !self.proposal_artifact_has_no_transactions(&locked_id).await {
+            return;
+        }
+        let Some(proposal) = incoming else {
+            return;
+        };
+        if self.cached_proposal_has_no_transactions(&proposal.block_data).await {
+            return;
+        }
+        self.clear_stale_empty_valid_value_state(&locked_id);
+    }
+
+    async fn proposal_artifact_has_no_transactions(&self, proposal_id: &Hash) -> bool {
+        let artifact = self
+            .pending_proposals
+            .iter()
+            .find(|p| &p.id == proposal_id)
+            .or_else(|| self.proposal_for_round.values().find(|p| &p.id == proposal_id));
+        match artifact {
+            Some(p) => self.cached_proposal_has_no_transactions(&p.block_data).await,
+            None => false,
+        }
+    }
+
     /// Returns true when `block_data` decodes to a block with zero transactions.
     async fn cached_proposal_has_no_transactions(&self, block_data: &[u8]) -> bool {
         if block_data.is_empty() {

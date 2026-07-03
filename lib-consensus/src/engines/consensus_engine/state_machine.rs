@@ -1129,6 +1129,9 @@ impl ConsensusEngine {
                     .cloned()
             });
 
+        self.maybe_clear_stale_empty_lock_for_incoming(proposal.as_ref(), proposal_id)
+            .await;
+
         if !self.prevote_permitted_by_lock(proposal.as_ref(), proposal_id) {
             tracing::info!(
                 "🔒 Lock rule: abstaining from prevote for {:?} at H={} R={} \
