@@ -171,7 +171,7 @@ pub struct DaoTokenExpectation {
     pub holder_wallet_id: [u8; 32],
 }
 
-/// SOV minted per wallet in synthetic replay chains (GENESIS-3: via `WalletRegistration`, not genesis rows).
+/// SOV minted per wallet in synthetic replay chains (GENESIS-3: treasury `TokenMint` after zero-balance `WalletRegistration`).
 pub const REPLAY_GATE_WALLET_MINT_ATOMS: u128 = 5_000 * 1_000_000_000_000_000_000;
 
 /// Deterministic wallets for GENESIS-2 synthetic replay chains.
