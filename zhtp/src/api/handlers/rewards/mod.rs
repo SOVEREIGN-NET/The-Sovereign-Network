@@ -57,12 +57,16 @@ use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIV
 
 // ── Constants ────────────────────────────────────────────────────────
 
-/// BUBL token id — derived deterministically from CBE-style name+symbol
-/// hash at deploy time. Hard-coded here because rewards must keep
-/// pointing at the same token across validator restarts and even across
-/// today's testnet reset (the reset will preserve the deterministic id).
-const BUBL_TOKEN_ID_HEX: &str =
-    "f5aff42a31e17656ecab4b01cc2aea15025d813a3109c98b8f1a55378802f82d";
+/// Canonical BUBL `TokenCreation` metadata (GENESIS-6 founding tx).
+const BUBL_TOKEN_NAME: &str = "Bubble";
+const BUBL_TOKEN_SYMBOL: &str = "BUBL";
+
+fn bubl_token_id() -> [u8; 32] {
+    lib_blockchain::contracts::utils::generate_custom_token_id(
+        BUBL_TOKEN_NAME,
+        BUBL_TOKEN_SYMBOL,
+    )
+}
 
 /// 18-decimal atom multiplier.
 const ATOM_18: u128 = 1_000_000_000_000_000_000;
@@ -1184,13 +1188,7 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
             return None;
         }
     };
-    let bubl_token_id = match decode_token_id(BUBL_TOKEN_ID_HEX) {
-        Ok(id) => id,
-        Err(e) => {
-            warn!("rewards: invalid BUBL token id constant: {}", e);
-            return None;
-        }
-    };
+    let bubl_token_id = bubl_token_id();
     let signer_key_id = keypair.public_key.key_id;
 
     // Verify the keystore actually holds spendable BUBL. The BUBL token
