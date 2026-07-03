@@ -21,7 +21,7 @@ impl ConsensusEngine {
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Locate the valid_value artifact to re-propose, if we hold one.
-        let reproposal = match (
+        let mut reproposal = match (
             self.current_round.valid_proposal.as_ref(),
             self.current_round.valid_round,
         ) {
@@ -33,6 +33,25 @@ impl ConsensusEngine {
                 .cloned(),
             _ => None,
         };
+
+        // Tendermint requires reproposing a cached valid_value, but an empty
+        // block that became valid before mempool txs arrived will never pick
+        // them up. When the cached block has no transactions and the mempool
+        // now has work, build a fresh proposal instead (valid_round = None).
+        if let Some(ref artifact) = reproposal {
+            if self.cached_proposal_has_no_transactions(&artifact.block_data).await
+                && self.mempool_has_pending_transactions().await
+            {
+                tracing::info!(
+                    "Skipping empty valid_value {:?} reproposal at H={} R={} — \
+                     mempool has pending transactions",
+                    artifact.id,
+                    self.current_round.height,
+                    self.current_round.round,
+                );
+                reproposal = None;
+            }
+        }
 
         let (proposal_id, previous_hash, block_data, valid_round) = match reproposal {
             Some(artifact) => {
@@ -138,6 +157,42 @@ impl ConsensusEngine {
                 self.current_round.height, e,
             ))
         })
+    }
+
+    /// Returns true when `block_data` decodes to a block with zero transactions.
+    async fn cached_proposal_has_no_transactions(&self, block_data: &[u8]) -> bool {
+        if block_data.is_empty() {
+            return true;
+        }
+        let Some(provider) = self.blockchain_provider.as_ref() else {
+            return true;
+        };
+        match provider.decode_block_data(block_data).await {
+            Ok((tx_count, _)) => tx_count == 0,
+            Err(_) => true,
+        }
+    }
+
+    /// Returns true when the blockchain provider reports pending mempool work.
+    async fn mempool_has_pending_transactions(&self) -> bool {
+        let Some(provider) = self.blockchain_provider.as_ref() else {
+            return false;
+        };
+        if !provider.is_ready().await {
+            return false;
+        }
+        match provider.get_pending_transactions().await {
+            Ok(data) => {
+                if data.is_empty() {
+                    return false;
+                }
+                match provider.decode_block_data(&data).await {
+                    Ok((tx_count, _)) => tx_count > 0,
+                    Err(_) => !data.is_empty(),
+                }
+            }
+            Err(_) => false,
+        }
     }
 
     /// Collect transactions for the new block.
