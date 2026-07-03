@@ -2273,6 +2273,7 @@ mod tests {
         lib_network::web4::DomainRecord {
             domain: domain.to_string(),
             owner: lib_crypto::Hash(owner_bytes),
+            owner_dilithium_pk: vec![],
             current_web4_manifest_cid: "sled-cid".to_string(),
             version,
             registered_at: 500,

@@ -2544,6 +2544,52 @@ impl Blockchain {
             ));
         }
 
+        if tx.transaction_type == TransactionType::IdentityRegistration {
+            if originator == SystemOriginator::ClientIdentityRegistration {
+                if !empty_sig {
+                    return Err(anyhow::anyhow!(
+                        "rejecting signed ClientIdentityRegistration from originator '{}'",
+                        label
+                    ));
+                }
+                let identity_data = tx
+                    .identity_data()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "ClientIdentityRegistration missing identity payload"
+                        )
+                    })?;
+                if identity_data.ownership_proof.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "ClientIdentityRegistration requires non-empty ownership_proof"
+                    ));
+                }
+                if identity_data.public_key.len() != 2592 {
+                    return Err(anyhow::anyhow!(
+                        "ClientIdentityRegistration public_key must be 2592 bytes (got {})",
+                        identity_data.public_key.len()
+                    ));
+                }
+                let key_id = crate::types::hash::blake3_hash(identity_data.public_key.as_slice());
+                let expected_did = format!("did:zhtp:{}", hex::encode(key_id.as_bytes()));
+                if identity_data.did != expected_did {
+                    return Err(anyhow::anyhow!(
+                        "ClientIdentityRegistration DID does not match public key derivation"
+                    ));
+                }
+                let sig_pk: [u8; 2592] = tx
+                    .signature
+                    .public_key
+                    .dilithium_pk;
+                if sig_pk != identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                {
+                    return Err(anyhow::anyhow!(
+                        "ClientIdentityRegistration signature public_key does not match identity payload"
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
