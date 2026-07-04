@@ -181,6 +181,10 @@ impl ConsensusEngine {
 
     /// If locked on an empty block but `incoming` carries mempool txs, release
     /// the stale lock so validators can prevote the fresh canonical block.
+    ///
+    /// **Testnet assumption (n=3, f=0):** uses local mempool presence as a
+    /// liveness signal. Do not generalise to n≥4 without a consensus-gated
+    /// unlock — see security review PR #2779 concern #2.
     pub(super) async fn maybe_clear_stale_empty_lock_for_incoming(
         &mut self,
         incoming: Option<&ConsensusProposal>,
@@ -220,16 +224,19 @@ impl ConsensusEngine {
     }
 
     /// Returns true when `block_data` decodes to a block with zero transactions.
+    ///
+    /// Fail closed: if we cannot decode, return false so a stale-empty lock is
+    /// not released on a block we might be misreading (PR #2779 security P0 #1).
     async fn cached_proposal_has_no_transactions(&self, block_data: &[u8]) -> bool {
         if block_data.is_empty() {
             return true;
         }
         let Some(provider) = self.blockchain_provider.as_ref() else {
-            return true;
+            return false;
         };
         match provider.decode_block_data(block_data).await {
             Ok((tx_count, _)) => tx_count == 0,
-            Err(_) => true,
+            Err(_) => false,
         }
     }
 
