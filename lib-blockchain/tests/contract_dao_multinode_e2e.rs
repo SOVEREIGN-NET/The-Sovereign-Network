@@ -6,12 +6,18 @@ use lib_blockchain::transaction::{
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::types::{ContractCall, ContractType, Hash};
 use lib_blockchain::{Block, BlockHeader, Blockchain, TransactionType};
-use lib_crypto::{PublicKey, Signature, SignatureAlgorithm};
+use lib_crypto::{KeyPair, PublicKey, Signature, SignatureAlgorithm};
 
 mod common;
 
 fn test_public_key(seed: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(seed) }
 fn test_signature(seed: u8) -> Signature { common::crypto_fixtures::seeded_signature(seed) }
+
+fn sign_test_tx(mut tx: Transaction, keypair: &KeyPair) -> Transaction {
+    lib_blockchain::transaction::signing::sign_transaction(&mut tx, &keypair.private_key)
+        .expect("sign test transaction");
+    tx
+}
 
 fn mk_output(seed: u8) -> TransactionOutput {
     TransactionOutput {
@@ -153,8 +159,16 @@ async fn test_multinode_contract_dao_lifecycle_sync_and_replay_convergence() -> 
     let genesis = node_a.latest_block().expect("genesis exists").clone();
 
     let proposal_id = Hash::from([7; 32]);
-    let mut txs = vec![mk_contract_deploy_tx(), mk_contract_call_tx()];
-    txs.extend(mk_dao_lifecycle_txs(proposal_id));
+    let keypair = lib_crypto::generate_keypair().expect("test keypair");
+    let mut txs = vec![
+        sign_test_tx(mk_contract_deploy_tx(), &keypair),
+        sign_test_tx(mk_contract_call_tx(), &keypair),
+    ];
+    txs.extend(
+        mk_dao_lifecycle_txs(proposal_id)
+            .into_iter()
+            .map(|tx| sign_test_tx(tx, &keypair)),
+    );
 
     let block = build_block_with_transactions(&genesis, txs, 0);
     node_a.add_block(block).await?;
