@@ -1129,6 +1129,9 @@ impl ConsensusEngine {
                     .cloned()
             });
 
+        self.maybe_clear_stale_empty_lock_for_incoming(proposal.as_ref(), proposal_id)
+            .await;
+
         if !self.prevote_permitted_by_lock(proposal.as_ref(), proposal_id) {
             tracing::info!(
                 "🔒 Lock rule: abstaining from prevote for {:?} at H={} R={} \
@@ -1172,14 +1175,11 @@ impl ConsensusEngine {
     ///
     /// This ensures Byzantine fault tolerance - no single node can inject blocks.
     #[allow(deprecated)]
-    async fn process_committed_block(&mut self, proposal_id: &Hash, commit_round: u32) -> ConsensusResult<()> {
+    async fn process_committed_block(&mut self, proposal_id: &Hash, _commit_round: u32) -> ConsensusResult<()> {
         // SAFETY: Verify commit quorum before processing (Issue #939)
         // commit_round is the round in which the commit quorum was reached.
-        let commit_count = self.count_commits_for(
-            self.current_round.height,
-            commit_round,
-            proposal_id,
-        );
+        let commit_count =
+            self.count_buildable_commits_for(self.current_round.height, proposal_id);
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if !super::check_supermajority(commit_count, total_validators) {
@@ -1258,6 +1258,18 @@ impl ConsensusEngine {
             proposal_id,
             total_validators,
         );
+
+        let required_attestations = bft_quorum_count(total_validators) as usize;
+        if quorum_proof.attestations.len() < required_attestations {
+            return Err(ConsensusError::ValidatorError(format!(
+                "FINALIZATION FAILED: commit quorum observed for proposal {:?} at H={} but \
+                 only {} buildable attestation(s) (need {}). Refusing to apply — would fork.",
+                proposal_id,
+                self.current_round.height,
+                quorum_proof.attestations.len(),
+                required_attestations,
+            )));
+        }
 
         // Apply block to state with its quorum proof.
         // The callback persists the proof alongside the block so catch-up sync
@@ -2700,12 +2712,28 @@ impl ConsensusEngine {
             // engine height post-boot (CONS-512). The old code path
             // here is what wedged g2 / g3 at H=123008 on 2026-06-03.
             ConsensusStep::Commit => {
-                self.enter_round(
-                    height,
-                    round + 1,
-                    RoundJumpReason::LocalCommitTimeout,
-                )
-                .await;
+                // Mirror the PreCommit timeout arm: a commit quorum may have
+                // formed while we sat in Commit without `maybe_finalize` firing
+                // (e.g. the local commit vote was the last one needed but arrived
+                // after we entered Commit and before remote votes landed). Try once
+                // more before abandoning the round — this is what stranded g1 at
+                // H=53 with chain tip at H=52 on 2026-07-03.
+                let target = self
+                    .current_round
+                    .valid_proposal
+                    .clone()
+                    .or_else(|| self.current_round.locked_proposal.clone());
+                if let Some(proposal_id) = target {
+                    self.maybe_finalize(height, round, &proposal_id).await?;
+                }
+                if self.current_round.height == height {
+                    self.enter_round(
+                        height,
+                        round + 1,
+                        RoundJumpReason::LocalCommitTimeout,
+                    )
+                    .await;
+                }
             }
 
             // Between rounds — nothing concrete to time out. Re-drive
@@ -3100,9 +3128,10 @@ impl ConsensusEngine {
         round: u32,
         proposal_id: &Hash,
     ) -> ConsensusResult<()> {
-        // Count matching commit votes: all votes for this specific proposal at height/round
-        // This ensures supermajority is proposal-scoped, not round-scoped
-        let commit_count = self.count_commits_for(height, round, proposal_id);
+        // Count buildable commit attestations (signature-length filter matches
+        // `build_quorum_proof`). Raw `count_commits_for` can over-count stub or
+        // malformed votes and finalize with an under-sized proof → fork.
+        let commit_count = self.count_buildable_commits_for(height, proposal_id);
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
 
         if check_supermajority(commit_count, total_validators) {

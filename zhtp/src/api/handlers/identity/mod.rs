@@ -1914,15 +1914,26 @@ impl IdentityHandler {
         let req_data: RegisterIdentityRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid register request: {}", e))?;
 
+        let client_ip = login_handlers::extract_client_ip(&request);
+        if let Err(response) = self.rate_limiter.check_rate_limit(&client_ip).await {
+            return Ok(response);
+        }
+
         tracing::info!(
             "📱 Client-side identity registration (device: {})",
             &req_data.device_id[..req_data.device_id.len().min(16)]
         );
 
-        // Validate timestamp (within 5 minutes)
+        // Validate timestamp freshness (reject stale proofs and far-future clocks)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
+        if req_data.timestamp > now.saturating_add(60) {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Registration timestamp too far in the future (max 60s skew)".to_string(),
+            ));
+        }
         let timestamp_age = now.saturating_sub(req_data.timestamp);
         if timestamp_age > 300 {
             return Ok(ZhtpResponse::error(
@@ -2049,29 +2060,48 @@ impl IdentityHandler {
             }
         };
 
-        // Check if identity already exists with wallets (fully registered).
-        // An "observed" identity from UHP handshake auto-registration has no wallets —
-        // allow upgrading it to full citizen status.
+        // Resolve display name before onboarding (validate + uniqueness on chain).
+        let display_name = req_data
+            .display_name
+            .as_ref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("user_{}", &hex::encode(&public_key.key_id)[..8]));
+
+        if let Err(e) =
+            lib_blockchain::transaction::credentials::validate_username(&display_name)
         {
-            let has_wallets = if let Ok(blockchain_arc) =
+            return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e));
+        }
+
+        // Reject retries that would mint a fresh HD seed for an on-chain identity.
+        // An in-memory-only UHP observed stub (not yet on chain) may still upgrade.
+        {
+            let on_chain = if let Ok(blockchain_arc) =
                 crate::runtime::blockchain_provider::get_global_blockchain().await
             {
                 let blockchain = blockchain_arc.read().await;
-                let id_hash = lib_blockchain::Hash::from_slice(&identity_id.0);
-                !blockchain.wallets_for_owner(&id_hash).is_empty()
+                if blockchain.identity_display_name_taken(&display_name) {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::Conflict,
+                        "Display name already taken".to_string(),
+                    ));
+                }
+                blockchain.identity_exists(&did)
             } else {
                 false
             };
 
-            if has_wallets {
+            if on_chain {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Conflict,
-                    "Identity already registered".to_string(),
+                    "Identity already exists on chain; retry with the same keys or contact support"
+                        .to_string(),
                 ));
             }
 
-            // If an observed stub exists from UHP auto-registration, remove it
-            // so register_external_citizen_identity can create the full citizen entry.
+            // If an observed stub exists from UHP auto-registration (not on chain),
+            // remove it so register_external_citizen_identity can create the full citizen entry.
             let mut identity_manager = self.identity_manager.write().await;
             if identity_manager.get_identity(&identity_id).is_some() {
                 tracing::info!(
@@ -2100,7 +2130,7 @@ impl IdentityHandler {
                     public_key.clone(),
                     kyber_public_key.clone().unwrap_or_default(),
                     req_data.device_id.clone(),
-                    req_data.display_name.clone(),
+                    Some(display_name.clone()),
                     created_at,
                     &mut economic_model,
                 )
@@ -2112,111 +2142,97 @@ impl IdentityHandler {
         let ubi_wallet_id = hex::encode(&citizenship_result.ubi_wallet_id.0);
         let savings_wallet_id = hex::encode(&citizenship_result.savings_wallet_id.0);
 
-        // Create blockchain transaction for identity registration
+        // Queue on-chain identity + wallets. The client proves key ownership via
+        // registration_proof (ZHTP_REGISTER:{timestamp}); the chain tx is injected
+        // as a trusted system transaction (same path as register_wallet), not signed
+        // by a throwaway server keypair over transaction.hash().
         let did_string = did.clone();
+        let welcome_bonus_amount = SOV_WELCOME_BONUS;
+        let pending_display_name = display_name.clone();
 
-        let ownership_proof_data = format!("{}:{}", did_string, identity_id);
-        let ownership_proof = ownership_proof_data.as_bytes().to_vec();
-
-        let identity_transaction_data = IdentityTransactionData::new(
-            did_string.clone(),
-            identity_id.to_string(),
-            public_key_bytes.clone(),
-            ownership_proof,
-            req_data.identity_type.clone(),
-            Hash::default(),
-            0,
-            0,
-        )
-        .with_kyber_public_key(kyber_public_key.clone().unwrap_or_default());
-
-        use lib_blockchain::transaction::TransactionOutput;
-
-        let welcome_bonus_amount = SOV_WELCOME_BONUS; // Citizens always get welcome bonus (atomic units)
-
-        let outputs = vec![TransactionOutput {
-            commitment: lib_blockchain::types::hash::blake3_hash(
-                format!(
-                    "welcome_bonus_commitment_{}_{}",
-                    identity_id, welcome_bonus_amount
-                )
-                .as_bytes(),
-            ),
-            note: lib_blockchain::types::hash::blake3_hash(
-                format!("welcome_bonus_note_{}", identity_id).as_bytes(),
-            ),
-            recipient: PublicKey::new(
-                public_key_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
-            ),
-                    merkle_leaf: Hash::default(),
-}];
-
-        let server_keypair = lib_crypto::generate_keypair()
-            .map_err(|e| anyhow::anyhow!("Failed to generate server keypair: {}", e))?;
-
-        let transaction = Transaction::new_identity_registration(
-            identity_transaction_data,
-            outputs.clone(),
-            Signature {
-                signature: vec![0; 2420],
-                public_key: PublicKey::new(server_keypair.public_key.dilithium_pk),
-                algorithm: SignatureAlgorithm::DEFAULT,
-                timestamp: created_at,
-            },
-            Vec::new(),
-        );
-
-        let tx_hash = transaction.hash();
-        let crypto_signature = lib_crypto::sign_message(&server_keypair, tx_hash.as_bytes())
-            .map_err(|e| anyhow::anyhow!("Failed to sign transaction: {}", e))?;
-
-        let final_transaction = Transaction::new_identity_registration(
-            IdentityTransactionData::new(
-                did_string.clone(),
-                identity_id.to_string(),
-                public_key_bytes.clone(),
-                format!("{}:{}", did_string, identity_id)
-                    .as_bytes()
-                    .to_vec(),
-                req_data.identity_type.clone(),
-                Hash::default(),
-                0,
-                0,
-            ),
-            outputs,
-            Signature {
-                signature: crypto_signature.signature,
-                public_key: PublicKey::new(server_keypair.public_key.dilithium_pk),
-                algorithm: SignatureAlgorithm::DEFAULT,
-                timestamp: created_at,
-            },
-            Vec::new(),
-        );
-
-        let blockchain_tx_hash = match self
-            .submit_transaction_to_blockchain(final_transaction)
-            .await
-        {
-            Ok(hash) => {
-                tracing::info!(
-                    "⛓️ Identity registration queued on blockchain: {}",
-                    &hash[..16]
-                );
-                Some(hash)
-            }
-            Err(e) => {
-                tracing::warn!("⚠️ Blockchain registration failed (non-fatal): {}", e);
-                None
-            }
+        let identity_transaction_data = IdentityTransactionData {
+            did: did_string.clone(),
+            display_name,
+            public_key: public_key_bytes.clone(),
+            ownership_proof: proof_bytes.clone(),
+            identity_type: req_data.identity_type.clone(),
+            did_document_hash: lib_blockchain::types::hash::blake3_hash(did_string.as_bytes()),
+            created_at,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: kyber_public_key.clone().unwrap_or_default(),
         };
 
-        // Wallet registrations are queued here; welcome-bonus SOV is credited via a
-        // separate treasury-signed TokenMint (not initial_balance on WalletRegistration).
         let primary_wallet_id_arr = citizenship_result.primary_wallet_id.0;
-        if let Ok(blockchain_arc) =
-            crate::runtime::blockchain_provider::get_global_blockchain().await
+        let mut blockchain_tx_hash = None;
+        let blockchain_arc =
+            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(arc) => arc,
+                Err(e) => {
+                    let mut identity_manager = self.identity_manager.write().await;
+                    identity_manager.remove_identity(&identity_id);
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::ServiceUnavailable,
+                        format!("Blockchain unavailable; registration rolled back: {}", e),
+                    ));
+                }
+            };
         {
             let mut blockchain = blockchain_arc.write().await;
+
+            if blockchain.identity_display_name_taken(&pending_display_name) {
+                let mut identity_manager = self.identity_manager.write().await;
+                identity_manager.remove_identity(&identity_id);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Conflict,
+                    "Display name already taken".to_string(),
+                ));
+            }
+
+            let identity_tx = Transaction::new_identity_registration(
+                identity_transaction_data.clone(),
+                vec![],
+                Signature {
+                    signature: Vec::new(),
+                    public_key: PublicKey::new(public_key_bytes_array),
+                    algorithm: SignatureAlgorithm::DEFAULT,
+                    timestamp: created_at,
+                },
+                format!(
+                    "client-identity-register:{}",
+                    &did_string[..20.min(did_string.len())]
+                )
+                .into_bytes(),
+            );
+            let identity_tx_hash = identity_tx.hash().to_string();
+            match blockchain.add_system_transaction(
+                identity_tx,
+                lib_blockchain::SystemOriginator::ClientIdentityRegistration,
+            ) {
+                Ok(()) => {
+                    let pending_height = blockchain.get_height() + 1;
+                    blockchain.insert_identity_shadow(did_string.clone(), identity_transaction_data);
+                    blockchain
+                        .identity_blocks
+                        .insert(did_string.clone(), pending_height);
+                    tracing::info!(
+                        "⛓️ Identity registration queued on blockchain: {}",
+                        &identity_tx_hash[..16]
+                    );
+                    blockchain_tx_hash = Some(identity_tx_hash);
+                }
+                Err(e) => {
+                    tracing::error!("Blockchain identity registration failed: {}", e);
+                    let mut identity_manager = self.identity_manager.write().await;
+                    identity_manager.remove_identity(&identity_id);
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::InternalServerError,
+                        format!("Failed to queue identity on chain: {}", e),
+                    ));
+                }
+            }
 
             let primary_wallet_data = lib_blockchain::transaction::WalletTransactionData {
                 wallet_id: lib_blockchain::Hash::from_slice(&primary_wallet_id_arr),
@@ -2292,7 +2308,7 @@ impl IdentityHandler {
                 tx_hash,
                 crate::runtime::blockchain_provider::PendingIdentityProjection {
                     identity_id: identity_id.to_string(),
-                    display_name: req_data.display_name.clone().unwrap_or_default(),
+                    display_name: pending_display_name,
                     device_id: req_data.device_id.clone(),
                     node_id: hex::encode(&node_id_bytes),
                     kyber_public_key: req_data.kyber_public_key.clone(),

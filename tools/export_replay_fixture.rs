@@ -141,19 +141,33 @@ fn sample_wallet_ids(cfg: &GenesisConfig) -> Result<Vec<[u8; 32]>> {
         return Ok(sov_entries.into_iter().take(3).map(|(id, _)| id).collect());
     }
 
-    let mut out = Vec::new();
-    for wallet in cfg.allocations.wallets.iter().take(3) {
-        let bytes = hex::decode(&wallet.wallet_id).context("wallet_id hex")?;
-        anyhow::ensure!(bytes.len() == 32, "wallet_id must be 32 bytes");
-        let mut id = [0u8; 32];
-        id.copy_from_slice(&bytes);
-        out.push(id);
+    if !cfg.allocations.wallets.is_empty() {
+        let mut out = Vec::new();
+        for wallet in cfg.allocations.wallets.iter().take(3) {
+            let bytes = hex::decode(&wallet.wallet_id).context("wallet_id hex")?;
+            anyhow::ensure!(bytes.len() == 32, "wallet_id must be 32 bytes");
+            let mut id = [0u8; 32];
+            id.copy_from_slice(&bytes);
+            out.push(id);
+        }
+        return Ok(out);
     }
-    anyhow::ensure!(
-        out.len() >= 3,
-        "need >= 3 sample wallets (sov_balances or [[allocations.wallets]])"
-    );
-    Ok(out)
+
+    // GENESIS-4: no genesis wallets — use deterministic replay-gate fixtures.
+    const SYNTHETIC: [&str; 3] = [
+        "a101010101010101010101010101010101010101010101010101010101010101",
+        "a202020202020202020202020202020202020202020202020202020202020202",
+        "a303030303030303030303030303030303030303030303030303030303030303",
+    ];
+    Ok(SYNTHETIC
+        .iter()
+        .map(|hex| {
+            let bytes = hex::decode(hex).expect("synthetic wallet hex");
+            let mut id = [0u8; 32];
+            id.copy_from_slice(&bytes);
+            id
+        })
+        .collect())
 }
 
 fn build_snapshot(store: &dyn BlockchainStore, checkpoint_height: u64) -> Result<ReplayCheckpointSnapshot> {

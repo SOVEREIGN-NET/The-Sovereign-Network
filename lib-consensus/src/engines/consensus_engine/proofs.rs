@@ -21,7 +21,7 @@ impl ConsensusEngine {
             .ok_or_else(|| ConsensusError::ValidatorError("No validator identity".to_string()))?;
 
         // Locate the valid_value artifact to re-propose, if we hold one.
-        let reproposal = match (
+        let mut reproposal = match (
             self.current_round.valid_proposal.as_ref(),
             self.current_round.valid_round,
         ) {
@@ -33,6 +33,25 @@ impl ConsensusEngine {
                 .cloned(),
             _ => None,
         };
+
+        // Tendermint requires reproposing a cached valid_value, but an empty
+        // block that became valid before mempool txs arrived will never pick
+        // them up. When the cached block has no transactions and the mempool
+        // now has work, build a fresh proposal instead (valid_round = None).
+        if let Some(ref artifact) = reproposal {
+            if self.cached_proposal_has_no_transactions(&artifact.block_data).await
+                && self.mempool_has_pending_transactions().await
+            {
+                tracing::info!(
+                    "Skipping empty valid_value {:?} reproposal at H={} R={} — \
+                     mempool has pending transactions",
+                    artifact.id,
+                    self.current_round.height,
+                    self.current_round.round,
+                );
+                reproposal = None;
+            }
+        }
 
         let (proposal_id, previous_hash, block_data, valid_round) = match reproposal {
             Some(artifact) => {
@@ -138,6 +157,115 @@ impl ConsensusEngine {
                 self.current_round.height, e,
             ))
         })
+    }
+
+    /// Drop a stale empty `valid_value` / lock when mempool work arrived after
+    /// round-1 empty prevotes locked the height. Without this, skipping empty
+    /// reproposal leaves peers abstaining forever on mempool-inclusive blocks.
+    pub(super) fn clear_stale_empty_valid_value_state(&mut self, empty_proposal_id: &Hash) {
+        if self.current_round.valid_proposal.as_ref() == Some(empty_proposal_id) {
+            self.current_round.valid_proposal = None;
+            self.current_round.valid_round = None;
+        }
+        if self.current_round.locked_proposal.as_ref() == Some(empty_proposal_id) {
+            tracing::info!(
+                "🔓 Clearing stale lock on empty {:?} at H={} R={} — mempool has pending work",
+                empty_proposal_id,
+                self.current_round.height,
+                self.current_round.round,
+            );
+            self.current_round.locked_proposal = None;
+            self.current_round.locked_round = None;
+        }
+    }
+
+    /// If locked on an empty block but `incoming` carries mempool txs, release
+    /// the stale lock so validators can prevote the fresh canonical block.
+    ///
+    /// **Testnet assumption (n=3, f=0):** uses local mempool presence as a
+    /// liveness signal. Do not generalise to n≥4 without a consensus-gated
+    /// unlock — see security review PR #2779 concern #2.
+    pub(super) async fn maybe_clear_stale_empty_lock_for_incoming(
+        &mut self,
+        incoming: Option<&ConsensusProposal>,
+        incoming_id: &Hash,
+    ) {
+        // Mempool-based unlock is only safe when every validator sees the same
+        // mempool (n=3 testnet). With n≥4, local divergence can split prevotes.
+        if self.get_validator_count() > crate::types::MIN_BFT_VALIDATORS {
+            return;
+        }
+        let Some(locked_id) = self.current_round.locked_proposal.clone() else {
+            return;
+        };
+        if locked_id == *incoming_id {
+            return;
+        }
+        if !self.mempool_has_pending_transactions().await {
+            return;
+        }
+        if !self.proposal_artifact_has_no_transactions(&locked_id).await {
+            return;
+        }
+        let Some(proposal) = incoming else {
+            return;
+        };
+        if self.cached_proposal_has_no_transactions(&proposal.block_data).await {
+            return;
+        }
+        self.clear_stale_empty_valid_value_state(&locked_id);
+    }
+
+    async fn proposal_artifact_has_no_transactions(&self, proposal_id: &Hash) -> bool {
+        let artifact = self
+            .pending_proposals
+            .iter()
+            .find(|p| &p.id == proposal_id)
+            .or_else(|| self.proposal_for_round.values().find(|p| &p.id == proposal_id));
+        match artifact {
+            Some(p) => self.cached_proposal_has_no_transactions(&p.block_data).await,
+            None => false,
+        }
+    }
+
+    /// Returns true when `block_data` decodes to a block with zero transactions.
+    ///
+    /// Fail closed: if we cannot decode, return false so a stale-empty lock is
+    /// not released on a block we might be misreading (PR #2779 security P0 #1).
+    async fn cached_proposal_has_no_transactions(&self, block_data: &[u8]) -> bool {
+        if block_data.is_empty() {
+            return true;
+        }
+        let Some(provider) = self.blockchain_provider.as_ref() else {
+            return false;
+        };
+        match provider.decode_block_data(block_data).await {
+            Ok((tx_count, _)) => tx_count == 0,
+            Err(_) => false,
+        }
+    }
+
+    /// Returns true when the blockchain provider reports pending mempool work.
+    async fn mempool_has_pending_transactions(&self) -> bool {
+        let Some(provider) = self.blockchain_provider.as_ref() else {
+            return false;
+        };
+        if !provider.is_ready().await {
+            return false;
+        }
+        match provider.get_pending_transactions().await {
+            Ok(data) => {
+                if data.is_empty() {
+                    return false;
+                }
+                match provider.decode_block_data(&data).await {
+                    Ok((tx_count, _)) => tx_count > 0,
+                    // Fail closed: do not treat undecodable mempool blobs as pending work.
+                    Err(_) => false,
+                }
+            }
+            Err(_) => false,
+        }
     }
 
     /// Collect transactions for the new block.

@@ -52,5 +52,9 @@ name = "export_replay_fixture"
 path = "export_replay_fixture.rs"
 
 [[bin]]
+name = "seed_founding_dao"
+path = "seed_founding_dao.rs"
+
+[[bin]]
 name = "replay_divergence"
 path = "replay_divergence.rs"

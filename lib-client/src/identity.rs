@@ -437,7 +437,7 @@ fn mnemonic_from_entropy(entropy: &[u8]) -> Result<Vec<&'static str>> {
 
 /// Sign a registration proof for server registration
 ///
-/// Creates a signature over "ZHTP_REGISTER:{did}:{timestamp}" that
+/// Creates a signature over "ZHTP_REGISTER:{timestamp}" that
 /// proves ownership of the private key without revealing it.
 ///
 /// # Arguments

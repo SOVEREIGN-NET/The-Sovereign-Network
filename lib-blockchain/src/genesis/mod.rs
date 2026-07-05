@@ -522,6 +522,12 @@ impl GenesisConfig {
         // ── state migration allocations ──────────────────────────────────────
         self.apply_allocations(&mut bc)?;
 
+        // OPAQUE lobby-auth setup — must load here as well as apply_genesis_state.
+        // Fresh-genesis paths (Blockchain::new / sled wipe) only call build_block0,
+        // so skipping this left opaque_server_setup = None and OPAQUE endpoints
+        // returned 503 "Lobby auth not configured...".
+        bc.opaque_server_setup = self.load_opaque_setup()?;
+
         Ok(bc)
     }
 
@@ -1127,6 +1133,30 @@ mod tests {
         let bc2 = config.build_block0().expect("build 2");
         // Both produce the same block hash
         assert_eq!(bc1.blocks[0].header.block_hash, bc2.blocks[0].header.block_hash);
+    }
+
+    #[test]
+    fn test_build_block0_loads_opaque_setup_when_present() {
+        let config = GenesisConfig::from_embedded().expect("parse");
+        if config.opaque.is_none() {
+            return;
+        }
+        let bc = config.build_block0().expect("build");
+        assert!(
+            bc.opaque_server_setup.is_some(),
+            "build_block0 must load [opaque] server setup (fresh-genesis / sled-wipe path)"
+        );
+    }
+
+    #[test]
+    fn test_build_block0_opaque_absent_means_none() {
+        let mut config = GenesisConfig::from_embedded().expect("parse");
+        config.opaque = None;
+        let bc = config.build_block0().expect("build");
+        assert!(
+            bc.opaque_server_setup.is_none(),
+            "build_block0 must leave opaque_server_setup unset when [opaque] is absent"
+        );
     }
 
     #[test]

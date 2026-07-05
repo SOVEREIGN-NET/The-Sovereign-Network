@@ -8,6 +8,7 @@ use crate::types::TransactionType;
 use std::sync::Arc;
 
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use crate::transaction::core::IdentityTransactionData;
 use lib_mempool::{MempoolConfigExt, MempoolStateExt};
 
 fn make_tx(tx_type: TransactionType) -> Transaction {
@@ -253,6 +254,108 @@ fn system_injection_rejects_funded_wallet_registration_from_non_treasury() {
         .add_system_transaction(tx, crate::blockchain::SystemOriginator::AutoWalletRegistration)
         .expect_err("funded wallet registration must be rejected");
     assert!(err.to_string().contains("initial_balance=1000"));
+}
+
+fn make_client_identity_registration_tx(
+    dilithium_pk: [u8; 2592],
+    ownership_proof: Vec<u8>,
+    did_override: Option<&str>,
+) -> Transaction {
+    let key_id = crate::types::hash::blake3_hash(&dilithium_pk);
+    let did = did_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("did:zhtp:{}", hex::encode(key_id.as_bytes())));
+    let identity_data = IdentityTransactionData::new(
+        did,
+        "test_user".to_string(),
+        dilithium_pk.to_vec(),
+        ownership_proof,
+        "human".to_string(),
+        crate::types::Hash::default(),
+        0,
+        0,
+    );
+    Transaction::new_identity_registration(
+        identity_data,
+        vec![],
+        Signature {
+            signature: Vec::new(),
+            public_key: PublicKey::new(dilithium_pk),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 1,
+        },
+        b"client-identity-register:test".to_vec(),
+    )
+}
+
+#[test]
+fn system_injection_accepts_valid_client_identity_registration() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let pk = [0xABu8; 2592];
+    let tx = make_client_identity_registration_tx(pk, vec![0x01, 0x02], None);
+
+    bc.add_system_transaction(
+        tx,
+        crate::blockchain::SystemOriginator::ClientIdentityRegistration,
+    )
+    .expect("valid client identity registration should be accepted");
+    assert_eq!(bc.pending_transactions.len(), 1);
+}
+
+#[test]
+fn system_injection_rejects_client_identity_registration_without_proof() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let pk = [0xCDu8; 2592];
+    let tx = make_client_identity_registration_tx(pk, Vec::new(), None);
+
+    let err = bc
+        .add_system_transaction(
+            tx,
+            crate::blockchain::SystemOriginator::ClientIdentityRegistration,
+        )
+        .expect_err("missing ownership_proof must be rejected");
+    assert!(err.to_string().contains("ownership_proof"));
+}
+
+#[test]
+fn system_injection_rejects_client_identity_registration_did_mismatch() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let pk = [0xEFu8; 2592];
+    let tx = make_client_identity_registration_tx(pk, vec![0x01], Some("did:zhtp:deadbeef"));
+
+    let err = bc
+        .add_system_transaction(
+            tx,
+            crate::blockchain::SystemOriginator::ClientIdentityRegistration,
+        )
+        .expect_err("DID/public-key mismatch must be rejected");
+    assert!(err.to_string().contains("DID does not match"));
+}
+
+#[test]
+fn system_injection_rejects_treasury_welcome_bonus_with_bad_memo() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let wallet_id = [0x11u8; 32];
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: wallet_id,
+        amount: lib_types::sov::atoms(5_000),
+    };
+    let tx = Transaction::new_token_mint(
+        mint_data,
+        Signature {
+            signature: Vec::new(),
+            public_key: PublicKey::new([0u8; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        },
+        b"WRONG_PREFIX:deadbeef".to_vec(),
+    );
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::TreasuryWalletBootstrap)
+        .expect_err("invalid welcome bonus memo must be rejected");
+    assert!(err.to_string().contains("WELCOME_BONUS_V1"));
 }
 
 #[test]

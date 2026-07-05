@@ -43,8 +43,8 @@ use lib_blockchain::genesis::GenesisConfig;
 use lib_blockchain::storage::{Address, TokenId};
 
 use lib_blockchain::transaction::{
-    token_creation::TokenCreationPayloadV1, TokenTransferData, Transaction, TransactionPayload,
-    WalletTransactionData,
+    token_creation::TokenCreationPayloadV1, TokenMintData, TokenTransferData, Transaction,
+    TransactionPayload, WalletTransactionData,
 };
 use lib_blockchain::types::Hash;
 use lib_blockchain::transaction::DEFAULT_TOKEN_CREATION_FEE;
@@ -63,7 +63,7 @@ use common::replay_gate::{
 
 use lib_blockchain::sync::ChainSync;
 
-fn create_wallet_registration_tx(wallet_id: [u8; 32], initial_balance: u128) -> Transaction {
+fn create_wallet_registration_tx(wallet_id: [u8; 32]) -> Transaction {
     let owner = dummy_public_key();
     Transaction {
         version: 8,
@@ -84,10 +84,36 @@ fn create_wallet_registration_tx(wallet_id: [u8; 32], initial_balance: u128) -> 
             capabilities: 0,
             created_at: 0,
             registration_fee: 0,
-            initial_balance,
+            initial_balance: 0,
             seed_commitment: Hash::zero(),
         }),
     }
+}
+
+/// Treasury-style SOV mint after wallet registration (GENESIS-3 / #2754 policy).
+fn create_sov_welcome_bonus_mint_tx(wallet_id: [u8; 32], amount: u128) -> Transaction {
+    Transaction {
+        version: 2,
+        chain_id: 0x03,
+        transaction_type: TransactionType::TokenMint,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: dummy_signature(),
+        memo: format!("WELCOME_BONUS_V1:{}", hex::encode(wallet_id)).into_bytes(),
+        payload: TransactionPayload::TokenMint(TokenMintData {
+            token_id: [0u8; 32],
+            to: wallet_id,
+            amount,
+        }),
+    }
+}
+
+fn wallet_bootstrap_txs(wallet_id: [u8; 32], initial_balance: u128) -> Vec<Transaction> {
+    vec![
+        create_wallet_registration_tx(wallet_id),
+        create_sov_welcome_bonus_mint_tx(wallet_id, initial_balance),
+    ]
 }
 
 fn create_sov_transfer_tx(from: [u8; 32], to: [u8; 32], amount: u128, nonce: u64) -> Transaction {
@@ -192,7 +218,7 @@ fn build_sov_activity_chain_to_height(tip_height: u64) -> Vec<lib_blockchain::bl
 
     let reg_txs: Vec<_> = wallets
         .iter()
-        .map(|w| create_wallet_registration_tx(*w, REPLAY_GATE_WALLET_MINT_ATOMS))
+        .flat_map(|w| wallet_bootstrap_txs(*w, REPLAY_GATE_WALLET_MINT_ATOMS))
         .collect();
     let reg_block = block_at_height_with_txs(1, prev, reg_txs);
     blocks.push(reg_block.clone());
@@ -237,7 +263,7 @@ fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTo
         genesis.header.block_hash,
         wallets
             .iter()
-            .map(|w| create_wallet_registration_tx(*w, REPLAY_GATE_WALLET_MINT_ATOMS))
+            .flat_map(|w| wallet_bootstrap_txs(*w, REPLAY_GATE_WALLET_MINT_ATOMS))
             .collect(),
     );
     let block2 = block_at_height_with_txs(
@@ -334,11 +360,7 @@ fn test_g4_wallet74010_sequence_isolated_replay() {
 
     let genesis = genesis_block();
     let mut prev = genesis.header.block_hash;
-    let h1 = block_at_height_with_txs(
-        1,
-        prev,
-        vec![create_wallet_registration_tx(wallet, 5000 * ATOMS)],
-    );
+    let h1 = block_at_height_with_txs(1, prev, wallet_bootstrap_txs(wallet, 5000 * ATOMS));
     prev = h1.header.block_hash;
     let h2 = block_at_height_with_txs(
         2,
@@ -405,11 +427,7 @@ fn test_g4_wallet74010_sequence_tx_version_eight() {
 
     let genesis = genesis_block();
     let mut prev = genesis.header.block_hash;
-    let h1 = block_at_height_with_txs(
-        1,
-        prev,
-        vec![create_wallet_registration_tx(wallet, 5000 * ATOMS)],
-    );
+    let h1 = block_at_height_with_txs(1, prev, wallet_bootstrap_txs(wallet, 5000 * ATOMS));
     prev = h1.header.block_hash;
     let h2 = block_at_height_with_txs(
         2,

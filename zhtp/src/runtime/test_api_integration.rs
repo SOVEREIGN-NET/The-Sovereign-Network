@@ -13,7 +13,7 @@ mod api_integration_tests {
     };
     use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
     use lib_protocols::zhtp::ZhtpRequestHandler;
-    use lib_storage::{UnifiedStorageConfig, UnifiedStorageSystem};
+    use lib_storage::{PersistentStorageSystem, UnifiedStorageConfig, UnifiedStorageSystem};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -192,6 +192,169 @@ mod api_integration_tests {
         assert_eq!(did, expected_did);
         assert_eq!(node_id, expected_node_id);
         assert_eq!(identity_id, expected_identity_id);
+
+        let _ = std::fs::remove_dir_all(db_path);
+    }
+
+    fn build_identity_handler(
+        storage: PersistentStorageSystem,
+        db_path: std::path::PathBuf,
+    ) -> (IdentityHandler, std::path::PathBuf) {
+        let identity_manager = Arc::new(RwLock::new(IdentityManager::new()));
+        let economic_model = Arc::new(RwLock::new(IdentityEconomicModel::new()));
+        let session_manager = Arc::new(SessionManager::new());
+        let rate_limiter = Arc::new(RateLimiter::new());
+        let account_lockout = Arc::new(AccountLockout::new());
+        let csrf_protection = Arc::new(CsrfProtection::new());
+        let recovery_phrase_manager = Arc::new(RwLock::new(RecoveryPhraseManager::new()));
+        let storage_system = Arc::new(RwLock::new(storage));
+
+        let handler = IdentityHandler::new(
+            identity_manager,
+            economic_model,
+            session_manager,
+            rate_limiter,
+            account_lockout,
+            csrf_protection,
+            recovery_phrase_manager,
+            storage_system,
+        );
+        (handler, db_path)
+    }
+
+    fn build_register_request(
+        keypair: &lib_crypto::KeyPair,
+        device_id: &str,
+        timestamp: u64,
+        display_name: Option<&str>,
+    ) -> ZhtpRequest {
+        let public_key_b64 =
+            base64::engine::general_purpose::STANDARD.encode(&keypair.public_key.dilithium_pk);
+        let signed_message = format!("ZHTP_REGISTER:{}", timestamp);
+        let signature =
+            lib_crypto::sign_message(keypair, signed_message.as_bytes()).expect("sign failed");
+        let registration_proof_b64 =
+            base64::engine::general_purpose::STANDARD.encode(&signature.signature);
+
+        let mut body = serde_json::json!({
+            "public_key": public_key_b64,
+            "device_id": device_id,
+            "identity_type": "human",
+            "registration_proof": registration_proof_b64,
+            "timestamp": timestamp
+        });
+        if let Some(name) = display_name {
+            body["display_name"] = serde_json::Value::String(name.to_string());
+        }
+
+        ZhtpRequest {
+            method: ZhtpMethod::Post,
+            uri: "/api/v1/identity/register".to_string(),
+            version: ZHTP_VERSION.to_string(),
+            headers: ZhtpHeaders::new(),
+            body: serde_json::to_vec(&body).expect("serialize request"),
+            timestamp,
+            requester: None,
+            auth_proof: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_identity_rejects_future_timestamp() {
+        let mut storage_config = UnifiedStorageConfig::default();
+        let db_path = std::env::temp_dir().join(format!("zhtp-test-future-{}", rand::random::<u64>()));
+        storage_config.storage_config.dht_persist_path = Some(db_path.clone());
+        let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
+            .expect("failed to create storage");
+        let (handler, db_path) = build_identity_handler(storage, db_path);
+
+        let keypair = lib_crypto::KeyPair::generate().expect("keypair generation failed");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let request = build_register_request(&keypair, "device-future", now + 120, None);
+
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
+        assert_eq!(response.status, ZhtpStatus::BadRequest);
+
+        let _ = std::fs::remove_dir_all(db_path);
+    }
+
+    #[tokio::test]
+    async fn test_register_identity_rejects_invalid_display_name() {
+        let mut storage_config = UnifiedStorageConfig::default();
+        let db_path = std::env::temp_dir().join(format!("zhtp-test-name-{}", rand::random::<u64>()));
+        storage_config.storage_config.dht_persist_path = Some(db_path.clone());
+        let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
+            .expect("failed to create storage");
+        let (handler, db_path) = build_identity_handler(storage, db_path);
+
+        let keypair = lib_crypto::KeyPair::generate().expect("keypair generation failed");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let request = build_register_request(&keypair, "device-bad-name", now, Some("bad name!"));
+
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
+        assert_eq!(response.status, ZhtpStatus::BadRequest);
+
+        let _ = std::fs::remove_dir_all(db_path);
+    }
+
+    #[tokio::test]
+    async fn test_register_identity_rejects_on_chain_duplicate() {
+        let mut storage_config = UnifiedStorageConfig::default();
+        let db_path =
+            std::env::temp_dir().join(format!("zhtp-test-dup-{}", rand::random::<u64>()));
+        storage_config.storage_config.dht_persist_path = Some(db_path.clone());
+        let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
+            .expect("failed to create storage");
+        let (handler, db_path) = build_identity_handler(storage, db_path);
+
+        let keypair = lib_crypto::KeyPair::generate().expect("keypair generation failed");
+        let did = format!(
+            "did:zhtp:{}",
+            hex::encode(lib_crypto::hash_blake3(&keypair.public_key.dilithium_pk))
+        );
+
+        crate::runtime::blockchain_provider::initialize_global_blockchain_provider();
+        let mut bc = lib_blockchain::Blockchain::new().expect("new blockchain");
+        bc.insert_identity_shadow(
+            did.clone(),
+            lib_blockchain::transaction::core::IdentityTransactionData::new(
+                did,
+                "existing".to_string(),
+                keypair.public_key.dilithium_pk.to_vec(),
+                vec![0x01],
+                "human".to_string(),
+                lib_blockchain::types::Hash::default(),
+                0,
+                0,
+            ),
+        );
+        crate::runtime::blockchain_provider::set_global_blockchain(Arc::new(RwLock::new(bc)))
+            .await
+            .expect("set global blockchain");
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let request = build_register_request(&keypair, "device-dup", now, None);
+
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
+        assert_eq!(response.status, ZhtpStatus::Conflict);
 
         let _ = std::fs::remove_dir_all(db_path);
     }

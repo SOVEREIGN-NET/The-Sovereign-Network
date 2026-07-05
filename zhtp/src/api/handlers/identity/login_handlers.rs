@@ -179,7 +179,7 @@ impl AuthAuditLog {
 }
 
 /// Extract client IP from request headers
-fn extract_client_ip(request: &lib_protocols::types::ZhtpRequest) -> String {
+pub(crate) fn extract_client_ip(request: &lib_protocols::types::ZhtpRequest) -> String {
     // Try X-Real-IP first (from reverse proxy)
     if let Some(ip) = request.headers.get("X-Real-IP") {
         return ip;

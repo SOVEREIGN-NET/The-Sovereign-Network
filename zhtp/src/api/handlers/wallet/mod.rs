@@ -135,8 +135,12 @@ impl ZhtpRequestHandler for WalletHandler {
             (ZhtpMethod::Post, "/api/v1/wallet/staking/unstake") => {
                 self.handle_unstake_tokens(request).await
             }
-            // POST /api/v1/wallet/provision — REMOVED: wallets are provisioned
-            // during identity registration only, never via standalone API.
+            // POST /api/v1/wallet/provision — ops-only post-reset wallet restore
+            // (GENESIS-3 Phase 7). Not for end-user onboarding; identity/register
+            // remains the normal path.
+            (ZhtpMethod::Post, "/api/v1/wallet/provision") => {
+                self.handle_provision_wallet(request).await
+            }
             // POST /api/v1/wallet/mint-sov — REMOVED: minting is Treasury Kernel
             // only, never via API endpoint.
             _ => Ok(create_error_response(
@@ -1537,6 +1541,16 @@ impl WalletHandler {
     /// - Restoring wallets lost during testnet resets
     /// - Provisioning wallets for observed-only identities
     async fn handle_provision_wallet(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let principal = self.extract_principal(&request);
+        if principal.role != lib_access_control::Role::Council
+            && principal.role != lib_access_control::Role::System
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Wallet provisioning requires council authorization".to_string(),
+            ));
+        }
+
         #[derive(serde::Deserialize)]
         struct ProvisionRequest {
             wallet_id: String,

@@ -62,6 +62,37 @@ impl ConsensusEngine {
             .count() as u64
     }
 
+    /// Count distinct validators with buildable commit attestations for `proposal_id`.
+    ///
+    /// Mirrors the signature-length filter in `build_quorum_proof`: votes whose
+    /// Dilithium signature is not exactly 4595 bytes are excluded. Without this
+    /// guard `count_commits_for` can report a quorum while `build_quorum_proof`
+    /// produces fewer attestations → divergent `bft_quorum_root` and a fork.
+    pub(super) fn count_buildable_commits_for(
+        &self,
+        height: u64,
+        proposal_id: &Hash,
+    ) -> u64 {
+        let mut seen = std::collections::HashSet::new();
+        let mut count = 0u64;
+        for (k, (vote, voted_id)) in &self.vote_pool {
+            if k.height != height
+                || k.vote_type != VoteType::Commit
+                || voted_id != proposal_id
+            {
+                continue;
+            }
+            let sig: Result<[u8; 4595], _> = vote.signature.signature.as_slice().try_into();
+            if sig.is_err() {
+                continue;
+            }
+            if seen.insert(k.validator_id.clone()) {
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Count distinct validators that prevoted at `(height, round)`,
     /// regardless of which proposal they voted for.
     ///
