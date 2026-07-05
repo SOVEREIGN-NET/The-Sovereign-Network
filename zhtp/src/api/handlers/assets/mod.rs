@@ -82,19 +82,36 @@ fn supply_mode_label(s: SupplyMode) -> &'static str {
 }
 
 fn legacy_interface(asset: &SovereignAsset) -> serde_json::Value {
-    let mut tx_kinds = vec!["AssetTransfer"];
-    if asset.module_flags.has_curve() {
-        tx_kinds.push("CurveBuy");
-        tx_kinds.push("CurveSell");
-    }
-    if asset.module_flags.has_rewards() {
-        tx_kinds.push("RewardsClaim");
+    // Emit on-chain TransactionType names wallets can dispatch today (SA-3 vocabulary deferred).
+    let mut tx_kinds: Vec<&str> = Vec::new();
+    if asset.id_source == AssetIdSource::LegacyTokenId {
+        if asset.module_flags.has_curve() {
+            tx_kinds.push("BondingCurveBuy");
+            tx_kinds.push("BondingCurveSell");
+        } else {
+            tx_kinds.push("TokenTransfer");
+        }
     }
     json!({
         "version": "0.1.0",
         "tx_kinds": tx_kinds,
         "note": "Legacy projection — full manifest arrives in SA-7"
     })
+}
+
+fn map_assets_error(err: anyhow::Error) -> ZhtpResponse {
+    let msg = err.to_string();
+    if msg.contains("Asset not found") {
+        create_error_response(ZhtpStatus::NotFound, msg)
+    } else if msg.contains("not implemented until SA-3") {
+        create_error_response(ZhtpStatus::NotImplemented, msg)
+    } else if msg.contains("Invalid") || msg.contains("must be") {
+        create_error_response(ZhtpStatus::BadRequest, msg)
+    } else if msg.contains("balance lookup failed") {
+        create_error_response(ZhtpStatus::InternalServerError, msg)
+    } else {
+        create_error_response(ZhtpStatus::InternalServerError, msg)
+    }
 }
 
 fn to_list_item(asset: &SovereignAsset) -> AssetListItem {
@@ -209,8 +226,14 @@ impl AssetsHandler {
             .get_sovereign_asset(&asset_id)
             .ok_or_else(|| anyhow::anyhow!("Asset not found"))?;
 
+        if asset.id_source == AssetIdSource::LaunchTx {
+            anyhow::bail!("Balance lookup for launch_tx asset_id not implemented until SA-3");
+        }
+
         let key_id = resolve_key_id(address)?;
-        let balance = bc.token_balance(&asset_id, &key_id).unwrap_or(0);
+        let balance = bc
+            .token_balance(&asset_id, &key_id)
+            .map_err(|e| anyhow::anyhow!("balance lookup failed: {}", e))?;
 
         create_json_response(json!({
             "asset_id": hex::encode(asset_id),
@@ -263,7 +286,7 @@ impl ZhtpRequestHandler for AssetsHandler {
         &self,
         request: ZhtpRequest,
     ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
-        match (request.method.clone(), request.uri.as_str()) {
+        let result = match (request.method.clone(), request.uri.as_str()) {
             (ZhtpMethod::Get, "/api/v1/assets" | "/api/v1/assets/") => self.handle_list().await,
             (ZhtpMethod::Get, uri) if uri.starts_with("/api/v1/assets/") => {
                 let segments = Self::parse_path_segments(uri);
@@ -271,16 +294,24 @@ impl ZhtpRequestHandler for AssetsHandler {
                     [id] => self.handle_get(id).await,
                     [id, "interface"] => self.handle_interface(id).await,
                     [id, "balances", address] => self.handle_balance(id, address).await,
-                    _ => Ok(create_error_response(
-                        ZhtpStatus::NotFound,
-                        "Unknown assets route".to_string(),
-                    )),
+                    _ => {
+                        return Ok(create_error_response(
+                            ZhtpStatus::NotFound,
+                            "Unknown assets route".to_string(),
+                        ));
+                    }
                 }
             }
-            _ => Ok(create_error_response(
-                ZhtpStatus::NotFound,
-                "Not found".to_string(),
-            )),
+            _ => {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    "Not found".to_string(),
+                ));
+            }
+        };
+        match result {
+            Ok(response) => Ok(response),
+            Err(err) => Ok(map_assets_error(err)),
         }
     }
 

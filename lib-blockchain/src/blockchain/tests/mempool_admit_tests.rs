@@ -333,6 +333,31 @@ fn system_injection_rejects_client_identity_registration_did_mismatch() {
 }
 
 #[test]
+fn system_injection_rejects_treasury_welcome_bonus_with_bad_memo() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let wallet_id = [0x11u8; 32];
+    let mint_data = crate::transaction::TokenMintData {
+        token_id: crate::contracts::utils::generate_lib_token_id(),
+        to: wallet_id,
+        amount: lib_types::sov::atoms(5_000),
+    };
+    let tx = Transaction::new_token_mint(
+        mint_data,
+        Signature {
+            signature: Vec::new(),
+            public_key: PublicKey::new([0u8; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        },
+        b"WRONG_PREFIX:deadbeef".to_vec(),
+    );
+
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::TreasuryWalletBootstrap)
+        .expect_err("invalid welcome bonus memo must be rejected");
+    assert!(err.to_string().contains("WELCOME_BONUS_V1"));
+}
+#[test]
 fn audit_only_config_admits_zero_fee_transactions() {
     // The S2 default (`audit_only`) must not reject the existing zero-fee
     // traffic (coinbase, system mints) at the admission gate; BlockExecutor

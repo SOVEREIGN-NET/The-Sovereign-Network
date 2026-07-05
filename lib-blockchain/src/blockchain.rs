@@ -2498,6 +2498,9 @@ impl Blockchain {
                     }
                     Self::validate_pouw_mint_memo(tx)?;
                 }
+                SystemOriginator::TreasuryWalletBootstrap => {
+                    Self::validate_welcome_bonus_mint_memo(tx)?;
+                }
                 o if o.is_treasury() => {}
                 SystemOriginator::Other(unknown) => {
                     tracing::warn!(
@@ -2577,12 +2580,13 @@ impl Blockchain {
                         "ClientIdentityRegistration DID does not match public key derivation"
                     ));
                 }
-                let sig_pk: [u8; 2592] = tx
-                    .signature
+                let sig_pk: [u8; 2592] = tx.signature.public_key.dilithium_pk;
+                let identity_pk: [u8; 2592] = identity_data
                     .public_key
-                    .dilithium_pk;
-                if sig_pk != identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-                {
+                    .as_slice()
+                    .try_into()
+                    .expect("public_key length checked above");
+                if sig_pk != identity_pk {
                     return Err(anyhow::anyhow!(
                         "ClientIdentityRegistration signature public_key does not match identity payload"
                     ));
@@ -2636,6 +2640,49 @@ impl Blockchain {
             ));
         }
 
+        Ok(())
+    }
+
+    fn validate_welcome_bonus_mint_memo(tx: &Transaction) -> anyhow::Result<()> {
+        const WELCOME_BONUS_ATOMS: u128 = lib_types::sov::atoms(5_000);
+
+        let mint_data = tx
+            .token_mint_data()
+            .ok_or_else(|| anyhow::anyhow!("TreasuryWalletBootstrap TokenMint missing mint data"))?;
+        let memo_str = std::str::from_utf8(&tx.memo).map_err(|_| {
+            anyhow::anyhow!("TreasuryWalletBootstrap TokenMint memo is not valid UTF-8")
+        })?;
+        let wallet_hex = memo_str
+            .strip_prefix("WELCOME_BONUS_V1:")
+            .ok_or_else(|| {
+                anyhow::anyhow!("TreasuryWalletBootstrap TokenMint memo missing WELCOME_BONUS_V1: prefix")
+            })?;
+        if wallet_hex.is_empty() {
+            return Err(anyhow::anyhow!(
+                "TreasuryWalletBootstrap TokenMint memo missing wallet recipient"
+            ));
+        }
+        let decoded = hex::decode(wallet_hex).map_err(|_| {
+            anyhow::anyhow!("TreasuryWalletBootstrap TokenMint memo wallet is not valid hex")
+        })?;
+        if decoded.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "TreasuryWalletBootstrap TokenMint memo wallet must decode to 32 bytes"
+            ));
+        }
+        let mut recipient = [0u8; 32];
+        recipient.copy_from_slice(&decoded);
+        if recipient != mint_data.to {
+            return Err(anyhow::anyhow!(
+                "TreasuryWalletBootstrap TokenMint memo wallet does not match mint_data.to"
+            ));
+        }
+        if mint_data.amount != WELCOME_BONUS_ATOMS {
+            return Err(anyhow::anyhow!(
+                "TreasuryWalletBootstrap TokenMint amount must be exactly {} atoms",
+                WELCOME_BONUS_ATOMS
+            ));
+        }
         Ok(())
     }
 

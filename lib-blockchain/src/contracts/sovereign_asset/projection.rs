@@ -37,18 +37,18 @@ pub fn project_from_token_contract(
     let mut module_flags = AssetModuleFlags(0);
     let mut rewards = None;
 
-    if token.symbol.eq_ignore_ascii_case(BUBL_SYMBOL) || token.name == BUBL_NAME {
+    if token.symbol.eq_ignore_ascii_case(BUBL_SYMBOL) && token.name.eq_ignore_ascii_case(BUBL_NAME)
+    {
         module_flags.0 |= AssetModuleFlags::REWARDS;
         rewards = Some(RewardsModuleHeader {
             spend_delegate_key_id: None,
         });
     }
 
-    let supply_mode = SupplyMode::Fixed;
-    let max_supply = if token.max_supply == u128::MAX {
-        token.total_supply.max(1)
+    let (supply_mode, max_supply) = if token.max_supply == u128::MAX {
+        (SupplyMode::Elastic, u128::MAX)
     } else {
-        token.max_supply
+        (SupplyMode::Fixed, token.max_supply)
     };
 
     Some(SovereignAsset {
@@ -92,7 +92,7 @@ pub fn project_from_bonding_curve_token(curve: &BondingCurveToken) -> SovereignA
         treasury_key_id: None,
         launched_at_height: Some(curve.deployed_at_block),
         supply_mode: SupplyMode::Elastic,
-        max_supply: curve.total_supply.max(1),
+        max_supply: curve.total_supply,
         total_supply: curve.total_supply,
         manifest_cid: None,
         manifest_hash: None,
@@ -167,5 +167,22 @@ mod tests {
     fn skips_sov_native() {
         let sov = TokenContract::new_sov_native();
         assert!(project_from_token_contract(&sov, None).is_none());
+    }
+
+    #[test]
+    fn elastic_max_supply_projects_as_elastic() {
+        let mut token = TokenContract::new_custom(
+            "Elastic".to_string(),
+            "ELAS".to_string(),
+            0,
+            test_creator(2),
+        );
+        token.max_supply = u128::MAX;
+        token.total_supply = 42;
+
+        let asset = project_from_token_contract(&token, None).expect("project");
+        assert_eq!(asset.supply_mode, SupplyMode::Elastic);
+        assert_eq!(asset.max_supply, u128::MAX);
+        assert_eq!(asset.total_supply, 42);
     }
 }

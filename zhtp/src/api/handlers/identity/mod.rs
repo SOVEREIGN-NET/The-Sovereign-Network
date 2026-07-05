@@ -2148,6 +2148,7 @@ impl IdentityHandler {
         // by a throwaway server keypair over transaction.hash().
         let did_string = did.clone();
         let welcome_bonus_amount = SOV_WELCOME_BONUS;
+        let pending_display_name = display_name.clone();
 
         let identity_transaction_data = IdentityTransactionData {
             did: did_string.clone(),
@@ -2166,11 +2167,29 @@ impl IdentityHandler {
 
         let primary_wallet_id_arr = citizenship_result.primary_wallet_id.0;
         let mut blockchain_tx_hash = None;
-        if let Ok(blockchain_arc) =
-            crate::runtime::blockchain_provider::get_global_blockchain().await
+        let blockchain_arc =
+            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(arc) => arc,
+                Err(e) => {
+                    let mut identity_manager = self.identity_manager.write().await;
+                    identity_manager.remove_identity(&identity_id);
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::ServiceUnavailable,
+                        format!("Blockchain unavailable; registration rolled back: {}", e),
+                    ));
+                }
+            };
         {
             let mut blockchain = blockchain_arc.write().await;
 
+            if blockchain.identity_display_name_taken(&pending_display_name) {
+                let mut identity_manager = self.identity_manager.write().await;
+                identity_manager.remove_identity(&identity_id);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Conflict,
+                    "Display name already taken".to_string(),
+                ));
+            }
             let identity_tx = Transaction::new_identity_registration(
                 identity_transaction_data.clone(),
                 vec![],
@@ -2288,7 +2307,7 @@ impl IdentityHandler {
                 tx_hash,
                 crate::runtime::blockchain_provider::PendingIdentityProjection {
                     identity_id: identity_id.to_string(),
-                    display_name: req_data.display_name.clone().unwrap_or_default(),
+                    display_name: pending_display_name,
                     device_id: req_data.device_id.clone(),
                     node_id: hex::encode(&node_id_bytes),
                     kyber_public_key: req_data.kyber_public_key.clone(),
