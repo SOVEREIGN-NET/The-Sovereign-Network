@@ -3,6 +3,7 @@
 //! Clean, minimal handler modules for ZHTP API
 
 pub mod assets;
+pub mod balance_key;
 pub mod bearer_auth;
 pub mod blockchain;
 pub mod bonding_curve;

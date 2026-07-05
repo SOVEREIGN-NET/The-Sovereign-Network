@@ -525,9 +525,13 @@ impl TokenHandler {
                 .token_balance(&token_id_array, &wallet_id)
                 .unwrap_or(0)
         } else {
-            let pubkey = self.identity_to_pubkey(address)?;
+            let balance_key =
+                crate::api::handlers::balance_key::resolve_custom_token_balance_key(
+                    &blockchain,
+                    address,
+                )?;
             blockchain
-                .token_balance(&token_id_array, &pubkey.key_id)
+                .token_balance(&token_id_array, &balance_key)
                 .unwrap_or(0)
         };
 
@@ -669,15 +673,11 @@ impl TokenHandler {
         use lib_blockchain::contracts::utils::generate_lib_token_id;
 
         let blockchain = self.blockchain.read().await;
-        let target_key_id = if let Some(wallet) = blockchain.wallet_transaction_data(address) {
-            let wallet_pk = PublicKey::new(
-                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-            );
-            wallet_pk.key_id
-        } else {
-            let pubkey = self.identity_to_pubkey(address)?;
-            pubkey.key_id
-        };
+        let target_key_id =
+            crate::api::handlers::balance_key::resolve_custom_token_balance_key(
+                &blockchain,
+                address,
+            )?;
         let sov_wallet_id = self.resolve_wallet_id_for_sov(address, &blockchain);
 
         debug!(
