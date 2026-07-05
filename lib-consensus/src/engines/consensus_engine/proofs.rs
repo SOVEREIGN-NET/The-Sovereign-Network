@@ -190,6 +190,11 @@ impl ConsensusEngine {
         incoming: Option<&ConsensusProposal>,
         incoming_id: &Hash,
     ) {
+        // Mempool-based unlock is only safe when every validator sees the same
+        // mempool (n=3 testnet). With n≥4, local divergence can split prevotes.
+        if self.get_validator_count() > crate::types::MIN_BFT_VALIDATORS {
+            return;
+        }
         let Some(locked_id) = self.current_round.locked_proposal.clone() else {
             return;
         };
@@ -255,7 +260,8 @@ impl ConsensusEngine {
                 }
                 match provider.decode_block_data(&data).await {
                     Ok((tx_count, _)) => tx_count > 0,
-                    Err(_) => !data.is_empty(),
+                    // Fail closed: do not treat undecodable mempool blobs as pending work.
+                    Err(_) => false,
                 }
             }
             Err(_) => false,
