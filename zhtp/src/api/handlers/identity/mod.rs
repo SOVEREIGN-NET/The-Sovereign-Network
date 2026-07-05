@@ -2190,7 +2190,6 @@ impl IdentityHandler {
                     "Display name already taken".to_string(),
                 ));
             }
-
             let identity_tx = Transaction::new_identity_registration(
                 identity_transaction_data.clone(),
                 vec![],

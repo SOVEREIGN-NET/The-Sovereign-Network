@@ -2000,6 +2000,23 @@ impl BlockchainStore for SledStore {
     // =========================================================================
 
     fn get_identity(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityConsensus>> {
+        // Write-through read: registration staged in the open metadata/blocks batch
+        // must be visible to a later IdentityUpdate in the same block (CR #2658 #2).
+        {
+            let batch_guard = self.tx_batch.lock().unwrap();
+            if let Some(ref batch) = *batch_guard {
+                if let Some(staged) = batch.tree_lookup(TREE_IDENTITIES, did_hash.as_ref()) {
+                    return match staged {
+                        Some(bytes) => {
+                            let identity: IdentityConsensus = Self::deserialize(&bytes)?;
+                            Ok(Some(identity))
+                        }
+                        None => Ok(None),
+                    };
+                }
+            }
+        }
+
         match self.identities.get(did_hash) {
             Ok(Some(bytes)) => {
                 let identity: IdentityConsensus = Self::deserialize(&bytes)?;
@@ -2197,6 +2214,25 @@ impl BlockchainStore for SledStore {
         &self,
         did_hash: &[u8; 32],
     ) -> StorageResult<Option<IdentityMetadata>> {
+        // Write-through read: mirrors `get_identity` — Kyber/display updates in the
+        // same metadata batch must see a registration written earlier in the block.
+        {
+            let batch_guard = self.tx_batch.lock().unwrap();
+            if let Some(ref batch) = *batch_guard {
+                if let Some(staged) =
+                    batch.tree_lookup(TREE_IDENTITY_METADATA, did_hash.as_ref())
+                {
+                    return match staged {
+                        Some(bytes) => {
+                            let metadata: IdentityMetadata = Self::deserialize(&bytes)?;
+                            Ok(Some(metadata))
+                        }
+                        None => Ok(None),
+                    };
+                }
+            }
+        }
+
         match self.identity_metadata.get(did_hash) {
             Ok(Some(bytes)) => {
                 let metadata: IdentityMetadata = Self::deserialize(&bytes)?;
@@ -3822,6 +3858,59 @@ mod tests {
         assert!(store.get_identity(&did_hash).unwrap().is_none());
         assert!(store.get_identity_metadata(&did_hash).unwrap().is_none());
         assert!(store.get_identity_by_owner(&owner).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_identity_metadata_write_read_your_writes() {
+        use super::super::{IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType};
+
+        let store = SledStore::open_temporary().unwrap();
+        let did = "did:zhtp:same_block_update";
+        let did_hash = hash_did(did);
+
+        let consensus = IdentityConsensus {
+            did_hash,
+            owner: Address([0x22; 32]),
+            public_key_hash: [0x23; 32],
+            did_document_hash: [0x24; 32],
+            seed_commitment: None,
+            identity_type: IdentityType::Human,
+            status: IdentityStatus::Active,
+            version: 1,
+            created_at: 1700000000,
+            registered_at_height: 1762,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_node_count: 0,
+            owned_wallet_count: 0,
+            attribute_count: 0,
+        };
+        let metadata = IdentityMetadata {
+            did: did.to_string(),
+            display_name: "supertramp".to_string(),
+            public_key: vec![0x25; 2592],
+            kyber_public_key: Vec::new(),
+            ..Default::default()
+        };
+
+        store.begin_metadata_write().unwrap();
+        store.put_identity(&did_hash, &consensus).unwrap();
+        store.put_identity_metadata(&did_hash, &metadata).unwrap();
+
+        // Same-batch read: registration then update in one finish_block_processing pass.
+        let read_consensus = store.get_identity(&did_hash).unwrap().unwrap();
+        assert_eq!(read_consensus.registered_at_height, 1762);
+        let read_metadata = store.get_identity_metadata(&did_hash).unwrap().unwrap();
+        assert_eq!(read_metadata.display_name, "supertramp");
+
+        let mut updated_metadata = read_metadata.clone();
+        updated_metadata.kyber_public_key = vec![0x26; 1568];
+        store.put_identity_metadata(&did_hash, &updated_metadata).unwrap();
+
+        let after_update = store.get_identity_metadata(&did_hash).unwrap().unwrap();
+        assert_eq!(after_update.kyber_public_key, vec![0x26; 1568]);
+
+        store.commit_metadata_write().unwrap();
     }
 
     #[test]

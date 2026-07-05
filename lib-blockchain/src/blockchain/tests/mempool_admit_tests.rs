@@ -357,7 +357,6 @@ fn system_injection_rejects_treasury_welcome_bonus_with_bad_memo() {
         .expect_err("invalid welcome bonus memo must be rejected");
     assert!(err.to_string().contains("WELCOME_BONUS_V1"));
 }
-
 #[test]
 fn audit_only_config_admits_zero_fee_transactions() {
     // The S2 default (`audit_only`) must not reject the existing zero-fee

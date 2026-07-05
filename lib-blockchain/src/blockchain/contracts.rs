@@ -1192,6 +1192,49 @@ impl Blockchain {
             .collect()
     }
 
+    /// Unified Sovereign Asset view: legacy projection over token + bonding-curve registries.
+    ///
+    /// SA-3+ will read native `assets/` sled rows; until then this merges
+    /// `TokenContract` and `BondingCurveToken` into one discovery list.
+    pub fn iter_sovereign_assets(&self) -> Vec<crate::contracts::sovereign_asset::SovereignAsset> {
+        use crate::contracts::sovereign_asset::{
+            merge_curve_into_asset, project_from_bonding_curve_token, project_from_token_contract,
+        };
+
+        let mut by_id: HashMap<[u8; 32], crate::contracts::sovereign_asset::SovereignAsset> =
+            HashMap::new();
+
+        for (token_id, token) in self.iter_token_contract_entries() {
+            let height = self.contract_blocks.get(&token_id).copied();
+            if let Some(asset) = project_from_token_contract(&token, height) {
+                by_id.insert(token_id, asset);
+            }
+        }
+
+        for curve in self.bonding_curve_registry.get_all() {
+            let token_id = curve.token_id;
+            if let Some(existing) = by_id.remove(&token_id) {
+                by_id.insert(token_id, merge_curve_into_asset(existing, curve));
+            } else {
+                by_id.insert(token_id, project_from_bonding_curve_token(curve));
+            }
+        }
+
+        let mut assets: Vec<_> = by_id.into_values().collect();
+        assets.sort_by(|a, b| a.symbol.cmp(&b.symbol).then_with(|| a.name.cmp(&b.name)));
+        assets
+    }
+
+    /// Lookup a single projected asset by id (legacy `token_id` or future launch tx hash).
+    pub fn get_sovereign_asset(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> Option<crate::contracts::sovereign_asset::SovereignAsset> {
+        self.iter_sovereign_assets()
+            .into_iter()
+            .find(|a| a.asset_id == *asset_id)
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],

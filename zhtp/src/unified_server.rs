@@ -53,9 +53,9 @@ const QUIC_PORT: u16 = 9334;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    BearerAuthMiddleware, BlockchainHandler, CbeHandler, CredentialsHandler, DaoHandler,
-    DhtHandler, DnsHandler, IdentityHandler, MobileAuthHandler, ProtocolHandler, StorageHandler,
-    TokenHandler, WalletHandler, Web4Handler,
+    AssetsHandler, BearerAuthMiddleware, BlockchainHandler, CbeHandler, CredentialsHandler,
+    DaoHandler, DhtHandler, DnsHandler, IdentityHandler, MobileAuthHandler, ProtocolHandler,
+    StorageHandler, TokenHandler, WalletHandler, Web4Handler,
 };
 use crate::config::environment::detect_environment;
 use crate::session_manager::SessionManager;
@@ -984,6 +984,10 @@ impl ZhtpUnifiedServer {
         // Token operations — UHP-authenticated (bearer middleware removed for app compat)
         let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(TokenHandler::new());
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
+
+        // Sovereign Asset discovery (SA-2) — unified projection over legacy token + curve rows
+        let assets_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(AssetsHandler::new());
+        zhtp_router.register_handler("/api/v1/assets".to_string(), assets_handler);
 
         // CBE token operations — UHP-authenticated
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());

@@ -46,6 +46,8 @@ pub mod root_registry;
 #[cfg(feature = "contracts")]
 pub mod runtime;
 #[cfg(feature = "contracts")]
+pub mod sovereign_asset;
+#[cfg(feature = "contracts")]
 pub mod sov_swap;
 #[cfg(feature = "contracts")]
 pub mod staking;
