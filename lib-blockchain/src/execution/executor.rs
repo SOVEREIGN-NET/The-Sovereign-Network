@@ -43,8 +43,8 @@ use crate::storage::{
 };
 use crate::transaction::{
     asset_tx::{
-        AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
-        AssetRewardsDelegateRotatePayloadV1,
+        AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
+        AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
     },
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
@@ -56,8 +56,8 @@ use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::sovereign_asset::{
-    apply_asset_launch, apply_asset_manifest_update, apply_asset_module_upgrade,
-    apply_asset_rewards_delegate_rotate, AssetLaunchOutcome,
+    apply_asset_authority_transfer, apply_asset_launch, apply_asset_manifest_update,
+    apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate, AssetLaunchOutcome,
 };
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
 
@@ -1310,6 +1310,11 @@ impl BlockExecutor {
                         "AssetAuthorityTransfer must not have UTXO inputs or outputs".to_string(),
                     ));
                 }
+                AssetAuthorityTransferPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetAuthorityTransfer requires canonical memo payload: {e}"
+                    ))
+                })?;
             }
             TransactionType::ContractDeployment => {
                 // Contract deployments must not perform UTXO operations.
@@ -3484,6 +3489,13 @@ impl BlockExecutor {
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::AssetAuthorityTransfer => {
+                let payload = AssetAuthorityTransferPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetAuthorityTransfer requires canonical memo payload: {e}"
+                    ))
+                })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_authority_transfer(mutator, signer, &payload, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::ContractDeployment => {

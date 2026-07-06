@@ -480,6 +480,10 @@ impl TransactionValidator {
                 if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidInputs);
                 }
+                crate::transaction::asset_tx::AssetAuthorityTransferPayloadV1::decode_memo(
+                    &transaction.memo,
+                )
+                .map_err(|_| ValidationError::InvalidMemo)?;
             }
             TransactionType::BondingCurveDeploy => {
                 let data = transaction

@@ -1,18 +1,18 @@
 //! Sovereign Asset executor apply helpers (SA-3..SA-7).
 
 use crate::contracts::sovereign_asset::{
-    AssetAuthority, AssetIdSource, AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader,
-    GovernanceModuleState, GovernanceVerifierKind, GovernanceVerifierState,
-    PendingAuthorityTransfer, RewardsModuleHeader, RewardsModuleState, SovereignAsset, SupplyMode,
-    AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
+    validate_governance_verifier, AssetAuthority, AssetIdSource, AssetModuleFlags,
+    CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState, GovernanceVerifierKind,
+    GovernanceVerifierState, PendingAuthorityTransfer, RewardsModuleHeader, RewardsModuleState,
+    SovereignAsset, SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
 };
 use crate::execution::tx_apply::{apply_token_mint, StateMutator};
 use crate::execution::{TxApplyError, TxApplyResult};
 use crate::storage::{Address, TokenId};
 use crate::transaction::asset_tx::{
-    AssetAuthorityProof, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
-    AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1, AssetUpgradeModule,
-    GovernanceLaunchConfig, RewardsLaunchConfig,
+    AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
+    AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    AssetUpgradeModule, GovernanceLaunchConfig, RewardsLaunchConfig,
 };
 use crate::types::Hash;
 
@@ -210,7 +210,7 @@ pub fn apply_asset_manifest_update(
         .get_sovereign_asset(&payload.asset_id)?
         .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
 
-    verify_authority_proof(&asset, signer_key_id, &payload.authority_proof)?;
+    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
 
     if payload.manifest_cid == [0u8; 32] || payload.manifest_hash == [0u8; 32] {
         return Err(TxApplyError::InvalidType("manifest fields required".into()));
@@ -234,7 +234,7 @@ pub fn apply_asset_rewards_delegate_rotate(
     if !asset.module_flags.has_rewards() {
         return Err(TxApplyError::InvalidType("rewards module not enabled".into()));
     }
-    verify_authority_proof(&asset, signer_key_id, &payload.authority_proof)?;
+    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
 
     if payload.new_delegate_key_id == [0u8; 32] {
         return Err(TxApplyError::InvalidType("new delegate must be non-zero".into()));
@@ -340,7 +340,60 @@ fn ensure_creator_or_governance(
     }
 }
 
+pub fn apply_asset_authority_transfer(
+    mutator: &StateMutator<'_>,
+    signer_key_id: [u8; 32],
+    payload: &AssetAuthorityTransferPayloadV1,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    let mut asset = mutator
+        .get_sovereign_asset(&payload.asset_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
+
+    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+    validate_governance_verifier(&payload.new_verifier)
+        .map_err(|e| TxApplyError::InvalidType(e))?;
+
+    let mut gov_state = mutator
+        .get_governance_module_state(&payload.asset_id)?
+        .unwrap_or_default();
+
+    match &asset.authority {
+        AssetAuthority::Creator { .. } => {
+            if let Some(effective) = payload.effective_height {
+                if effective <= block_height {
+                    return Err(TxApplyError::InvalidType(
+                        "authority transfer effective_height must be in the future".into(),
+                    ));
+                }
+                gov_state.pending_transfer = Some(PendingAuthorityTransfer {
+                    new_verifier: payload.new_verifier.clone(),
+                    effective_height: effective,
+                });
+            } else {
+                asset.authority = AssetAuthority::Governance {
+                    module_ref: asset.asset_id,
+                };
+                gov_state.verifier = Some(payload.new_verifier.clone());
+                gov_state.pending_transfer = None;
+                asset.governance = Some(governance_header_from_verifier(&payload.new_verifier));
+                asset.module_flags.0 |= AssetModuleFlags::GOVERNANCE;
+            }
+        }
+        AssetAuthority::Governance { .. } => {
+            gov_state.verifier = Some(payload.new_verifier.clone());
+            gov_state.pending_transfer = None;
+            asset.governance = Some(governance_header_from_verifier(&payload.new_verifier));
+        }
+    }
+
+    mutator.put_governance_module_state(&payload.asset_id, &gov_state)?;
+    mutator.put_sovereign_asset(&asset)?;
+    Ok(())
+}
+
 fn verify_authority_proof(
+    mutator: &StateMutator<'_>,
     asset: &SovereignAsset,
     signer_key_id: [u8; 32],
     proof: &AssetAuthorityProof,
@@ -352,9 +405,21 @@ fn verify_authority_proof(
         (AssetAuthority::Creator { .. }, AssetAuthorityProof::CreatorSig) => {
             Err(TxApplyError::InvalidType("creator signature mismatch".into()))
         }
-        (AssetAuthority::Governance { .. }, AssetAuthorityProof::Governance(_)) => {
-            // Multisig verification wired in SA-6 follow-up; accept signer match for v1 testnet.
-            Ok(())
+        (AssetAuthority::Governance { module_ref }, AssetAuthorityProof::Governance(_)) => {
+            let gov = mutator
+                .get_governance_module_state(module_ref)?
+                .ok_or_else(|| TxApplyError::InvalidType("governance state missing".into()))?;
+            let verifier = gov
+                .verifier
+                .as_ref()
+                .ok_or_else(|| TxApplyError::InvalidType("governance verifier missing".into()))?;
+            if verifier_contains(verifier, signer_key_id) {
+                Ok(())
+            } else {
+                Err(TxApplyError::InvalidType(
+                    "governance signer not authorized".into(),
+                ))
+            }
         }
         _ => Err(TxApplyError::InvalidType("invalid authority proof".into())),
     }
