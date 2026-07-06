@@ -81,21 +81,21 @@ fn supply_mode_label(s: SupplyMode) -> &'static str {
     }
 }
 
-fn legacy_interface(asset: &SovereignAsset) -> serde_json::Value {
-    // Emit on-chain TransactionType names wallets can dispatch today (SA-3 vocabulary deferred).
-    let mut tx_kinds: Vec<&str> = Vec::new();
-    if asset.id_source == AssetIdSource::LegacyTokenId {
-        if asset.module_flags.has_curve() {
-            tx_kinds.push("BondingCurveBuy");
-            tx_kinds.push("BondingCurveSell");
-        } else {
-            tx_kinds.push("TokenTransfer");
-        }
+fn asset_interface(asset: &SovereignAsset) -> serde_json::Value {
+    let mut tx_kinds: Vec<&str> = vec!["TokenTransfer"];
+    if asset.module_flags.has_curve() {
+        tx_kinds.push("BondingCurveBuy");
+        tx_kinds.push("BondingCurveSell");
+    }
+    if asset.module_flags.has_rewards() {
+        tx_kinds.push("RewardsClaim");
+    }
+    if asset.id_source == AssetIdSource::LaunchTx {
+        tx_kinds.push("AssetTransfer");
     }
     json!({
-        "version": "0.1.0",
+        "version": if asset.id_source == AssetIdSource::LaunchTx { "1.0.0" } else { "0.1.0" },
         "tx_kinds": tx_kinds,
-        "note": "Legacy projection — full manifest arrives in SA-7"
     })
 }
 
@@ -168,7 +168,7 @@ fn to_detail(asset: &SovereignAsset) -> AssetDetailResponse {
                 "threshold": g.threshold,
             })
         }),
-        interface: legacy_interface(asset),
+        interface: asset_interface(asset),
     }
 }
 
@@ -214,7 +214,7 @@ impl AssetsHandler {
         create_json_response(json!({
             "asset_id": hex::encode(asset.asset_id),
             "symbol": asset.symbol,
-            "interface": legacy_interface(&asset),
+            "interface": asset_interface(&asset),
         }))
     }
 
@@ -225,10 +225,6 @@ impl AssetsHandler {
         let asset = bc
             .get_sovereign_asset(&asset_id)
             .ok_or_else(|| anyhow::anyhow!("Asset not found"))?;
-
-        if asset.id_source == AssetIdSource::LaunchTx {
-            anyhow::bail!("Balance lookup for launch_tx asset_id not implemented until SA-3");
-        }
 
         let key_id =
             crate::api::handlers::balance_key::resolve_custom_token_balance_key(&bc, address)?;

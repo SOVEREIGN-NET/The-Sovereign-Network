@@ -157,6 +157,40 @@ pub fn token_contract_key(token: &TokenId) -> &[u8; 32] {
     token.as_bytes()
 }
 
+// =============================================================================
+// SOVEREIGN ASSET KEYS (SA-3+)
+// =============================================================================
+
+/// Key for `assets/` tree: asset_id (32 bytes) → SovereignAsset bytes.
+#[inline]
+pub fn asset_key(asset_id: &[u8; 32]) -> &[u8; 32] {
+    asset_id
+}
+
+/// Key for `asset_balances/` tree: asset_id (32) + address (32) → balance.
+#[inline]
+pub fn asset_balance_key(asset_id: &[u8; 32], addr: &Address) -> [u8; 64] {
+    token_balance_key(&TokenId(*asset_id), addr)
+}
+
+/// Prefix for scanning balances of an asset.
+#[inline]
+pub fn asset_balances_prefix(asset_id: &[u8; 32]) -> [u8; 32] {
+    *asset_id
+}
+
+/// Key for `asset_symbols/` index: uppercase symbol bytes → asset_id.
+#[inline]
+pub fn asset_symbol_key(symbol: &str) -> Vec<u8> {
+    symbol.to_ascii_uppercase().into_bytes()
+}
+
+/// Key for module sub-state trees keyed by asset_id.
+#[inline]
+pub fn asset_module_state_key(asset_id: &[u8; 32]) -> &[u8; 32] {
+    asset_id
+}
+
 /// Key prefix for token supply tree: token_id (32 bytes) → supply_u64
 #[inline]
 pub fn token_supply_key(token: &TokenId) -> [u8; 32] {

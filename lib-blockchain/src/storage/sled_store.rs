@@ -66,6 +66,11 @@ const TREE_PROJECTION_EMPLOYMENT: &str = "projection_employment";
 const TREE_PROJECTION_DAO_REGISTRY: &str = "projection_dao_registry";
 const TREE_PROJECTION_POUW_MINTS: &str = "projection_pouw_mints";
 const TREE_PROJECTION_CONTRACT_BLOCKS: &str = "projection_contract_blocks";
+const TREE_ASSETS: &str = "assets";
+const TREE_ASSET_SYMBOLS: &str = "asset_symbols";
+const TREE_ASSET_CURVE: &str = "asset_curve";
+const TREE_ASSET_REWARDS: &str = "asset_rewards";
+const TREE_ASSET_GOVERNANCE: &str = "asset_governance";
 
 /// The single key under which an in-progress block commit's post-image is
 /// staged in the `wal` tree. Only one block commits at a time, so one key
@@ -125,6 +130,11 @@ pub struct SledStore {
     projection_dao_registry: Tree,
     projection_pouw_mints: Tree,
     projection_contract_blocks: Tree,
+    assets: Tree,
+    asset_symbols: Tree,
+    asset_curve: Tree,
+    asset_rewards: Tree,
+    asset_governance: Tree,
 
     // Transaction state
     tx_active: AtomicBool,
@@ -431,6 +441,21 @@ impl SledStore {
         let projection_contract_blocks = db
             .open_tree(TREE_PROJECTION_CONTRACT_BLOCKS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let assets = db
+            .open_tree(TREE_ASSETS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let asset_symbols = db
+            .open_tree(TREE_ASSET_SYMBOLS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let asset_curve = db
+            .open_tree(TREE_ASSET_CURVE)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let asset_rewards = db
+            .open_tree(TREE_ASSET_REWARDS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let asset_governance = db
+            .open_tree(TREE_ASSET_GOVERNANCE)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         let store = Self {
             db,
@@ -475,6 +500,11 @@ impl SledStore {
             projection_dao_registry,
             projection_pouw_mints,
             projection_contract_blocks,
+            assets,
+            asset_symbols,
+            asset_curve,
+            asset_rewards,
+            asset_governance,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
             tx_utxo_merkle_next_index: AtomicU64::new(0),
@@ -883,6 +913,11 @@ impl SledStore {
             TREE_PROJECTION_DAO_REGISTRY => &self.projection_dao_registry,
             TREE_PROJECTION_POUW_MINTS => &self.projection_pouw_mints,
             TREE_PROJECTION_CONTRACT_BLOCKS => &self.projection_contract_blocks,
+            TREE_ASSETS => &self.assets,
+            TREE_ASSET_SYMBOLS => &self.asset_symbols,
+            TREE_ASSET_CURVE => &self.asset_curve,
+            TREE_ASSET_REWARDS => &self.asset_rewards,
+            TREE_ASSET_GOVERNANCE => &self.asset_governance,
             _ => return None,
         })
     }
@@ -1544,6 +1579,175 @@ impl BlockchainStore for SledStore {
             batch.tree(TREE_TOKEN_CONTRACTS).insert(key.as_ref(), value);
         }
 
+        Ok(())
+    }
+
+    fn get_sovereign_asset(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::SovereignAsset>> {
+        let key = keys::asset_key(asset_id);
+        {
+            let batch_guard = self.tx_batch.lock().unwrap();
+            if let Some(ref batch) = *batch_guard {
+                if let Some(staged) = batch.tree_lookup(TREE_ASSETS, key.as_ref()) {
+                    return match staged {
+                        Some(bytes) => Ok(Some(Self::deserialize(&bytes)?)),
+                        None => Ok(None),
+                    };
+                }
+            }
+        }
+        match self.assets.get(key) {
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn iter_sovereign_asset_records(
+        &self,
+    ) -> StorageResult<
+        Box<dyn Iterator<Item = ([u8; 32], crate::contracts::sovereign_asset::SovereignAsset)> + '_>,
+    > {
+        let mut results = Vec::new();
+        for result in self.assets.iter() {
+            match result {
+                Ok((key, value)) => {
+                    let asset_id: [u8; 32] = match key.as_ref().try_into() {
+                        Ok(arr) => arr,
+                        Err(_) => continue,
+                    };
+                    let asset: crate::contracts::sovereign_asset::SovereignAsset =
+                        Self::deserialize(&value)?;
+                    results.push((asset_id, asset));
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+        Ok(Box::new(results.into_iter()))
+    }
+
+    fn put_sovereign_asset(
+        &self,
+        asset: &crate::contracts::sovereign_asset::SovereignAsset,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::asset_key(&asset.asset_id);
+        let value = Self::serialize(asset)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_ASSETS).insert(key.as_ref(), value);
+        }
+        Ok(())
+    }
+
+    fn get_asset_symbol_owner(&self, symbol: &str) -> StorageResult<Option<[u8; 32]>> {
+        let key = keys::asset_symbol_key(symbol);
+        match self.asset_symbols.get(key.as_slice()) {
+            Ok(Some(bytes)) => {
+                if bytes.len() != 32 {
+                    return Err(StorageError::Serialization(
+                        "invalid asset symbol index value".into(),
+                    ));
+                }
+                let mut out = [0u8; 32];
+                out.copy_from_slice(bytes.as_ref());
+                Ok(Some(out))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_asset_symbol_index(&self, symbol: &str, asset_id: &[u8; 32]) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::asset_symbol_key(symbol);
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_ASSET_SYMBOLS).insert(key, asset_id.as_ref());
+        }
+        Ok(())
+    }
+
+    fn get_curve_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::CurveModuleState>> {
+        let key = keys::asset_module_state_key(asset_id);
+        match self.asset_curve.get(key) {
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_curve_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::CurveModuleState,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::asset_module_state_key(asset_id);
+        let value = Self::serialize(state)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_ASSET_CURVE).insert(key.as_ref(), value);
+        }
+        Ok(())
+    }
+
+    fn get_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::RewardsModuleState>> {
+        let key = keys::asset_module_state_key(asset_id);
+        match self.asset_rewards.get(key) {
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::RewardsModuleState,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::asset_module_state_key(asset_id);
+        let value = Self::serialize(state)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_ASSET_REWARDS).insert(key.as_ref(), value);
+        }
+        Ok(())
+    }
+
+    fn get_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::GovernanceModuleState>> {
+        let key = keys::asset_module_state_key(asset_id);
+        match self.asset_governance.get(key) {
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::GovernanceModuleState,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::asset_module_state_key(asset_id);
+        let value = Self::serialize(state)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_ASSET_GOVERNANCE).insert(key.as_ref(), value);
+        }
         Ok(())
     }
 

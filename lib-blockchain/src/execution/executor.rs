@@ -42,6 +42,10 @@ use crate::storage::{
     WalletProjectionRecord,
 };
 use crate::transaction::{
+    asset_tx::{
+        AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
+        AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    },
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
     envelope_signer_matches_sender, hash_transaction, token_creation::TokenCreationPayloadV1,
@@ -51,6 +55,10 @@ use crate::transaction::{
 use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
+use super::sovereign_asset::{
+    apply_asset_authority_transfer, apply_asset_launch, apply_asset_manifest_update,
+    apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate, AssetLaunchOutcome,
+};
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
 
 use crate::protocol::ProtocolParams;
@@ -870,7 +878,8 @@ impl BlockExecutor {
                 TxOutcome::TokenMint(_outcome) => {
                     summary.balance_changes += 1; // recipient only
                 }
-                TxOutcome::TokenCreation(_outcome) => {
+                TxOutcome::TokenCreation(_outcome) => {}
+                TxOutcome::AssetLaunch(_outcome) => {
                     summary.balance_changes += 2; // creator + treasury balance credits
                 }
                 TxOutcome::ContractDeployment(_outcome) => {
@@ -1051,6 +1060,11 @@ impl BlockExecutor {
             TransactionType::TokenTransfer => {}
             TransactionType::TokenMint => {}
             TransactionType::TokenCreation => {}
+            TransactionType::AssetLaunch => {}
+            TransactionType::AssetModuleUpgrade => {}
+            TransactionType::AssetManifestUpdate => {}
+            TransactionType::AssetAuthorityTransfer => {}
+            TransactionType::AssetRewardsDelegateRotate => {}
             TransactionType::ContractDeployment => {}
             TransactionType::ContractExecution => {}
             TransactionType::DaoProposal => {}
@@ -1239,6 +1253,66 @@ impl BlockExecutor {
                 TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
                     TxApplyError::InvalidType(format!(
                         "TokenCreation requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetLaunch => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetLaunch must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetLaunchPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetLaunch requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetModuleUpgrade => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetModuleUpgrade must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetModuleUpgradePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetModuleUpgrade requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetManifestUpdate => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetManifestUpdate must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetManifestUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetManifestUpdate requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetRewardsDelegateRotate => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetRewardsDelegateRotate must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetRewardsDelegateRotatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetRewardsDelegateRotate requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetAuthorityTransfer => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetAuthorityTransfer must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetAuthorityTransferPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetAuthorityTransfer requires canonical memo payload: {e}"
                     ))
                 })?;
             }
@@ -3366,6 +3440,64 @@ impl BlockExecutor {
                     initial_supply: payload.initial_supply as u128,
                 }))
             }
+            TransactionType::AssetLaunch => {
+                let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetLaunch requires canonical memo payload: {e}"
+                    ))
+                })?;
+                let creator = tx.signature.public_key.key_id;
+                let outcome = apply_asset_launch(
+                    mutator,
+                    &tx_hash,
+                    creator,
+                    &payload,
+                    block_height,
+                    block_timestamp,
+                )?;
+                Ok(TxOutcome::AssetLaunch(outcome))
+            }
+            TransactionType::AssetModuleUpgrade => {
+                let payload = AssetModuleUpgradePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetModuleUpgrade requires canonical memo payload: {e}"
+                    ))
+                })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_module_upgrade(mutator, signer, &payload, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::AssetManifestUpdate => {
+                let payload = AssetManifestUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetManifestUpdate requires canonical memo payload: {e}"
+                    ))
+                })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_manifest_update(mutator, signer, &payload)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::AssetRewardsDelegateRotate => {
+                let payload =
+                    AssetRewardsDelegateRotatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                        TxApplyError::InvalidType(format!(
+                            "AssetRewardsDelegateRotate requires canonical memo payload: {e}"
+                        ))
+                    })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_rewards_delegate_rotate(mutator, signer, &payload)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::AssetAuthorityTransfer => {
+                let payload = AssetAuthorityTransferPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetAuthorityTransfer requires canonical memo payload: {e}"
+                    ))
+                })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_authority_transfer(mutator, signer, &payload, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
             TransactionType::ContractDeployment => {
                 let outcome = self.apply_contract_deployment(mutator, tx, &tx_hash)?;
                 Ok(TxOutcome::ContractDeployment(outcome))
@@ -3602,6 +3734,7 @@ enum TxOutcome {
     TokenTransfer(TokenTransferOutcome),
     TokenMint(TokenMintOutcome),
     TokenCreation(TokenCreationOutcome),
+    AssetLaunch(AssetLaunchOutcome),
     ContractDeployment(ContractDeploymentOutcome),
     ContractExecution(ContractExecutionOutcome),
     DaoProposal(DaoProposalOutcome),
@@ -4838,6 +4971,63 @@ mod tests {
             "TokenCreation with fee=0 (subsidized) should be accepted: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn test_asset_launch_writes_sovereign_asset_record() {
+        use crate::contracts::sovereign_asset::AssetIdSource;
+        use crate::transaction::asset_tx::AssetLaunchPayloadV1;
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let payload = AssetLaunchPayloadV1 {
+            name: "Bubble".to_string(),
+            symbol: "BUBL".to_string(),
+            decimals: 18,
+            initial_supply: 1_000,
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: 2_000,
+            supply_mode: crate::contracts::sovereign_asset::SupplyMode::Fixed,
+            manifest_cid: [1u8; 32],
+            manifest_hash: [2u8; 32],
+            curve: None,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+        };
+        let memo = payload.encode_memo().expect("valid asset launch memo");
+        let tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::AssetLaunch,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo,
+            payload: crate::transaction::TransactionPayload::None,
+        };
+        let expected_asset_id = hash_transaction(&tx).as_array();
+
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).expect("AssetLaunch should apply");
+
+        let asset = store
+            .get_sovereign_asset(&expected_asset_id)
+            .expect("read asset")
+            .expect("asset exists");
+        assert_eq!(asset.asset_id, expected_asset_id);
+        assert_eq!(asset.id_source, AssetIdSource::LaunchTx);
+        assert_eq!(asset.symbol, "BUBL");
+
+        let creator = Address::new(create_dummy_signature().public_key.key_id);
+        let treasury = Address::new([0xAA; 32]);
+        let token_id = TokenId::new(expected_asset_id);
+        assert_eq!(store.get_token_balance(&token_id, &creator).unwrap(), 800);
+        assert_eq!(store.get_token_balance(&token_id, &treasury).unwrap(), 200);
     }
 
     #[test]

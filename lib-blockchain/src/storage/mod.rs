@@ -1105,6 +1105,95 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST be called within begin_block/commit_block
     fn put_token_contract(&self, c: &crate::contracts::TokenContract) -> StorageResult<()>;
 
+    // =========================================================================
+    // Sovereign Assets (SA-3+)
+    // =========================================================================
+
+    fn get_sovereign_asset(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::SovereignAsset>> {
+        let _ = asset_id;
+        Ok(None)
+    }
+
+    fn iter_sovereign_asset_records(
+        &self,
+    ) -> StorageResult<
+        Box<dyn Iterator<Item = ([u8; 32], crate::contracts::sovereign_asset::SovereignAsset)> + '_>,
+    > {
+        Ok(Box::new(std::iter::empty()))
+    }
+
+    fn put_sovereign_asset(
+        &self,
+        asset: &crate::contracts::sovereign_asset::SovereignAsset,
+    ) -> StorageResult<()> {
+        let _ = asset;
+        Ok(())
+    }
+
+    fn get_asset_symbol_owner(&self, symbol: &str) -> StorageResult<Option<[u8; 32]>> {
+        let _ = symbol;
+        Ok(None)
+    }
+
+    fn put_asset_symbol_index(&self, symbol: &str, asset_id: &[u8; 32]) -> StorageResult<()> {
+        let _ = (symbol, asset_id);
+        Ok(())
+    }
+
+    fn get_curve_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::CurveModuleState>> {
+        let _ = asset_id;
+        Ok(None)
+    }
+
+    fn put_curve_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::CurveModuleState,
+    ) -> StorageResult<()> {
+        let _ = (asset_id, state);
+        Ok(())
+    }
+
+    fn get_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::RewardsModuleState>> {
+        let _ = asset_id;
+        Ok(None)
+    }
+
+    fn put_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::RewardsModuleState,
+    ) -> StorageResult<()> {
+        let _ = (asset_id, state);
+        Ok(())
+    }
+
+    fn get_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> StorageResult<Option<crate::contracts::sovereign_asset::GovernanceModuleState>> {
+        let _ = asset_id;
+        Ok(None)
+    }
+
+    fn put_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::GovernanceModuleState,
+    ) -> StorageResult<()> {
+        let _ = (asset_id, state);
+        Ok(())
+    }
+
     /// Get token total supply.
     ///
     /// Returns None if no supply is tracked (token not initialized with supply).

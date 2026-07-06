@@ -1194,8 +1194,7 @@ impl Blockchain {
 
     /// Unified Sovereign Asset view: legacy projection over token + bonding-curve registries.
     ///
-    /// SA-3+ will read native `assets/` sled rows; until then this merges
-    /// `TokenContract` and `BondingCurveToken` into one discovery list.
+    /// Native `assets/` sled rows (SA-3+) merged with legacy projection fallback.
     pub fn iter_sovereign_assets(&self) -> Vec<crate::contracts::sovereign_asset::SovereignAsset> {
         use crate::contracts::sovereign_asset::{
             merge_curve_into_asset, project_from_bonding_curve_token, project_from_token_contract,
@@ -1204,7 +1203,18 @@ impl Blockchain {
         let mut by_id: HashMap<[u8; 32], crate::contracts::sovereign_asset::SovereignAsset> =
             HashMap::new();
 
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_sovereign_asset_records() {
+                for (asset_id, asset) in iter {
+                    by_id.insert(asset_id, asset);
+                }
+            }
+        }
+
         for (token_id, token) in self.iter_token_contract_entries() {
+            if by_id.contains_key(&token_id) {
+                continue;
+            }
             let height = self.contract_blocks.get(&token_id).copied();
             if let Some(asset) = project_from_token_contract(&token, height) {
                 by_id.insert(token_id, asset);
@@ -1213,6 +1223,9 @@ impl Blockchain {
 
         for curve in self.bonding_curve_registry.get_all() {
             let token_id = curve.token_id;
+            if by_id.contains_key(&token_id) {
+                continue;
+            }
             if let Some(existing) = by_id.remove(&token_id) {
                 by_id.insert(token_id, merge_curve_into_asset(existing, curve));
             } else {

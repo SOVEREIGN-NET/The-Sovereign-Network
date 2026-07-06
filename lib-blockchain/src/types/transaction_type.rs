@@ -224,6 +224,21 @@ pub enum TransactionType {
     RegisterCredential = 60,
     /// Update password for an existing credential (requires DID ownership proof).
     UpdateCredentialPassword = 61,
+
+    // =========================================================================
+    // Sovereign Asset (SA-3..SA-7)
+    // =========================================================================
+
+    /// Launch a new Sovereign Asset (replaces TokenCreation for post-reset testnet).
+    AssetLaunch = 62,
+    /// Add or reconfigure an optional asset module (curve, rewards, governance).
+    AssetModuleUpgrade = 63,
+    /// Update the DHT-pinned asset manifest (CID + hash).
+    AssetManifestUpdate = 64,
+    /// Transfer asset authority to governance (with optional timelock).
+    AssetAuthorityTransfer = 65,
+    /// Rotate the rewards spend delegate key.
+    AssetRewardsDelegateRotate = 66,
 }
 
 impl TransactionType {
@@ -418,6 +433,13 @@ impl TransactionType {
             TransactionType::UpdateCredentialPassword => {
                 "Update password for existing credentials"
             }
+            TransactionType::AssetLaunch => "Launch a new Sovereign Asset",
+            TransactionType::AssetModuleUpgrade => "Upgrade Sovereign Asset module",
+            TransactionType::AssetManifestUpdate => "Update Sovereign Asset manifest",
+            TransactionType::AssetAuthorityTransfer => "Transfer Sovereign Asset authority",
+            TransactionType::AssetRewardsDelegateRotate => {
+                "Rotate Sovereign Asset rewards spend delegate"
+            }
         }
     }
 
@@ -486,6 +508,11 @@ impl TransactionType {
             TransactionType::ReauthorizeObserver => "reauthorize_observer",
             TransactionType::RegisterCredential => "register_credential",
             TransactionType::UpdateCredentialPassword => "update_credential_password",
+            TransactionType::AssetLaunch => "asset_launch",
+            TransactionType::AssetModuleUpgrade => "asset_module_upgrade",
+            TransactionType::AssetManifestUpdate => "asset_manifest_update",
+            TransactionType::AssetAuthorityTransfer => "asset_authority_transfer",
+            TransactionType::AssetRewardsDelegateRotate => "asset_rewards_delegate_rotate",
         }
     }
 
@@ -554,6 +581,11 @@ impl TransactionType {
             "reauthorize_observer" => Some(TransactionType::ReauthorizeObserver),
             "register_credential" => Some(TransactionType::RegisterCredential),
             "update_credential_password" => Some(TransactionType::UpdateCredentialPassword),
+            "asset_launch" => Some(TransactionType::AssetLaunch),
+            "asset_module_upgrade" => Some(TransactionType::AssetModuleUpgrade),
+            "asset_manifest_update" => Some(TransactionType::AssetManifestUpdate),
+            "asset_authority_transfer" => Some(TransactionType::AssetAuthorityTransfer),
+            "asset_rewards_delegate_rotate" => Some(TransactionType::AssetRewardsDelegateRotate),
             _ => None,
         }
     }

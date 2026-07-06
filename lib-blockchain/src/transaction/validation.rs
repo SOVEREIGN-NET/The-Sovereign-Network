@@ -10,6 +10,10 @@ use crate::transaction::core::{
 };
 use crate::transaction::mint_authorization::validate_token_mint_authorization;
 use crate::transaction::system_tx_signature::requires_system_tx_signature;
+use crate::transaction::asset_tx::{
+    AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
+    AssetRewardsDelegateRotatePayloadV1,
+};
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
     decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -301,6 +305,11 @@ impl TransactionValidator {
             transaction.transaction_type,
             TransactionType::TokenTransfer
                 | TransactionType::TokenCreation
+                | TransactionType::AssetLaunch
+                | TransactionType::AssetModuleUpgrade
+                | TransactionType::AssetManifestUpdate
+                | TransactionType::AssetAuthorityTransfer
+                | TransactionType::AssetRewardsDelegateRotate
                 | TransactionType::RegisterObserver
                 | TransactionType::UpdateObserverMetadata
                 | TransactionType::SuspendObserver
@@ -438,6 +447,43 @@ impl TransactionValidator {
                 }
                 TokenCreationPayloadV1::decode_memo(&transaction.memo)
                     .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetLaunch => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                AssetLaunchPayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetModuleUpgrade => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                AssetModuleUpgradePayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetManifestUpdate => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                AssetManifestUpdatePayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetRewardsDelegateRotate => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                AssetRewardsDelegateRotatePayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetAuthorityTransfer => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                crate::transaction::asset_tx::AssetAuthorityTransferPayloadV1::decode_memo(
+                    &transaction.memo,
+                )
+                .map_err(|_| ValidationError::InvalidMemo)?;
             }
             TransactionType::BondingCurveDeploy => {
                 let data = transaction
@@ -771,6 +817,15 @@ impl TransactionValidator {
                 }
                 TokenCreationPayloadV1::decode_memo(&transaction.memo)
                     .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetLaunch
+            | TransactionType::AssetModuleUpgrade
+            | TransactionType::AssetManifestUpdate
+            | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetRewardsDelegateRotate => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
             }
             TransactionType::BondingCurveDeploy
             | TransactionType::BondingCurveBuy
@@ -1742,6 +1797,11 @@ impl<'a> StatefulTransactionValidator<'a> {
             transaction.transaction_type,
             TransactionType::TokenTransfer
                 | TransactionType::TokenCreation
+                | TransactionType::AssetLaunch
+                | TransactionType::AssetModuleUpgrade
+                | TransactionType::AssetManifestUpdate
+                | TransactionType::AssetAuthorityTransfer
+                | TransactionType::AssetRewardsDelegateRotate
                 | TransactionType::RegisterObserver
                 | TransactionType::UpdateObserverMetadata
                 | TransactionType::SuspendObserver
@@ -2297,6 +2357,11 @@ impl<'a> StatefulTransactionValidator<'a> {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
+            TransactionType::AssetLaunch
+            | TransactionType::AssetModuleUpgrade
+            | TransactionType::AssetManifestUpdate
+            | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetRewardsDelegateRotate => {}
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -3422,11 +3487,16 @@ pub mod utils {
                 transaction.governance_config_data().is_some()
             }
             TransactionType::TokenCreation
+            | TransactionType::AssetLaunch
+            | TransactionType::AssetModuleUpgrade
+            | TransactionType::AssetManifestUpdate
+            | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::BondingCurveDeploy
             | TransactionType::BondingCurveBuy
             | TransactionType::BondingCurveSell
             | TransactionType::BondingCurveGraduate => {
-                // Bonding curve operations
+                // Bonding curve / sovereign asset operations
                 true
             }
             TransactionType::TokenSwap
