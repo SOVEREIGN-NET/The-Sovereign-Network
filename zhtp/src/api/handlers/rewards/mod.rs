@@ -6,11 +6,12 @@
 //!
 //! ## Configuration
 //!
-//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the on-chain
-//! rewards spend delegate keystore AND the chain exposes a Sovereign Asset
-//! with the rewards module enabled (`ZHTP_REWARDS_ASSET_ID` or auto-discovery
-//! of the BUBL rewards asset). Without a matching delegate the handler
-//! installs but every endpoint returns 503.
+//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the BUBL creator
+//! keystore (the signer of the founding `TokenCreation` tx) AND that key holds
+//! a positive on-chain BUBL balance. `ZHTP_REWARDS_ASSET_ID` may override the
+//! default deterministic DAO token id (`generate_custom_token_id("Bubble","BUBL")`).
+//! AssetLaunch spend-delegate assets are supported as a fallback only.
+//! Without a matching signer the handler installs but every endpoint returns 503.
 //!
 //! ## Storage
 //!
@@ -42,6 +43,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use lib_blockchain::contracts::sovereign_asset::{BUBL_NAME, BUBL_SYMBOL};
+use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
@@ -1174,7 +1177,7 @@ fn chain_id_from_env() -> u8 {
 
 // ── Treasury loader ──────────────────────────────────────────────────
 
-fn resolve_rewards_asset_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
+fn resolve_rewards_token_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
     if let Ok(hex_id) = std::env::var("ZHTP_REWARDS_ASSET_ID") {
         let bytes = hex::decode(hex_id).ok()?;
         if bytes.len() == 32 {
@@ -1184,11 +1187,40 @@ fn resolve_rewards_asset_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
         }
     }
 
+    // Canonical BUBL: GENESIS-6 DAO `TokenCreation` (deterministic token_id).
+    let bubl_dao_id = generate_custom_token_id(BUBL_NAME, BUBL_SYMBOL);
+    if blockchain.get_token_contract(&bubl_dao_id).is_some() {
+        return Some(bubl_dao_id);
+    }
+
+    // Fallback: AssetLaunch / projected sovereign-asset view (non-canonical).
     blockchain
         .iter_sovereign_assets()
         .into_iter()
         .find(|a| a.module_flags.has_rewards() && a.symbol.eq_ignore_ascii_case(BUBL_TOKEN_SYMBOL))
         .map(|a| a.asset_id)
+}
+
+/// Returns true when `signer_key_id` may spend the rewards pool for `token_id`.
+fn rewards_signer_authorized(
+    blockchain: &Blockchain,
+    token_id: &[u8; 32],
+    signer_key_id: &[u8; 32],
+) -> bool {
+    if let Some(token) = blockchain.get_token_contract(token_id) {
+        return token.creator.key_id == *signer_key_id;
+    }
+    if let Some(asset) = blockchain.get_sovereign_asset(token_id) {
+        if let Some(delegate) = asset
+            .rewards
+            .as_ref()
+            .and_then(|r| r.spend_delegate_key_id)
+        {
+            return delegate == *signer_key_id;
+        }
+        return asset.creator_key_id == *signer_key_id;
+    }
+    false
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
@@ -1213,19 +1245,14 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
             return None;
         }
     };
-    let rewards_asset_id = resolve_rewards_asset_id(blockchain)?;
-    let asset = blockchain.get_sovereign_asset(&rewards_asset_id)?;
-    let delegate = asset
-        .rewards
-        .as_ref()
-        .and_then(|r| r.spend_delegate_key_id)?;
+    let rewards_asset_id = resolve_rewards_token_id(blockchain)?;
     let signer_key_id = keypair.public_key.key_id;
 
-    if delegate != signer_key_id {
+    if !rewards_signer_authorized(blockchain, &rewards_asset_id, &signer_key_id) {
         warn!(
-            "rewards: keystore key_id {} does not match on-chain spend_delegate {}; endpoint disabled",
+            "rewards: keystore key_id {} is not authorized to spend token {}; endpoint disabled",
             hex::encode(&signer_key_id[..8]),
-            hex::encode(&delegate[..8]),
+            hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
@@ -1235,14 +1262,14 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
         .unwrap_or(0);
     if balance == 0 {
         warn!(
-            "rewards: delegate keystore at {} holds 0 balance for asset {}; endpoint disabled",
+            "rewards: signer keystore at {} holds 0 balance for token {}; endpoint disabled",
             dir,
             hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
     info!(
-        "rewards: delegate loaded — asset_id={} key_id={} balance={}",
+        "rewards: BUBL signer loaded — token_id={} key_id={} balance={}",
         hex::encode(&rewards_asset_id[..8]),
         hex::encode(&signer_key_id[..8]),
         balance,
