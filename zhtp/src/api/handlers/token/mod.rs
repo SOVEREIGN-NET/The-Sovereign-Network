@@ -137,7 +137,7 @@ impl TokenHandler {
         Self { blockchain }
     }
 
-    /// POST /api/v1/token/create - Create a new custom token
+    /// POST /api/v1/token/create - Deprecated; use AssetLaunch after testnet reset (SA-8).
     async fn handle_create_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let create_req: CreateTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -150,19 +150,46 @@ impl TokenHandler {
             }
         };
 
+        if tx.transaction_type == TransactionType::AssetLaunch {
+            use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
+            use lib_blockchain::transaction::hash_transaction;
+
+            let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                anyhow::anyhow!("Invalid asset launch payload: {e}")
+            })?;
+            let asset_id = hash_transaction(&tx).as_array();
+            if let Err(e) = self.submit_to_mempool(tx).await {
+                return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+            }
+            let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+            return create_json_response(json!({
+                "success": true,
+                "asset_id": hex::encode(asset_id),
+                "name": payload.name,
+                "symbol": payload.symbol,
+                "creator_allocation": creator_alloc.to_string(),
+                "treasury_allocation": treasury_alloc.to_string(),
+                "deprecated_route": "/api/v1/token/create accepts AssetLaunch during migration — prefer direct broadcast",
+            }));
+        }
+
         if tx.transaction_type != TransactionType::TokenCreation {
             let reason = if tx.transaction_type == TransactionType::ContractExecution {
-                "Deprecated token create transaction type. Use canonical TokenCreation transaction"
+                "Deprecated token create transaction type. Use AssetLaunch (SA-3) or TokenCreation"
                     .to_string()
             } else {
                 format!(
-                    "Invalid transaction type for token/create: expected TokenCreation, got {:?}",
+                    "Invalid transaction type for token/create: expected AssetLaunch or TokenCreation, got {:?}",
                     tx.transaction_type
                 )
             };
             tracing::error!("[token/create] invalid tx type: {}", reason);
             return Ok(create_error_response(ZhtpStatus::BadRequest, reason));
         }
+
+        tracing::warn!(
+            "[token/create] TokenCreation is deprecated — migrate to AssetLaunch before testnet reset"
+        );
 
         let payload = match TokenCreationPayloadV1::decode_memo(&tx.memo) {
             Ok(p) => p,

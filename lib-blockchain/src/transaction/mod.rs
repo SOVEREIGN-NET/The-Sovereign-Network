@@ -18,6 +18,7 @@ pub mod oracle_governance;
 pub mod signing;
 pub mod system_tx_signature;
 pub mod threshold_approval;
+pub mod asset_tx;
 pub mod token_creation;
 pub mod validation;
 
@@ -85,6 +86,12 @@ pub use contract_execution::{
     MAX_CONTRACT_EXECUTION_MEMO_BYTES,
 };
 pub use fee::{required_token_creation_fee, TxFeeConfig, DEFAULT_TOKEN_CREATION_FEE};
+pub use asset_tx::{
+    AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
+    AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    AssetUpgradeModule, CurveLaunchConfig, GovernanceLaunchConfig, RewardsLaunchConfig,
+    ASSET_LAUNCH_MEMO_PREFIX, ASSET_LAUNCH_TREASURY_BPS, MAX_ASSET_MEMO_BYTES,
+};
 pub use token_creation::{
     TokenCreationPayloadV1, MAX_TOKEN_CREATION_MEMO_BYTES, MAX_TOKEN_NAME_BYTES,
     MAX_TOKEN_SYMBOL_BYTES, TOKEN_CREATION_MEMO_PREFIX,

@@ -752,11 +752,16 @@ pub mod utils {
                 // System-controlled token mint - validation handled at consensus layer
             }
             TransactionType::TokenCreation
+            | TransactionType::AssetLaunch
+            | TransactionType::AssetModuleUpgrade
+            | TransactionType::AssetManifestUpdate
+            | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
             | TransactionType::RemoveLiquidity => {
-                // AMM/Token operations - validation handled at consensus layer
+                // AMM/Token/Sovereign Asset operations - validation handled at consensus layer
             }
             TransactionType::BondingCurveDeploy => {
                 // Bonding curve token deployment - validation handled at consensus layer

@@ -56,5 +56,9 @@ name = "seed_founding_dao"
 path = "seed_founding_dao.rs"
 
 [[bin]]
+name = "seed_asset_launch"
+path = "seed_asset_launch.rs"
+
+[[bin]]
 name = "replay_divergence"
 path = "replay_divergence.rs"

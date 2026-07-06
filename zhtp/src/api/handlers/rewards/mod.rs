@@ -6,13 +6,11 @@
 //!
 //! ## Configuration
 //!
-//! Activated by the `ZHTP_REWARDS_TREASURY_KEYSTORE` environment variable
-//! pointing at a directory containing `user_identity.json` +
-//! `user_private_key.json` for the treasury identity. Without that env
-//! var the handler installs but every endpoint returns 503. Currently we
-//! ship this with the keystore present **on g1 only**; the other
-//! validators 503 so /rewards/* requests have a single source of truth
-//! and the treasury key has exactly one exposure surface.
+//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the on-chain
+//! rewards spend delegate keystore AND the chain exposes a Sovereign Asset
+//! with the rewards module enabled (`ZHTP_REWARDS_ASSET_ID` or auto-discovery
+//! of the BUBL rewards asset). Without a matching delegate the handler
+//! installs but every endpoint returns 503.
 //!
 //! ## Storage
 //!
@@ -57,16 +55,7 @@ use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIV
 
 // ── Constants ────────────────────────────────────────────────────────
 
-/// Canonical BUBL `TokenCreation` metadata (GENESIS-6 founding tx).
-const BUBL_TOKEN_NAME: &str = "Bubble";
 const BUBL_TOKEN_SYMBOL: &str = "BUBL";
-
-fn bubl_token_id() -> [u8; 32] {
-    lib_blockchain::contracts::utils::generate_custom_token_id(
-        BUBL_TOKEN_NAME,
-        BUBL_TOKEN_SYMBOL,
-    )
-}
 
 /// 18-decimal atom multiplier.
 const ATOM_18: u128 = 1_000_000_000_000_000_000;
@@ -179,10 +168,8 @@ pub struct RewardsHandler {
 #[derive(Clone)]
 struct TreasuryConfig {
     keypair: Arc<KeyPair>,
-    bubl_token_id: [u8; 32],
-    /// `keypair.public_key.key_id` — the combined-derivation key_id
-    /// (`blake3(dilithium || kyber)`) the chain stores BUBL balances under
-    /// for the creator allocation.
+    /// Sovereign asset id (launch tx hash post-reset, legacy token_id pre-migration).
+    rewards_asset_id: [u8; 32],
     signer_key_id: [u8; 32],
 }
 
@@ -468,12 +455,12 @@ impl RewardsHandler {
         // concurrent claims so this read-then-use is safe.
         let nonce = {
             let bc = self.blockchain.read().await;
-            bc.token_nonce(&treasury.bubl_token_id, &treasury.signer_key_id)
+            bc.token_nonce(&treasury.rewards_asset_id, &treasury.signer_key_id)
                 .map_err(|e| anyhow!("nonce lookup failed: {e}"))?
         };
 
         let data = TokenTransferData {
-            token_id: treasury.bubl_token_id,
+            token_id: treasury.rewards_asset_id,
             from: treasury.signer_key_id,
             to: recipient_key_id,
             amount,
@@ -1166,6 +1153,23 @@ fn chain_id_from_env() -> u8 {
 
 // ── Treasury loader ──────────────────────────────────────────────────
 
+fn resolve_rewards_asset_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
+    if let Ok(hex_id) = std::env::var("ZHTP_REWARDS_ASSET_ID") {
+        let bytes = hex::decode(hex_id).ok()?;
+        if bytes.len() == 32 {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes);
+            return Some(out);
+        }
+    }
+
+    blockchain
+        .iter_sovereign_assets()
+        .into_iter()
+        .find(|a| a.module_flags.has_rewards() && a.symbol.eq_ignore_ascii_case(BUBL_TOKEN_SYMBOL))
+        .map(|a| a.asset_id)
+}
+
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
     let dir = std::env::var("ZHTP_REWARDS_TREASURY_KEYSTORE").ok()?;
     let path = PathBuf::from(&dir);
@@ -1188,49 +1192,43 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
             return None;
         }
     };
-    let bubl_token_id = bubl_token_id();
+    let rewards_asset_id = resolve_rewards_asset_id(blockchain)?;
+    let asset = blockchain.get_sovereign_asset(&rewards_asset_id)?;
+    let delegate = asset
+        .rewards
+        .as_ref()
+        .and_then(|r| r.spend_delegate_key_id)?;
     let signer_key_id = keypair.public_key.key_id;
 
-    // Verify the keystore actually holds spendable BUBL. The BUBL token
-    // contract minted the 20 % "treasury" share to an unsignable PublicKey
-    // (zero dilithium + zero kyber) by design — see
-    // `lib-blockchain/src/blockchain/contracts.rs:688-692`. Only the BUBL
-    // creator (the entity that signed the original TokenCreation tx) holds
-    // a real PublicKey-backed BUBL balance and can debit it via
-    // TokenTransfer. If the loaded keystore lacks a positive balance, refuse
-    // to enable rewards rather than queue txes that will fail on every
-    // future replay.
-    if blockchain.get_token_contract(&bubl_token_id).is_none() {
+    if delegate != signer_key_id {
         warn!(
-            "rewards: BUBL token contract {} not found on chain; \
-             rewards endpoint disabled",
-            hex::encode(&bubl_token_id[..4]),
+            "rewards: keystore key_id {} does not match on-chain spend_delegate {}; endpoint disabled",
+            hex::encode(&signer_key_id[..8]),
+            hex::encode(&delegate[..8]),
         );
         return None;
     }
+
     let balance = blockchain
-        .token_balance(&bubl_token_id, &signer_key_id)
+        .token_balance(&rewards_asset_id, &signer_key_id)
         .unwrap_or(0);
     if balance == 0 {
         warn!(
-            "rewards: keystore at {} holds 0 BUBL for signer key_id={}. \
-             This keystore is NOT the BUBL creator and cannot fund rewards. \
-             Point ZHTP_REWARDS_TREASURY_KEYSTORE at the keystore that \
-             signed the BUBL TokenCreation. Rewards endpoint disabled.",
+            "rewards: delegate keystore at {} holds 0 balance for asset {}; endpoint disabled",
             dir,
-            hex::encode(&signer_key_id[..8]),
+            hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
     info!(
-        "rewards: signer loaded — key_id={} BUBL balance={} ({} BUBL)",
+        "rewards: delegate loaded — asset_id={} key_id={} balance={}",
+        hex::encode(&rewards_asset_id[..8]),
         hex::encode(&signer_key_id[..8]),
         balance,
-        balance / ATOM_18,
     );
     Some(TreasuryConfig {
         keypair: Arc::new(keypair),
-        bubl_token_id,
+        rewards_asset_id,
         signer_key_id,
     })
 }

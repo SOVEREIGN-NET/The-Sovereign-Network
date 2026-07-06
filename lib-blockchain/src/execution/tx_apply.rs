@@ -265,6 +265,85 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Sovereign Asset Primitives (SA-3+)
+    // =========================================================================
+
+    pub fn get_sovereign_asset(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> TxApplyResult<Option<crate::contracts::sovereign_asset::SovereignAsset>> {
+        Ok(self.store.get_sovereign_asset(asset_id)?)
+    }
+
+    pub fn put_sovereign_asset(
+        &self,
+        asset: &crate::contracts::sovereign_asset::SovereignAsset,
+    ) -> TxApplyResult<()> {
+        self.store.put_sovereign_asset(asset)?;
+        Ok(())
+    }
+
+    pub fn asset_symbol_exists(&self, symbol: &str) -> TxApplyResult<bool> {
+        if self.store.get_asset_symbol_owner(symbol)?.is_some() {
+            return Ok(true);
+        }
+        Ok(self.token_symbol_exists_case_insensitive(symbol)?)
+    }
+
+    pub fn put_asset_symbol_index(&self, symbol: &str, asset_id: &[u8; 32]) -> TxApplyResult<()> {
+        self.store.put_asset_symbol_index(symbol, asset_id)?;
+        Ok(())
+    }
+
+    pub fn get_curve_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> TxApplyResult<Option<crate::contracts::sovereign_asset::CurveModuleState>> {
+        Ok(self.store.get_curve_module_state(asset_id)?)
+    }
+
+    pub fn put_curve_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::CurveModuleState,
+    ) -> TxApplyResult<()> {
+        self.store.put_curve_module_state(asset_id, state)?;
+        Ok(())
+    }
+
+    pub fn get_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> TxApplyResult<Option<crate::contracts::sovereign_asset::RewardsModuleState>> {
+        Ok(self.store.get_rewards_module_state(asset_id)?)
+    }
+
+    pub fn put_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::RewardsModuleState,
+    ) -> TxApplyResult<()> {
+        self.store.put_rewards_module_state(asset_id, state)?;
+        Ok(())
+    }
+
+    pub fn get_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> TxApplyResult<Option<crate::contracts::sovereign_asset::GovernanceModuleState>> {
+        Ok(self.store.get_governance_module_state(asset_id)?)
+    }
+
+    pub fn put_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+        state: &crate::contracts::sovereign_asset::GovernanceModuleState,
+    ) -> TxApplyResult<()> {
+        self.store.put_governance_module_state(asset_id, state)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Canonical CBE Curve State Primitives (#1926)
     // =========================================================================
 
