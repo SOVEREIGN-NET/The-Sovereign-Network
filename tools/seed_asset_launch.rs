@@ -143,8 +143,8 @@ fn placeholder_manifest() -> ([u8; 32], [u8; 32]) {
     let bytes = serde_json::to_vec(&manifest).expect("manifest json");
     let hash = lib_crypto::hash_blake3(&bytes);
     let mut cid = [0u8; 32];
-    cid[..16].copy_from_slice(&hash.as_bytes()[..16]);
-    (cid, hash.as_array())
+    cid[..16].copy_from_slice(&hash[..16]);
+    (cid, hash)
 }
 
 fn build_signed_asset_launch(
