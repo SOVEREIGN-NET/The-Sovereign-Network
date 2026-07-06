@@ -230,7 +230,8 @@ impl AssetsHandler {
             anyhow::bail!("Balance lookup for launch_tx asset_id not implemented until SA-3");
         }
 
-        let key_id = resolve_key_id(address)?;
+        let key_id =
+            crate::api::handlers::balance_key::resolve_custom_token_balance_key(&bc, address)?;
         let balance = bc
             .token_balance(&asset_id, &key_id)
             .map_err(|e| anyhow::anyhow!("balance lookup failed: {}", e))?;
@@ -260,24 +261,6 @@ fn parse_asset_id(hex_str: &str) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
-}
-
-fn resolve_key_id(address: &str) -> Result<[u8; 32]> {
-    let key_bytes = if address.starts_with("did:zhtp:") {
-        let hex_part = address.strip_prefix("did:zhtp:").unwrap_or(address);
-        hex::decode(hex_part).map_err(|_| anyhow::anyhow!("Invalid DID format"))?
-    } else if address.starts_with("0x") {
-        hex::decode(&address[2..]).map_err(|_| anyhow::anyhow!("Invalid hex address"))?
-    } else {
-        hex::decode(address).map_err(|_| anyhow::anyhow!("Invalid identity format"))?
-    };
-
-    if key_bytes.len() != 32 {
-        anyhow::bail!("Address must be 32-byte key_id hex");
-    }
-    let mut key_id = [0u8; 32];
-    key_id.copy_from_slice(&key_bytes);
-    Ok(key_id)
 }
 
 #[async_trait::async_trait]
