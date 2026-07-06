@@ -6,6 +6,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -15,6 +16,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
 // Blockchain imports
+use lib_blockchain::contracts::sovereign_asset::SovereignAsset;
 use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
 use lib_blockchain::types::transaction_type::TransactionType;
@@ -112,6 +114,34 @@ pub struct TokenListItem {
     pub decimals: u8,
     #[serde(serialize_with = "u128_as_string::serialize")]
     pub total_supply: u128,
+}
+
+fn sovereign_asset_to_list_item(asset: &SovereignAsset) -> TokenListItem {
+    TokenListItem {
+        token_id: hex::encode(asset.asset_id),
+        name: asset.name.clone(),
+        symbol: asset.symbol.clone(),
+        decimals: asset.decimals,
+        total_supply: asset.total_supply,
+    }
+}
+
+fn sovereign_asset_to_info(asset: &SovereignAsset) -> TokenInfoResponse {
+    TokenInfoResponse {
+        token_id: hex::encode(asset.asset_id),
+        name: asset.name.clone(),
+        symbol: asset.symbol.clone(),
+        decimals: asset.decimals,
+        total_supply: asset.total_supply,
+        max_supply: if asset.max_supply == u128::MAX {
+            None
+        } else {
+            Some(asset.max_supply)
+        },
+        creator: format!("0x{}", hex::encode(asset.creator_key_id)),
+        is_deflationary: false,
+        created_at_block: asset.launched_at_height,
+    }
 }
 
 // ============================================================================
@@ -480,29 +510,33 @@ impl TokenHandler {
             return create_json_response(serde_json::to_value(response)?);
         }
 
-        let token = blockchain
-            .get_token_contract(&token_id_array)
-            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+        if let Some(token) = blockchain.get_token_contract(&token_id_array) {
+            let created_at = blockchain.contract_blocks.get(&token_id_array).copied();
+            let response = TokenInfoResponse {
+                token_id: token_id_hex.to_string(),
+                name: token.name.clone(),
+                symbol: token.symbol.clone(),
+                decimals: token.decimals,
+                total_supply: token.total_supply,
+                max_supply: if token.max_supply == u128::MAX {
+                    None
+                } else {
+                    Some(token.max_supply)
+                },
+                creator: format!("0x{}", hex::encode(&token.creator.key_id)),
+                is_deflationary: token.is_deflationary,
+                created_at_block: created_at,
+            };
+            return create_json_response(serde_json::to_value(response)?);
+        }
 
-        let created_at = blockchain.contract_blocks.get(&token_id_array).copied();
+        if let Some(asset) = blockchain.get_sovereign_asset(&token_id_array) {
+            return create_json_response(serde_json::to_value(sovereign_asset_to_info(
+                &asset,
+            ))?);
+        }
 
-        let response = TokenInfoResponse {
-            token_id: token_id_hex.to_string(),
-            name: token.name.clone(),
-            symbol: token.symbol.clone(),
-            decimals: token.decimals,
-            total_supply: token.total_supply,
-            max_supply: if token.max_supply == u128::MAX {
-                None
-            } else {
-                Some(token.max_supply)
-            },
-            creator: format!("0x{}", hex::encode(&token.creator.key_id)),
-            is_deflationary: token.is_deflationary,
-            created_at_block: created_at,
-        };
-
-        create_json_response(serde_json::to_value(response)?)
+        Err(anyhow::anyhow!("Token not found"))
     }
 
     /// GET /api/v1/token/{id}/balance/{address} - Get token balance
@@ -540,10 +574,6 @@ impl TokenHandler {
             }));
         }
 
-        let token = blockchain
-            .get_token_contract(&token_id_array)
-            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
-
         let balance = if is_sov {
             let wallet_id = self
                 .resolve_wallet_id_for_sov(address, &blockchain)
@@ -562,11 +592,19 @@ impl TokenHandler {
                 .unwrap_or(0)
         };
 
+        let symbol = if let Some(token) = blockchain.get_token_contract(&token_id_array) {
+            token.symbol.clone()
+        } else if let Some(asset) = blockchain.get_sovereign_asset(&token_id_array) {
+            asset.symbol.clone()
+        } else {
+            return Err(anyhow::anyhow!("Token not found"));
+        };
+
         create_json_response(json!({
             "token_id": token_id_hex,
             "address": address,
-            "balance": balance.to_string().to_string(),
-            "symbol": token.symbol.clone()
+            "balance": balance.to_string(),
+            "symbol": symbol
         }))
     }
 
@@ -597,6 +635,19 @@ impl TokenHandler {
             decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
             total_supply: lib_blockchain::contracts::bonding_curve::canonical::CBE_TOTAL_SUPPLY,
         });
+
+        // AssetLaunch sovereign assets (e.g. post-reset BUBL) live in assets/
+        // sled, not token_contracts — surface them here for legacy clients.
+        let mut seen: HashSet<[u8; 32]> = tokens
+            .iter()
+            .filter_map(|t| hex::decode(&t.token_id).ok())
+            .filter_map(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+            .collect();
+        for asset in blockchain.iter_sovereign_assets() {
+            if seen.insert(asset.asset_id) {
+                tokens.push(sovereign_asset_to_list_item(&asset));
+            }
+        }
 
         let count = tokens.len();
 
@@ -717,11 +768,13 @@ impl TokenHandler {
         let native_token_id = generate_lib_token_id();
         let native_token_id_hex = hex::encode(native_token_id);
         let mut balances = Vec::new();
+        let mut listed_token_ids: HashSet<[u8; 32]> = HashSet::new();
 
         // Collect balances from all token contracts (sled-first metadata list).
         // TODO(#2637): O(N) sled reads per token — add caching/pagination if
         // user-creatable tokens grow beyond a handful.
         for (token_id, token) in blockchain.iter_token_contract_entries() {
+            listed_token_ids.insert(token_id);
             let balance = if token_id == native_token_id {
                 sov_wallet_id
                     .map(|wallet_id| {
@@ -750,6 +803,32 @@ impl TokenHandler {
                     "name": token.name.clone(),
                     "symbol": token.symbol.clone(),
                     "decimals": token.decimals,
+                    "balance": balance.to_string(),
+                    "is_creator": is_creator
+                }));
+            }
+        }
+
+        // AssetLaunch assets (BUBL post-reset) hold balances in token_balances
+        // but have no token_contracts row — scan sovereign assets not yet listed.
+        for asset in blockchain.iter_sovereign_assets() {
+            if listed_token_ids.contains(&asset.asset_id) {
+                continue;
+            }
+            let balance = blockchain
+                .token_balance(&asset.asset_id, &target_key_id)
+                .unwrap_or(0);
+            debug!(
+                "token/balances: sovereign asset={} ({}) found_balance={}",
+                asset.name, asset.symbol, balance
+            );
+            if balance > 0 {
+                let is_creator = asset.creator_key_id == target_key_id;
+                balances.push(json!({
+                    "token_id": hex::encode(asset.asset_id),
+                    "name": asset.name.clone(),
+                    "symbol": asset.symbol.clone(),
+                    "decimals": asset.decimals,
                     "balance": balance.to_string(),
                     "is_creator": is_creator
                 }));

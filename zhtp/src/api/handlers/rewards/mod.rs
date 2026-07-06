@@ -859,22 +859,37 @@ impl RewardsHandler {
     }
 
     async fn handle_balance(&self, did: &str) -> ZhtpResponse {
-        // READS don't need the treasury keystore — only mints/claims do.
-        // The 503 here was wrong: it told every non-treasury node "rewards
-        // endpoint not configured", even though local sled has whatever
-        // counters this node has accumulated. Returning the local state
-        // (zeros for nodes that haven't processed claims) is at least
-        // an honest answer; the proper architectural fix is to read the
-        // canonical BUBL balance from the on-chain token contract and
-        // move reward-event state on-chain too.
         if let Err(msg) = Self::validate_did(did) {
             return Self::bad(msg);
         }
         let stats = self.load_lifetime(did);
-        Self::ok_json(json!({
+
+        // Spendable BUBL is on-chain under the holder's key_id; legacy clients
+        // often read rewards/balance expecting wallet funds, not sled totals.
+        let (spendable_balance, asset_id_hex) = match &self.treasury {
+            Some(treasury) => {
+                let bc = self.blockchain.read().await;
+                let key_id = match Self::validate_did(did) {
+                    Ok(k) => k,
+                    Err(msg) => return Self::bad(msg),
+                };
+                let balance = bc
+                    .token_balance(&treasury.rewards_asset_id, &key_id)
+                    .unwrap_or(0);
+                (
+                    balance,
+                    Some(hex::encode(treasury.rewards_asset_id)),
+                )
+            }
+            None => (0, None),
+        };
+
+        let mut body = json!({
             "did": did,
             "total_earned": stats.total_earned.to_string(),
             "total_earned_display": (stats.total_earned / ATOM_18).to_string(),
+            "spendable_balance": spendable_balance.to_string(),
+            "spendable_balance_display": (spendable_balance / ATOM_18).to_string(),
             "counts": {
                 "welcome_claimed": stats.welcome_claimed,
                 "checkin_count": stats.checkin_count,
@@ -883,7 +898,13 @@ impl RewardsHandler {
                 "current_streak": stats.current_streak,
                 "longest_streak": stats.longest_streak,
             },
-        }))
+        });
+        if let Some(asset_id) = asset_id_hex {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("asset_id".into(), json!(asset_id));
+            }
+        }
+        Self::ok_json(body)
     }
 
     async fn handle_status(&self, did: &str) -> ZhtpResponse {
