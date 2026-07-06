@@ -8,9 +8,10 @@
 //!
 //! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the BUBL creator
 //! keystore (the signer of the founding `TokenCreation` tx) AND that key holds
-//! a positive on-chain BUBL balance. `ZHTP_REWARDS_ASSET_ID` may override the
+//! a positive on-chain BUBL balance. `ZHTP_REWARDS_TOKEN_ID` may override the
 //! default deterministic DAO token id (`generate_custom_token_id("Bubble","BUBL")`).
-//! AssetLaunch spend-delegate assets are supported as a fallback only.
+//! `ZHTP_REWARDS_ASSET_ID` is accepted as a deprecated alias. BUBL is a DAO
+//! `TokenCreation` token — not native SOV, not an `AssetLaunch` sovereign asset.
 //! Without a matching signer the handler installs but every endpoint returns 503.
 //!
 //! ## Storage
@@ -43,7 +44,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use lib_blockchain::contracts::sovereign_asset::{BUBL_NAME, BUBL_SYMBOL};
 use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
@@ -58,6 +58,7 @@ use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIV
 
 // ── Constants ────────────────────────────────────────────────────────
 
+const BUBL_TOKEN_NAME: &str = "Bubble";
 const BUBL_TOKEN_SYMBOL: &str = "BUBL";
 
 /// 18-decimal atom multiplier.
@@ -1177,50 +1178,45 @@ fn chain_id_from_env() -> u8 {
 
 // ── Treasury loader ──────────────────────────────────────────────────
 
+fn rewards_token_id_override() -> Option<String> {
+    std::env::var("ZHTP_REWARDS_TOKEN_ID")
+        .ok()
+        .or_else(|| std::env::var("ZHTP_REWARDS_ASSET_ID").ok())
+}
+
+fn parse_token_id_hex(hex_id: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(hex_id).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
 fn resolve_rewards_token_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
-    if let Ok(hex_id) = std::env::var("ZHTP_REWARDS_ASSET_ID") {
-        let bytes = hex::decode(hex_id).ok()?;
-        if bytes.len() == 32 {
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&bytes);
-            return Some(out);
-        }
+    if let Some(hex_id) = rewards_token_id_override() {
+        return parse_token_id_hex(&hex_id);
     }
 
     // Canonical BUBL: GENESIS-6 DAO `TokenCreation` (deterministic token_id).
-    let bubl_dao_id = generate_custom_token_id(BUBL_NAME, BUBL_SYMBOL);
+    let bubl_dao_id = generate_custom_token_id(BUBL_TOKEN_NAME, BUBL_TOKEN_SYMBOL);
     if blockchain.get_token_contract(&bubl_dao_id).is_some() {
         return Some(bubl_dao_id);
     }
 
-    // Fallback: AssetLaunch / projected sovereign-asset view (non-canonical).
-    blockchain
-        .iter_sovereign_assets()
-        .into_iter()
-        .find(|a| a.module_flags.has_rewards() && a.symbol.eq_ignore_ascii_case(BUBL_TOKEN_SYMBOL))
-        .map(|a| a.asset_id)
+    None
 }
 
-/// Returns true when `signer_key_id` may spend the rewards pool for `token_id`.
+/// Returns true when `signer_key_id` is the on-chain creator of the DAO token.
 fn rewards_signer_authorized(
     blockchain: &Blockchain,
     token_id: &[u8; 32],
     signer_key_id: &[u8; 32],
 ) -> bool {
-    if let Some(token) = blockchain.get_token_contract(token_id) {
-        return token.creator.key_id == *signer_key_id;
-    }
-    if let Some(asset) = blockchain.get_sovereign_asset(token_id) {
-        if let Some(delegate) = asset
-            .rewards
-            .as_ref()
-            .and_then(|r| r.spend_delegate_key_id)
-        {
-            return delegate == *signer_key_id;
-        }
-        return asset.creator_key_id == *signer_key_id;
-    }
-    false
+    blockchain
+        .get_token_contract(token_id)
+        .is_some_and(|token| token.creator.key_id == *signer_key_id)
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {

@@ -24,7 +24,7 @@
 #     --keystore-dir /opt/zhtp/keystores/bubl-creator \
 #     --token bubl --supply-atoms 1000000000000000000000000000 --chain-id 2
 # Broadcast signed_tx, then set ZHTP_REWARDS_TREASURY_KEYSTORE to bubl-creator.
-# ZHTP_REWARDS_ASSET_ID is optional (defaults to deterministic BUBL token_id).
+# ZHTP_REWARDS_TOKEN_ID is optional (defaults to deterministic BUBL token_id).
 
 set -euo pipefail
 
