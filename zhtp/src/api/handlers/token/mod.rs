@@ -116,18 +116,21 @@ pub struct TokenListItem {
     pub total_supply: u128,
 }
 
-fn token_contract_symbol_exists(blockchain: &Blockchain, symbol: &str) -> bool {
-    let upper = symbol.to_ascii_uppercase();
+fn dao_token_contract_symbols_upper(blockchain: &Blockchain) -> HashSet<String> {
     blockchain
         .iter_token_contract_entries()
-        .iter()
-        .any(|(_, token)| token.symbol.to_ascii_uppercase() == upper)
+        .into_iter()
+        .map(|(_, token)| token.symbol.to_ascii_uppercase())
+        .collect()
 }
 
 /// DAO `TokenCreation` rows win over `AssetLaunch` sovereign rows with the same symbol.
-fn include_sovereign_asset_in_token_api(blockchain: &Blockchain, asset: &SovereignAsset) -> bool {
+fn include_sovereign_asset_in_token_api(
+    asset: &SovereignAsset,
+    dao_symbols_upper: &HashSet<String>,
+) -> bool {
     !(asset.id_source == AssetIdSource::LaunchTx
-        && token_contract_symbol_exists(blockchain, &asset.symbol))
+        && dao_symbols_upper.contains(&asset.symbol.to_ascii_uppercase()))
 }
 
 fn sovereign_asset_to_list_item(asset: &SovereignAsset) -> TokenListItem {
@@ -651,13 +654,14 @@ impl TokenHandler {
         });
 
         // Sovereign assets without a matching token_contract row (e.g. future CBE launch).
+        let dao_symbols_upper = dao_token_contract_symbols_upper(&blockchain);
         let mut seen: HashSet<[u8; 32]> = tokens
             .iter()
             .filter_map(|t| hex::decode(&t.token_id).ok())
             .filter_map(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
             .collect();
         for asset in blockchain.iter_sovereign_assets() {
-            if !include_sovereign_asset_in_token_api(&blockchain, &asset) {
+            if !include_sovereign_asset_in_token_api(&asset, &dao_symbols_upper) {
                 continue;
             }
             if seen.insert(asset.asset_id) {
@@ -826,11 +830,12 @@ impl TokenHandler {
         }
 
         // Sovereign assets without a token_contracts row (DAO TokenCreation wins).
+        let dao_symbols_upper = dao_token_contract_symbols_upper(&blockchain);
         for asset in blockchain.iter_sovereign_assets() {
             if listed_token_ids.contains(&asset.asset_id) {
                 continue;
             }
-            if !include_sovereign_asset_in_token_api(&blockchain, &asset) {
+            if !include_sovereign_asset_in_token_api(&asset, &dao_symbols_upper) {
                 continue;
             }
             let balance = blockchain

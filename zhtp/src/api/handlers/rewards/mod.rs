@@ -6,13 +6,15 @@
 //!
 //! ## Configuration
 //!
-//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the BUBL creator
-//! keystore (the signer of the founding `TokenCreation` tx) AND that key holds
-//! a positive on-chain BUBL balance. `ZHTP_REWARDS_TOKEN_ID` may override the
-//! default deterministic DAO token id (`generate_custom_token_id("Bubble","BUBL")`).
-//! `ZHTP_REWARDS_ASSET_ID` is accepted as a deprecated alias. BUBL is a DAO
-//! `TokenCreation` token — not native SOV, not an `AssetLaunch` sovereign asset.
-//! Without a matching signer the handler installs but every endpoint returns 503.
+//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at an authorized
+//! rewards signer AND that key holds a positive on-chain BUBL balance.
+//! Authorization prefers `SovereignAsset.rewards.spend_delegate_key_id` when
+//! the asset is on-chain; otherwise the DAO `TokenCreation` creator key.
+//! Prefer a dedicated delegate keystore over the creator (800M allocation).
+//! `ZHTP_REWARDS_TOKEN_ID` may override the default deterministic DAO token id
+//! (`generate_custom_token_id("Bubble","BUBL")`). `ZHTP_REWARDS_ASSET_ID` is a
+//! deprecated alias (remove after 2026-09-01). Without a matching signer the
+//! handler installs but every endpoint returns 503.
 //!
 //! ## Storage
 //!
@@ -44,6 +46,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use lib_blockchain::contracts::sovereign_asset::AssetIdSource;
 use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
@@ -60,6 +63,9 @@ use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIV
 
 const BUBL_TOKEN_NAME: &str = "Bubble";
 const BUBL_TOKEN_SYMBOL: &str = "BUBL";
+
+/// Deprecated env alias — use `ZHTP_REWARDS_TOKEN_ID`. Scheduled removal 2026-09-01.
+const DEPRECATED_REWARDS_ASSET_ID_ENV: &str = "ZHTP_REWARDS_ASSET_ID";
 
 /// 18-decimal atom multiplier.
 const ATOM_18: u128 = 1_000_000_000_000_000_000;
@@ -863,9 +869,10 @@ impl RewardsHandler {
     }
 
     async fn handle_balance(&self, did: &str) -> ZhtpResponse {
-        if let Err(msg) = Self::validate_did(did) {
-            return Self::bad(msg);
-        }
+        let key_id = match Self::validate_did(did) {
+            Ok(k) => k,
+            Err(msg) => return Self::bad(msg),
+        };
         let stats = self.load_lifetime(did);
 
         // Spendable BUBL is on-chain under the holder's key_id; legacy clients
@@ -873,10 +880,6 @@ impl RewardsHandler {
         let (spendable_balance, asset_id_hex) = match &self.treasury {
             Some(treasury) => {
                 let bc = self.blockchain.read().await;
-                let key_id = match Self::validate_did(did) {
-                    Ok(k) => k,
-                    Err(msg) => return Self::bad(msg),
-                };
                 let balance = bc
                     .token_balance(&treasury.rewards_asset_id, &key_id)
                     .unwrap_or(0);
@@ -1179,9 +1182,17 @@ fn chain_id_from_env() -> u8 {
 // ── Treasury loader ──────────────────────────────────────────────────
 
 fn rewards_token_id_override() -> Option<String> {
-    std::env::var("ZHTP_REWARDS_TOKEN_ID")
-        .ok()
-        .or_else(|| std::env::var("ZHTP_REWARDS_ASSET_ID").ok())
+    if let Ok(id) = std::env::var("ZHTP_REWARDS_TOKEN_ID") {
+        return Some(id);
+    }
+    if let Ok(id) = std::env::var(DEPRECATED_REWARDS_ASSET_ID_ENV) {
+        warn!(
+            "rewards: {} is deprecated — use ZHTP_REWARDS_TOKEN_ID (removal scheduled 2026-09-01)",
+            DEPRECATED_REWARDS_ASSET_ID_ENV
+        );
+        return Some(id);
+    }
+    None
 }
 
 fn parse_token_id_hex(hex_id: &str) -> Option<[u8; 32]> {
@@ -1205,18 +1216,47 @@ fn resolve_rewards_token_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
         return Some(bubl_dao_id);
     }
 
-    None
+    // Fallback: on-chain sovereign asset with rewards module (AssetLaunch path).
+    blockchain
+        .iter_sovereign_assets()
+        .into_iter()
+        .find(|a| {
+            a.module_flags.has_rewards() && a.symbol.eq_ignore_ascii_case(BUBL_TOKEN_SYMBOL)
+        })
+        .map(|a| a.asset_id)
 }
 
-/// Returns true when `signer_key_id` is the on-chain creator of the DAO token.
+/// On-chain spend authority for the rewards pool: delegate when configured,
+/// otherwise creator (sovereign asset or DAO TokenCreation contract).
+fn rewards_authorized_signer_key_id(
+    blockchain: &Blockchain,
+    token_id: &[u8; 32],
+) -> Option<[u8; 32]> {
+    if let Some(asset) = blockchain.get_sovereign_asset(token_id) {
+        if asset.id_source == AssetIdSource::LaunchTx {
+            if let Some(delegate) = asset
+                .rewards
+                .as_ref()
+                .and_then(|r| r.spend_delegate_key_id)
+            {
+                return Some(delegate);
+            }
+            return Some(asset.creator_key_id);
+        }
+    }
+    blockchain
+        .get_token_contract(token_id)
+        .map(|token| token.creator.key_id)
+}
+
+/// Returns true when `signer_key_id` matches the on-chain rewards spend authority.
 fn rewards_signer_authorized(
     blockchain: &Blockchain,
     token_id: &[u8; 32],
     signer_key_id: &[u8; 32],
 ) -> bool {
-    blockchain
-        .get_token_contract(token_id)
-        .is_some_and(|token| token.creator.key_id == *signer_key_id)
+    rewards_authorized_signer_key_id(blockchain, token_id)
+        .is_some_and(|authorized| authorized == *signer_key_id)
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {

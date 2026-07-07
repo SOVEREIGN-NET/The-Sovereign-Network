@@ -768,8 +768,21 @@ impl Blockchain {
         }
 
         // Backfill embedded contract balances into the authoritative token_balances tree.
+        // Skip rows whose token_id collides with an on-chain SovereignAsset launch:
+        // executor-written asset balances are authoritative for those ids.
         if let Ok(iter) = store.iter_token_contracts() {
             for (token_id, contract) in iter {
+                if store
+                    .get_sovereign_asset(&token_id.0)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|a| {
+                        a.id_source
+                            == crate::contracts::sovereign_asset::AssetIdSource::LaunchTx
+                    })
+                {
+                    continue;
+                }
                 let entries: Vec<([u8; 32], u128)> = contract
                     .balances_iter()
                     .map(|(pk, &bal)| (pk.key_id, bal))

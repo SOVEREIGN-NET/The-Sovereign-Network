@@ -86,8 +86,8 @@ impl Blockchain {
     /// `load_from_store` skips token-tx replay (#2637). When the legacy
     /// `process_token_transactions` path persisted contract metadata without
     /// crediting the balance tree, creator/treasury read 0 despite
-    /// `total_supply > 0`. Idempotent: only repairs tokens with zero sled
-    /// holders by replaying initial allocations from committed TokenCreation txs.
+    /// `total_supply > 0`. Idempotent per address: only credits creator/treasury
+    /// rows that read zero in sled, using on-chain contract creator metadata.
     pub fn repair_missing_token_creation_balances(
         &self,
         store: &dyn crate::storage::BlockchainStore,
@@ -116,9 +116,6 @@ impl Blockchain {
                     continue;
                 }
                 let token_id = TokenId::new(token_id_bytes);
-                if store.count_token_holders(&token_id)? > 0 {
-                    continue;
-                }
                 let Some(contract) = store.get_token_contract(&token_id)? else {
                     continue;
                 };
@@ -127,15 +124,19 @@ impl Blockchain {
                 }
 
                 let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
-                if creator_alloc > 0 {
-                    repairs.push((
-                        token_id,
-                        Address::new(tx.signature.public_key.key_id),
-                        creator_alloc,
-                    ));
-                }
-                if treasury_alloc > 0 {
-                    repairs.push((token_id, Address::new(payload.treasury_recipient), treasury_alloc));
+                let creator_key = contract.creator.key_id;
+                let candidates = [
+                    (creator_key, creator_alloc),
+                    (payload.treasury_recipient, treasury_alloc),
+                ];
+                for (addr_bytes, amount) in candidates {
+                    if amount == 0 {
+                        continue;
+                    }
+                    let addr = Address::new(addr_bytes);
+                    if store.get_token_balance(&token_id, &addr)? == 0 {
+                        repairs.push((token_id, addr, amount));
+                    }
                 }
             }
         }
@@ -814,25 +815,40 @@ impl Blockchain {
                                 crate::storage::Address::new(creator.key_id);
                             let treasury_addr =
                                 crate::storage::Address::new(payload.treasury_recipient);
-                            if let Err(e) = store_ref.set_token_balance(
-                                &token_storage_id,
-                                &creator_addr,
-                                creator_allocation,
-                            ) {
-                                warn!(
-                                    "Failed to persist creator balance after TokenCreation: {}",
-                                    e
-                                );
+                            // Idempotent: only seed sled rows that are still zero.
+                            if creator_allocation > 0
+                                && store_ref
+                                    .get_token_balance(&token_storage_id, &creator_addr)
+                                    .unwrap_or(0)
+                                    == 0
+                            {
+                                if let Err(e) = store_ref.set_token_balance(
+                                    &token_storage_id,
+                                    &creator_addr,
+                                    creator_allocation,
+                                ) {
+                                    warn!(
+                                        "Failed to persist creator balance after TokenCreation: {}",
+                                        e
+                                    );
+                                }
                             }
-                            if let Err(e) = store_ref.set_token_balance(
-                                &token_storage_id,
-                                &treasury_addr,
-                                treasury_allocation,
-                            ) {
-                                warn!(
-                                    "Failed to persist treasury balance after TokenCreation: {}",
-                                    e
-                                );
+                            if treasury_allocation > 0
+                                && store_ref
+                                    .get_token_balance(&token_storage_id, &treasury_addr)
+                                    .unwrap_or(0)
+                                    == 0
+                            {
+                                if let Err(e) = store_ref.set_token_balance(
+                                    &token_storage_id,
+                                    &treasury_addr,
+                                    treasury_allocation,
+                                ) {
+                                    warn!(
+                                        "Failed to persist treasury balance after TokenCreation: {}",
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
