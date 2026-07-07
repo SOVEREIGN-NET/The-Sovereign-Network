@@ -767,20 +767,29 @@ impl Blockchain {
             }
         }
 
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
-            let entries: Vec<([u8; 32], u128)> = sov_contract
-                .balances_iter()
-                .map(|(pk, &bal)| (pk.key_id, bal))
-                .collect();
-            let token_id = crate::storage::TokenId(sov_token_id);
-            match store.backfill_token_balances_from_contract(&token_id, &entries) {
-                Ok(0) => debug!("SOV token_balances tree already up-to-date (no backfill needed)"),
-                Ok(n) => info!(
-                    "💰 Backfilled {} SOV balances into token_balances tree (legacy migration)",
-                    n
-                ),
-                Err(e) => warn!("⚠️ Failed to backfill SOV token_balances: {}", e),
+        // Backfill embedded contract balances into the authoritative token_balances tree.
+        if let Ok(iter) = store.iter_token_contracts() {
+            for (token_id, contract) in iter {
+                let entries: Vec<([u8; 32], u128)> = contract
+                    .balances_iter()
+                    .map(|(pk, &bal)| (pk.key_id, bal))
+                    .collect();
+                if entries.is_empty() {
+                    continue;
+                }
+                match store.backfill_token_balances_from_contract(&token_id, &entries) {
+                    Ok(0) => {}
+                    Ok(n) => info!(
+                        "💰 Backfilled {} balances for token {} into token_balances tree",
+                        n,
+                        hex::encode(&token_id.0[..8])
+                    ),
+                    Err(e) => warn!(
+                        "⚠️ Failed to backfill token_balances for {}: {}",
+                        hex::encode(&token_id.0[..8]),
+                        e
+                    ),
+                }
             }
         }
 
@@ -1008,6 +1017,18 @@ impl Blockchain {
                     e
                 ),
             }
+        }
+
+        match blockchain.repair_missing_token_creation_balances(store.as_ref()) {
+            Ok(0) => {}
+            Ok(n) => info!(
+                "💰 Repaired {} TokenCreation balance entries from chain history",
+                n
+            ),
+            Err(e) => warn!(
+                "⚠️ Failed to repair TokenCreation balances during load_from_store: {}",
+                e
+            ),
         }
 
         // #56: backfill durable validators tree on normal startup (not replay-only).

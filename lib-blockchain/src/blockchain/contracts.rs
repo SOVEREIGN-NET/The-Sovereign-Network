@@ -81,6 +81,71 @@ impl Blockchain {
         call.contract_type == crate::types::ContractType::Token && call.method == "transfer"
     }
 
+    /// Repair TokenCreation allocations missing from the `token_balances` sled tree.
+    ///
+    /// `load_from_store` skips token-tx replay (#2637). When the legacy
+    /// `process_token_transactions` path persisted contract metadata without
+    /// crediting the balance tree, creator/treasury read 0 despite
+    /// `total_supply > 0`. Idempotent: only repairs tokens with zero sled
+    /// holders by replaying initial allocations from committed TokenCreation txs.
+    pub fn repair_missing_token_creation_balances(
+        &self,
+        store: &dyn crate::storage::BlockchainStore,
+    ) -> crate::storage::StorageResult<usize> {
+        use crate::storage::{Address, TokenId};
+        use crate::transaction::token_creation::TokenCreationPayloadV1;
+
+        let mut repairs: Vec<(TokenId, Address, u128)> = Vec::new();
+        let mut repaired_tokens = std::collections::HashSet::new();
+
+        let blocks: Vec<crate::block::Block> = self.iter_blocks().collect();
+        for block in &blocks {
+            for tx in &block.transactions {
+                if tx.transaction_type != TransactionType::TokenCreation {
+                    continue;
+                }
+                let payload = match TokenCreationPayloadV1::decode_memo(&tx.memo) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                let token_id_bytes = crate::contracts::utils::generate_custom_token_id(
+                    &payload.name,
+                    &payload.symbol,
+                );
+                if !repaired_tokens.insert(token_id_bytes) {
+                    continue;
+                }
+                let token_id = TokenId::new(token_id_bytes);
+                if store.count_token_holders(&token_id)? > 0 {
+                    continue;
+                }
+                let Some(contract) = store.get_token_contract(&token_id)? else {
+                    continue;
+                };
+                if contract.total_supply == 0 {
+                    continue;
+                }
+
+                let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+                if creator_alloc > 0 {
+                    repairs.push((
+                        token_id,
+                        Address::new(tx.signature.public_key.key_id),
+                        creator_alloc,
+                    ));
+                }
+                if treasury_alloc > 0 {
+                    repairs.push((token_id, Address::new(payload.treasury_recipient), treasury_alloc));
+                }
+            }
+        }
+
+        if repairs.is_empty() {
+            return Ok(0);
+        }
+        store.force_set_token_balances(&repairs)
+    }
+
     /// Rebuild the PoUW reward mint index from all in-memory blocks.
     ///
     /// Scans every block for `TokenMint` transactions carrying a `pouw:mint:`
@@ -743,6 +808,32 @@ impl Blockchain {
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(&token) {
                             warn!("Failed to persist token contract after creation: {}", e);
+                        } else {
+                            let token_storage_id = crate::storage::TokenId(token_id);
+                            let creator_addr =
+                                crate::storage::Address::new(creator.key_id);
+                            let treasury_addr =
+                                crate::storage::Address::new(payload.treasury_recipient);
+                            if let Err(e) = store_ref.set_token_balance(
+                                &token_storage_id,
+                                &creator_addr,
+                                creator_allocation,
+                            ) {
+                                warn!(
+                                    "Failed to persist creator balance after TokenCreation: {}",
+                                    e
+                                );
+                            }
+                            if let Err(e) = store_ref.set_token_balance(
+                                &token_storage_id,
+                                &treasury_addr,
+                                treasury_allocation,
+                            ) {
+                                warn!(
+                                    "Failed to persist treasury balance after TokenCreation: {}",
+                                    e
+                                );
+                            }
                         }
                     }
                 }
