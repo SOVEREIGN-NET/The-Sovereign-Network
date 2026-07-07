@@ -92,6 +92,18 @@ fn shared_client_endpoint() -> Result<Endpoint> {
     Ok(ep)
 }
 
+/// Runtime that owns the shared Quinn endpoint driver.
+///
+/// All `ZhtpClient` connect / handshake / stream I/O must be driven on
+/// this runtime. Awaiting `Endpoint::connect` on a different tokio
+/// runtime fails on iOS (observed as `Operation not permitted (os error 1)`).
+pub fn client_endpoint_runtime() -> Result<&'static tokio::runtime::Runtime> {
+    let _ = shared_client_endpoint()?;
+    Ok(CLIENT_ENDPOINT_RUNTIME
+        .get()
+        .expect("shared_client_endpoint initializes CLIENT_ENDPOINT_RUNTIME"))
+}
+
 use lib_identity::ZhtpIdentity;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
@@ -111,12 +123,15 @@ pub struct ZhtpClientConfig {
     /// Allow bootstrap mode for development/testing
     /// When true, accepts any TLS certificate (INSECURE - dev only)
     pub allow_bootstrap: bool,
+    /// Wire ALPN selector: 0 = `zhtp-public/1`, 1 = `zhtp-uhp/2` (default).
+    pub session_alpn: u8,
 }
 
 impl Default for ZhtpClientConfig {
     fn default() -> Self {
         Self {
             allow_bootstrap: false,
+            session_alpn: 1,
         }
     }
 }
@@ -333,6 +348,7 @@ impl ZhtpClient {
         warn!("ZHTP client in BOOTSTRAP MODE - NO TLS VERIFICATION");
         let config = ZhtpClientConfig {
             allow_bootstrap: true,
+            ..Default::default()
         };
         Self::new_bootstrap_with_config(identity, config).await
     }
@@ -374,7 +390,11 @@ impl ZhtpClient {
     }
 
     /// Internal: establish an authenticated connection to a specific address.
-    async fn connect_internal(&mut self, addr: &str) -> Result<AuthenticatedConnection> {
+    async fn connect_internal(
+        &mut self,
+        addr: &str,
+        server_name: &str,
+    ) -> Result<AuthenticatedConnection> {
         // Accept both "ip:port" and "hostname:port". `SocketAddr::parse` only
         // handles literal IPs, so a hostname like
         // "zhtp-gateway.thesovereignnetwork.org:9334" used to fail here and
@@ -425,10 +445,10 @@ impl ZhtpClient {
         // ZhtpClients, so we mustn't mutate its default config (that would
         // race against concurrent connects from other ZhtpClient instances).
         // `connect_with` applies the config to just this connection.
-        let client_config = Self::configure_client(verifier)?;
+        let client_config = Self::configure_client(verifier, self.config.session_alpn)?;
         let connection = self
             .endpoint
-            .connect_with(client_config, socket_addr, "zhtp-node")?
+            .connect_with(client_config, socket_addr, server_name)?
             .await
             .context("QUIC connection failed")?;
 
@@ -465,9 +485,13 @@ impl ZhtpClient {
         })
     }
 
-    /// Connect to a ZHTP node (single-endpoint mode)
-    pub async fn connect(&mut self, addr: &str) -> Result<()> {
-        info!("Connecting to ZHTP node at {}", addr);
+    /// Connect to a ZHTP node (single-endpoint mode).
+    /// `server_name` is the TLS SNI hostname (e.g. `g3.thesovereignnetwork.org`).
+    pub async fn connect_with_sni(&mut self, addr: &str, server_name: &str) -> Result<()> {
+        info!(
+            "Connecting to ZHTP node at {} (sni={})",
+            addr, server_name
+        );
 
         if self.trust_config.bootstrap_mode {
             warn!("BOOTSTRAP MODE - TLS certificates not verified");
@@ -480,7 +504,7 @@ impl ZhtpClient {
         )?);
         self.trust_verifier = Some(Arc::clone(&verifier));
 
-        let conn = self.connect_internal(addr).await?;
+        let conn = self.connect_internal(addr, server_name).await?;
         info!(
             peer_did = %conn.peer_did,
             session_id = ?hex::encode(&conn.session_id[..8]),
@@ -488,6 +512,11 @@ impl ZhtpClient {
         );
         self.connection = Some(conn);
         Ok(())
+    }
+
+    /// Connect with the legacy default SNI (`zhtp-node`).
+    pub async fn connect(&mut self, addr: &str) -> Result<()> {
+        self.connect_with_sni(addr, "zhtp-node").await
     }
 
     // ==================== PEER POOL (#2196) ====================
@@ -611,7 +640,7 @@ impl ZhtpClient {
         let mut connected = 0;
         for (addr, score) in candidates.into_iter().take(max_peers) {
             info!(addr = %addr, score = score, "Attempting peer-pool connection");
-            match self.connect_internal(&addr.to_string()).await {
+            match self.connect_internal(&addr.to_string(), "zhtp-node").await {
                 Ok(conn) => {
                     info!(addr = %addr, peer_did = %conn.peer_did, "Peer-pool connection established");
                     self.pool_addrs.push(addr);
@@ -739,7 +768,10 @@ impl ZhtpClient {
         Ok(wire_response.response)
     }
 
-    fn configure_client(verifier: Arc<ZhtpTrustVerifier>) -> Result<ClientConfig> {
+    fn configure_client(
+        verifier: Arc<ZhtpTrustVerifier>,
+        session_alpn: u8,
+    ) -> Result<ClientConfig> {
         // Install crypto provider
         let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -748,9 +780,13 @@ impl ZhtpClient {
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
 
-        // Configure ALPN for control plane operations (UHP handshake required)
-        // This tells the server to expect UHP handshake before API requests
-        crypto.alpn_protocols = crate::constants::client_control_plane_alpns();
+        // ALPN selects the server's initial protocol flow. Mobile and
+        // current gateways negotiate `zhtp-uhp/2`; legacy CLI used v1.
+        crypto.alpn_protocols = if session_alpn == 0 {
+            crate::constants::client_public_alpns()
+        } else {
+            crate::constants::client_control_plane_v2_alpns()
+        };
 
         let mut config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,

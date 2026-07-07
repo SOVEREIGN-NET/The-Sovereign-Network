@@ -29,4 +29,4 @@
 mod zhtp_client;
 
 #[cfg(feature = "quic")]
-pub use zhtp_client::{ZhtpClient, ZhtpClientConfig};
+pub use zhtp_client::{client_endpoint_runtime, ZhtpClient, ZhtpClientConfig};
