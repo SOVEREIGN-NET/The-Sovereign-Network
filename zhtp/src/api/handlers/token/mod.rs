@@ -184,7 +184,11 @@ impl TokenHandler {
         Self { blockchain }
     }
 
-    /// POST /api/v1/token/create - Deprecated; use AssetLaunch after testnet reset (SA-8).
+    /// POST /api/v1/token/create — submit a signed founding `TokenCreation` tx.
+    ///
+    /// BUBL and other GENESIS-6 DAO tokens deploy via `TokenCreation` (see
+    /// `tools/seed_founding_dao`). `AssetLaunch` is the SA-3 sovereign-asset path
+    /// for *other* tickers — not BUBL on the current testnet.
     async fn handle_create_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let create_req: CreateTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -222,7 +226,7 @@ impl TokenHandler {
 
         if tx.transaction_type != TransactionType::TokenCreation {
             let reason = if tx.transaction_type == TransactionType::ContractExecution {
-                "Deprecated token create transaction type. Use AssetLaunch (SA-3) or TokenCreation"
+                "Deprecated token create transaction type. Use TokenCreation for DAO tokens (BUBL) or AssetLaunch for SA-3 sovereign assets"
                     .to_string()
             } else {
                 format!(
@@ -233,10 +237,6 @@ impl TokenHandler {
             tracing::error!("[token/create] invalid tx type: {}", reason);
             return Ok(create_error_response(ZhtpStatus::BadRequest, reason));
         }
-
-        tracing::warn!(
-            "[token/create] TokenCreation is deprecated — migrate to AssetLaunch before testnet reset"
-        );
 
         let payload = match TokenCreationPayloadV1::decode_memo(&tx.memo) {
             Ok(p) => p,
