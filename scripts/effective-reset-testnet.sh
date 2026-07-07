@@ -19,12 +19,12 @@
 #   ./scripts/effective-reset-testnet.sh [--dry-run]
 #   ./scripts/effective-reset-testnet.sh --skip-restart   # wipe only, no start
 #
-# After reset: redeploy binary, register identities, seed BUBL via AssetLaunch
-#   cargo run -p tools --bin seed_asset_launch -- \
+# After reset: redeploy binary, register identities, seed BUBL via TokenCreation (GENESIS-6)
+#   cargo run -p tools --bin seed_founding_dao -- \
 #     --keystore-dir /opt/zhtp/keystores/bubl-creator \
-#     --token bubl --supply-atoms <atoms> \
-#     --rewards-delegate-dir /opt/zhtp/keystores/bubl-rewards-hot
-# Set ZHTP_REWARDS_ASSET_ID to the printed asset_id on validators.
+#     --token bubl --supply-atoms 1000000000000000000000000000 --chain-id 2
+# Broadcast signed_tx, then set ZHTP_REWARDS_TREASURY_KEYSTORE to bubl-creator.
+# ZHTP_REWARDS_TOKEN_ID is optional (defaults to deterministic BUBL token_id).
 
 set -euo pipefail
 

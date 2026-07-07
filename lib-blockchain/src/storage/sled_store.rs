@@ -1575,9 +1575,10 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(c)?;
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_TOKEN_CONTRACTS).insert(key.as_ref(), value);
-        }
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
+        batch.tree(TREE_TOKEN_CONTRACTS).insert(key.as_ref(), value);
 
         Ok(())
     }
@@ -2083,13 +2084,16 @@ impl BlockchainStore for SledStore {
         let key = keys::token_balance_key(t, a);
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        if let Some(ref mut batch) = *batch_guard {
-            if v == 0 {
-                // Optionally delete zero balances to save space
-                batch.tree(TREE_TOKEN_BALANCES).remove(key.as_ref());
-            } else {
-                batch.tree(TREE_TOKEN_BALANCES).insert(key.as_ref(), &v.to_be_bytes());
-            }
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
+        if v == 0 {
+            // Optionally delete zero balances to save space
+            batch.tree(TREE_TOKEN_BALANCES).remove(key.as_ref());
+        } else {
+            batch
+                .tree(TREE_TOKEN_BALANCES)
+                .insert(key.as_ref(), &v.to_be_bytes());
         }
 
         Ok(())

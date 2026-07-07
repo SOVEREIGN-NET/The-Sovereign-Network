@@ -208,6 +208,185 @@ fn token_balance_reads_sled_when_store_attached() {
 }
 
 #[test]
+fn repair_missing_token_creation_balances_restores_zeroed_tree() {
+    use crate::contracts::TokenContract;
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::transaction::token_creation::TokenCreationPayloadV1;
+    use crate::transaction::Transaction;
+    use crate::types::TransactionType;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("repair_tc_store")).unwrap());
+
+    let creator = PublicKey::new([0x51u8; 2592]);
+    let treasury = [0xAAu8; 32];
+    let payload = TokenCreationPayloadV1 {
+        name: "Bubbl".to_string(),
+        symbol: "BUBL".to_string(),
+        initial_supply: 1_000_000,
+        decimals: 8,
+        treasury_allocation_bps: 2_000,
+        treasury_recipient: treasury,
+    };
+    let tx = Transaction {
+        version: 2,
+        chain_id: 2,
+        transaction_type: TransactionType::TokenCreation,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: Signature {
+            signature: vec![0u8; 64],
+            public_key: creator.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 1,
+        },
+        memo: payload.encode_memo().unwrap(),
+        payload: crate::transaction::TransactionPayload::None,
+    };
+    let token_id = crate::contracts::utils::generate_custom_token_id("Bubbl", "BUBL");
+
+    // Simulate the bug: legacy path wrote contract metadata only.
+    let mut token = TokenContract::new_custom("Bubbl".to_string(), "BUBL".to_string(), 0, creator.clone());
+    token.max_supply = payload.initial_supply;
+    token.total_supply = payload.initial_supply;
+    store.begin_block(0).unwrap();
+    store
+        .put_token_contract(&token)
+        .expect("contract metadata write");
+    store.commit_block().unwrap();
+    assert_eq!(store.count_token_holders(&TokenId::new(token_id)).unwrap(), 0);
+
+    let genesis = crate::block::create_genesis_block();
+    let block1 = crate::block::Block {
+        header: crate::block::BlockHeader {
+            version: 1,
+            previous_hash: genesis.header.block_hash.into(),
+            data_helix_root: crate::types::Hash::default().into(),
+            timestamp: genesis.header.timestamp + 1,
+            height: 1,
+            verification_helix_root: [0u8; 32],
+            state_root: crate::types::Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: crate::types::Hash::default(),
+        },
+        transactions: vec![tx],
+    };
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.blocks.clear();
+    bc.set_store(store.clone());
+    bc.blocks.push(genesis);
+    bc.blocks.push(block1);
+    bc.height = 1;
+
+    let repaired = bc
+        .repair_missing_token_creation_balances(store.as_ref())
+        .expect("repair should succeed");
+    assert_eq!(repaired, 2, "creator + treasury balances should be repaired");
+
+    let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+    assert_eq!(
+        bc.token_balance(&token_id, &creator.key_id).unwrap(),
+        creator_alloc
+    );
+    assert_eq!(
+        bc.token_balance(&token_id, &treasury).unwrap(),
+        treasury_alloc
+    );
+}
+
+#[test]
+fn repair_missing_token_creation_balances_fills_partial_tree() {
+    use crate::contracts::TokenContract;
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::transaction::token_creation::TokenCreationPayloadV1;
+    use crate::transaction::Transaction;
+    use crate::types::TransactionType;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("repair_partial_store")).unwrap());
+
+    let creator = PublicKey::new([0x52u8; 2592]);
+    let treasury = [0xBBu8; 32];
+    let payload = TokenCreationPayloadV1 {
+        name: "Bubbl".to_string(),
+        symbol: "BUBL".to_string(),
+        initial_supply: 1_000_000,
+        decimals: 8,
+        treasury_allocation_bps: 2_000,
+        treasury_recipient: treasury,
+    };
+    let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+    let tx = Transaction {
+        version: 2,
+        chain_id: 2,
+        transaction_type: TransactionType::TokenCreation,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: Signature {
+            signature: vec![0u8; 64],
+            public_key: creator.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 1,
+        },
+        memo: payload.encode_memo().unwrap(),
+        payload: crate::transaction::TransactionPayload::None,
+    };
+    let token_id = crate::contracts::utils::generate_custom_token_id("Bubbl", "BUBL");
+
+    let mut token = TokenContract::new_custom("Bubbl".to_string(), "BUBL".to_string(), 0, creator.clone());
+    token.max_supply = payload.initial_supply;
+    token.total_supply = payload.initial_supply;
+    store.begin_block(0).unwrap();
+    store.put_token_contract(&token).unwrap();
+    store
+        .set_token_balance(
+            &TokenId::new(token_id),
+            &Address::new(creator.key_id),
+            creator_alloc,
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let genesis = crate::block::create_genesis_block();
+    let block1 = crate::block::Block {
+        header: crate::block::BlockHeader {
+            version: 1,
+            previous_hash: genesis.header.block_hash.into(),
+            data_helix_root: crate::types::Hash::default().into(),
+            timestamp: genesis.header.timestamp + 1,
+            height: 1,
+            verification_helix_root: [0u8; 32],
+            state_root: crate::types::Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: crate::types::Hash::default(),
+        },
+        transactions: vec![tx],
+    };
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.blocks.clear();
+    bc.set_store(store.clone());
+    bc.blocks.push(genesis);
+    bc.blocks.push(block1);
+    bc.height = 1;
+
+    let repaired = bc
+        .repair_missing_token_creation_balances(store.as_ref())
+        .expect("repair should succeed");
+    assert_eq!(
+        repaired, 1,
+        "only treasury row should be repaired when creator already funded"
+    );
+    assert_eq!(
+        bc.token_balance(&token_id, &treasury).unwrap(),
+        treasury_alloc
+    );
+}
+
+#[test]
 fn count_token_holders_reads_sled_when_store_attached() {
     let temp = tempfile::tempdir().unwrap();
     let store = Arc::new(SledStore::open(&temp.path().join("facade_holders_store")).unwrap());

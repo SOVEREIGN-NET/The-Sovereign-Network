@@ -1,15 +1,19 @@
 //! Canonical balance-key resolution for custom (non-SOV) tokens.
 //!
 //! BUBL and other custom tokens store balances under the holder's identity
-//! `key_id` — `blake3(dilithium_pk)`, the same 32 bytes in `did:zhtp:{hex}`.
-//! Rewards mint to that key. SOV remains wallet_id-keyed elsewhere.
+//! `key_id` — `blake3(dilithium_pk || kyber_pk)`, the same 32 bytes in
+//! `did:zhtp:{hex}`. Rewards mint to that key. SOV remains wallet_id-keyed elsewhere.
 
 use lib_blockchain::{Blockchain, Hash};
 use lib_crypto::types::keys::PublicKey;
 
+fn is_zhtp_did(address: &str) -> bool {
+    address.len() >= 9 && address[..9].eq_ignore_ascii_case("did:zhtp:")
+}
+
 fn strip_address_prefix(address: &str) -> &str {
-    if let Some(rest) = address.strip_prefix("did:zhtp:") {
-        rest
+    if is_zhtp_did(address) {
+        &address[9..]
     } else if let Some(rest) = address.strip_prefix("0x") {
         rest
     } else {
@@ -37,6 +41,15 @@ pub fn resolve_custom_token_balance_key(
     let bytes = hex::decode(hex_part).map_err(|_| anyhow::anyhow!("Invalid address hex"))?;
 
     if bytes.len() == 32 {
+        // `did:zhtp:{key_id}` is already the sled balance key for custom tokens.
+        // Do not remap through wallet projection — that derives blake3(dilithium)
+        // only and diverges from TokenCreation/transfer keys when kyber is present.
+        if is_zhtp_did(address) {
+            let mut key_id = [0u8; 32];
+            key_id.copy_from_slice(&bytes);
+            return Ok(key_id);
+        }
+
         let wallet_id_hex = hex::encode(&bytes);
         if let Some(wallet) = blockchain.wallet_transaction_data(&wallet_id_hex) {
             return dilithium_key_id(&wallet.public_key);
@@ -86,6 +99,18 @@ mod tests {
             capabilities: 0,
             initial_balance: 0,
         }
+    }
+
+    #[test]
+    fn did_zhtp_prefix_is_case_insensitive() {
+        let key_id = [0x33u8; 32];
+        let lower = format!("did:zhtp:{}", hex::encode(key_id));
+        let mixed = format!("did:ZHTP:{}", hex::encode(key_id));
+        let bc = lib_blockchain::Blockchain::new().expect("blockchain");
+        let via_lower = resolve_custom_token_balance_key(&bc, &lower).expect("lower");
+        let via_mixed = resolve_custom_token_balance_key(&bc, &mixed).expect("mixed");
+        assert_eq!(via_lower, key_id);
+        assert_eq!(via_mixed, key_id);
     }
 
     #[test]

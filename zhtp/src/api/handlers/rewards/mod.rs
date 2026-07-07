@@ -6,11 +6,14 @@
 //!
 //! ## Configuration
 //!
-//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the on-chain
-//! rewards spend delegate keystore AND the chain exposes a Sovereign Asset
-//! with the rewards module enabled (`ZHTP_REWARDS_ASSET_ID` or auto-discovery
-//! of the BUBL rewards asset). Without a matching delegate the handler
-//! installs but every endpoint returns 503.
+//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the BUBL DAO
+//! `TokenCreation` creator keystore AND that key holds a positive on-chain
+//! BUBL balance. BUBL is not native SOV and not an `AssetLaunch` sovereign
+//! asset — only the deterministic DAO contract
+//! (`generate_custom_token_id("Bubble","BUBL")`). `ZHTP_REWARDS_TOKEN_ID` may
+//! override that id. `ZHTP_REWARDS_ASSET_ID` is a deprecated alias (remove
+//! after 2026-09-01). Without a matching creator signer the handler installs
+//! but every endpoint returns 503.
 //!
 //! ## Storage
 //!
@@ -42,6 +45,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
@@ -55,7 +59,11 @@ use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIV
 
 // ── Constants ────────────────────────────────────────────────────────
 
+const BUBL_TOKEN_NAME: &str = "Bubble";
 const BUBL_TOKEN_SYMBOL: &str = "BUBL";
+
+/// Deprecated env alias — use `ZHTP_REWARDS_TOKEN_ID`. Scheduled removal 2026-09-01.
+const DEPRECATED_REWARDS_ASSET_ID_ENV: &str = "ZHTP_REWARDS_ASSET_ID";
 
 /// 18-decimal atom multiplier.
 const ATOM_18: u128 = 1_000_000_000_000_000_000;
@@ -859,22 +867,34 @@ impl RewardsHandler {
     }
 
     async fn handle_balance(&self, did: &str) -> ZhtpResponse {
-        // READS don't need the treasury keystore — only mints/claims do.
-        // The 503 here was wrong: it told every non-treasury node "rewards
-        // endpoint not configured", even though local sled has whatever
-        // counters this node has accumulated. Returning the local state
-        // (zeros for nodes that haven't processed claims) is at least
-        // an honest answer; the proper architectural fix is to read the
-        // canonical BUBL balance from the on-chain token contract and
-        // move reward-event state on-chain too.
-        if let Err(msg) = Self::validate_did(did) {
-            return Self::bad(msg);
-        }
+        let key_id = match Self::validate_did(did) {
+            Ok(k) => k,
+            Err(msg) => return Self::bad(msg),
+        };
         let stats = self.load_lifetime(did);
-        Self::ok_json(json!({
+
+        // Spendable BUBL is on-chain under the holder's key_id; legacy clients
+        // often read rewards/balance expecting wallet funds, not sled totals.
+        let (spendable_balance, asset_id_hex) = match &self.treasury {
+            Some(treasury) => {
+                let bc = self.blockchain.read().await;
+                let balance = bc
+                    .token_balance(&treasury.rewards_asset_id, &key_id)
+                    .unwrap_or(0);
+                (
+                    balance,
+                    Some(hex::encode(treasury.rewards_asset_id)),
+                )
+            }
+            None => (0, None),
+        };
+
+        let mut body = json!({
             "did": did,
             "total_earned": stats.total_earned.to_string(),
             "total_earned_display": (stats.total_earned / ATOM_18).to_string(),
+            "spendable_balance": spendable_balance.to_string(),
+            "spendable_balance_display": (spendable_balance / ATOM_18).to_string(),
             "counts": {
                 "welcome_claimed": stats.welcome_claimed,
                 "checkin_count": stats.checkin_count,
@@ -883,7 +903,13 @@ impl RewardsHandler {
                 "current_streak": stats.current_streak,
                 "longest_streak": stats.longest_streak,
             },
-        }))
+        });
+        if let Some(asset_id) = asset_id_hex {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("asset_id".into(), json!(asset_id));
+            }
+        }
+        Self::ok_json(body)
     }
 
     async fn handle_status(&self, did: &str) -> ZhtpResponse {
@@ -1153,21 +1179,53 @@ fn chain_id_from_env() -> u8 {
 
 // ── Treasury loader ──────────────────────────────────────────────────
 
-fn resolve_rewards_asset_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
-    if let Ok(hex_id) = std::env::var("ZHTP_REWARDS_ASSET_ID") {
-        let bytes = hex::decode(hex_id).ok()?;
-        if bytes.len() == 32 {
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&bytes);
-            return Some(out);
-        }
+fn rewards_token_id_override() -> Option<String> {
+    if let Ok(id) = std::env::var("ZHTP_REWARDS_TOKEN_ID") {
+        return Some(id);
+    }
+    if let Ok(id) = std::env::var(DEPRECATED_REWARDS_ASSET_ID_ENV) {
+        warn!(
+            "rewards: {} is deprecated — use ZHTP_REWARDS_TOKEN_ID (removal scheduled 2026-09-01)",
+            DEPRECATED_REWARDS_ASSET_ID_ENV
+        );
+        return Some(id);
+    }
+    None
+}
+
+fn parse_token_id_hex(hex_id: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(hex_id).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
+fn resolve_rewards_token_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
+    if let Some(hex_id) = rewards_token_id_override() {
+        return parse_token_id_hex(&hex_id);
     }
 
+    // Canonical BUBL: GENESIS-6 DAO `TokenCreation` (deterministic token_id).
+    let bubl_dao_id = generate_custom_token_id(BUBL_TOKEN_NAME, BUBL_TOKEN_SYMBOL);
+    if blockchain.get_token_contract(&bubl_dao_id).is_some() {
+        return Some(bubl_dao_id);
+    }
+
+    None
+}
+
+/// Returns true when `signer_key_id` is the on-chain creator of the DAO token.
+fn rewards_signer_authorized(
+    blockchain: &Blockchain,
+    token_id: &[u8; 32],
+    signer_key_id: &[u8; 32],
+) -> bool {
     blockchain
-        .iter_sovereign_assets()
-        .into_iter()
-        .find(|a| a.module_flags.has_rewards() && a.symbol.eq_ignore_ascii_case(BUBL_TOKEN_SYMBOL))
-        .map(|a| a.asset_id)
+        .get_token_contract(token_id)
+        .is_some_and(|token| token.creator.key_id == *signer_key_id)
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
@@ -1192,19 +1250,14 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
             return None;
         }
     };
-    let rewards_asset_id = resolve_rewards_asset_id(blockchain)?;
-    let asset = blockchain.get_sovereign_asset(&rewards_asset_id)?;
-    let delegate = asset
-        .rewards
-        .as_ref()
-        .and_then(|r| r.spend_delegate_key_id)?;
+    let rewards_asset_id = resolve_rewards_token_id(blockchain)?;
     let signer_key_id = keypair.public_key.key_id;
 
-    if delegate != signer_key_id {
+    if !rewards_signer_authorized(blockchain, &rewards_asset_id, &signer_key_id) {
         warn!(
-            "rewards: keystore key_id {} does not match on-chain spend_delegate {}; endpoint disabled",
+            "rewards: keystore key_id {} is not authorized to spend token {}; endpoint disabled",
             hex::encode(&signer_key_id[..8]),
-            hex::encode(&delegate[..8]),
+            hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
@@ -1214,14 +1267,14 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
         .unwrap_or(0);
     if balance == 0 {
         warn!(
-            "rewards: delegate keystore at {} holds 0 balance for asset {}; endpoint disabled",
+            "rewards: signer keystore at {} holds 0 balance for token {}; endpoint disabled",
             dir,
             hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
     info!(
-        "rewards: delegate loaded — asset_id={} key_id={} balance={}",
+        "rewards: BUBL signer loaded — token_id={} key_id={} balance={}",
         hex::encode(&rewards_asset_id[..8]),
         hex::encode(&signer_key_id[..8]),
         balance,
