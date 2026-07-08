@@ -103,6 +103,9 @@ pub use token_tx::{
     // Domain-specific (new JSON-based API)
     build_domain_register_request,
     build_domain_register_request_with_fee_payment,
+    build_domain_register_request_with_fee_payment_and_metadata,
+    fee_tx_hash_from_hex,
+    sign_domain_registration_system_tx,
     // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx,
     build_domain_transfer_request,
@@ -1852,6 +1855,8 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
     domain: *const std::ffi::c_char,
     content_mappings_json: *const std::ffi::c_char,
     fee_payment_tx_hex: *const std::ffi::c_char,
+    metadata_json: *const std::ffi::c_char,
+    chain_id: u8,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || domain.is_null() || fee_payment_tx_hex.is_null() {
         return std::ptr::null_mut();
@@ -1887,11 +1892,33 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
         }
     };
 
-    match token_tx::build_domain_register_request_with_fee_payment(
+    let metadata_opt = if metadata_json.is_null() {
+        None
+    } else {
+        let raw = unsafe {
+            match std::ffi::CStr::from_ptr(metadata_json).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+        match serde_json::from_str::<serde_json::Value>(raw) {
+            Ok(v) => Some(v),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let effective_chain_id = if chain_id == 0 {
+        token_tx::DEFAULT_DOMAIN_CHAIN_ID
+    } else {
+        chain_id
+    };
+
+    match token_tx::build_domain_register_request_with_fee_payment_and_metadata(
         identity,
         domain_str,
         content_mappings_opt,
         Some(fee_tx_str),
+        metadata_opt,
+        effective_chain_id,
     ) {
         Ok(json) => match std::ffi::CString::new(json) {
             Ok(s) => s.into_raw(),
