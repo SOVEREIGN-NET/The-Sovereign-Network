@@ -989,6 +989,7 @@ fn spawn_remote_chain_probe_task(
             temp_identity,
             ZhtpClientConfig {
                 allow_bootstrap: true,
+                ..Default::default()
             },
         )
         .await

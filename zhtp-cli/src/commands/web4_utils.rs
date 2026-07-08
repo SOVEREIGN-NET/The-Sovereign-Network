@@ -183,6 +183,7 @@ pub async fn connect_client(
 ) -> CliResult<ZhtpClient> {
     let config = ZhtpClientConfig {
         allow_bootstrap: trust_config.bootstrap_mode,
+        ..Default::default()
     };
 
     let mut client = ZhtpClient::new_with_config(identity, trust_config, config)
@@ -217,6 +218,7 @@ pub async fn connect_default(server: &str) -> CliResult<ZhtpClient> {
     let trust_config = TrustConfig::bootstrap();
     let config = ZhtpClientConfig {
         allow_bootstrap: true,
+        ..Default::default()
     };
 
     let mut client = ZhtpClient::new_with_config(loaded.identity, trust_config, config)

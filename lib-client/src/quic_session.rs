@@ -4,8 +4,9 @@
 //! `lib_network::client::ZhtpClient` so the FFI inherits the UHP handshake,
 //! auth context, and wire framing without re-implementing transport.
 //!
-//! Threading: each handle owns a dedicated Tokio current-thread runtime on a
-//! worker thread. FFI callers may call from any thread; commands route through
+//! Threading: each handle owns a worker thread that drives connect, handshake,
+//! RPC, and inbound work on the shared `CLIENT_ENDPOINT_RUNTIME` from
+//! lib-network. FFI callers may call from any thread; commands route through
 //! a tokio mpsc queue.
 
 #![cfg(not(target_arch = "wasm32"))]
@@ -74,15 +75,11 @@ enum InboundEvent {
     Error(String),
 }
 
-/// Spawn the per-session worker thread. The thread builds its own
-/// tokio runtime, then **does the QUIC connect + UHP handshake on
-/// that runtime** before signalling readiness. This is load-bearing:
-/// Quinn's connection driver is tied to the runtime that called
-/// `Endpoint::connect`, so the connect and all subsequent RPCs MUST
-/// share a runtime. Previously the connect happened on a temporary
-/// runtime in `zhtp_quic_session_open` that was dropped before the
-/// worker started — that left the connection's I/O driver dead and
-/// every subsequent `open_bi()` returned `"closed"`.
+/// Spawn the per-session worker thread. The thread drives the QUIC connect,
+/// UHP handshake, RPC loop, and inbound streams on the shared
+/// `CLIENT_ENDPOINT_RUNTIME` before signalling readiness. Quinn ties the
+/// endpoint driver to the runtime that created it; a per-session
+/// current-thread runtime caused iOS `EPERM` on `Endpoint::connect`.
 fn spawn_session_worker(
     addr: String,
     server_name: String,
@@ -325,7 +322,8 @@ fn to_zhtp_identity(id: &Identity) -> Result<ZhtpIdentity> {
 // =============================================================================
 
 /// Open a persistent QUIC session.
-/// `alpn`: 0 = zhtp-public/1, 1 = zhtp-uhp/2 (authenticated).
+/// `alpn`: must be `1` (`zhtp-uhp/2`, authenticated UHP). Public ALPN (`0`)
+/// is not supported here — gateways treat `zhtp-public/1` as no-UHP read-only.
 /// Returns null on failure.
 #[no_mangle]
 pub extern "C" fn zhtp_quic_session_open(
@@ -339,7 +337,11 @@ pub extern "C" fn zhtp_quic_session_open(
     if host.is_null() {
         return std::ptr::null_mut();
     }
-    if alpn == 1 && identity.is_null() {
+    // Session path always performs UHP v2 after connect; public ALPN is rejected.
+    if alpn != 1 {
+        return std::ptr::null_mut();
+    }
+    if identity.is_null() {
         return std::ptr::null_mut();
     }
 
@@ -358,14 +360,7 @@ pub extern "C" fn zhtp_quic_session_open(
         }
     };
 
-    let id = if identity.is_null() {
-        match crate::identity::generate_identity("anon-device".to_string()) {
-            Ok(id) => id,
-            Err(_) => return std::ptr::null_mut(),
-        }
-    } else {
-        unsafe { (*identity).inner.clone() }
-    };
+    let id = unsafe { (*identity).inner.clone() };
 
     let zhtp_identity = match to_zhtp_identity(&id) {
         Ok(z) => z,

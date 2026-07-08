@@ -60,15 +60,13 @@ fn shared_client_endpoint() -> Result<Endpoint> {
         return Ok(ep.clone());
     }
 
-    // Build (or get) the dedicated runtime that will own the endpoint's
-    // I/O driver task. Single worker thread is plenty — the driver is the
-    // only work that runs here; per-session client/handshake/RPC tasks
-    // still run on their own per-session runtimes.
+    // Build (or get) the dedicated runtime that owns the endpoint driver and
+    // also drives persistent-session connect/handshake/RPC/inbound work.
     let runtime = match CLIENT_ENDPOINT_RUNTIME.get() {
         Some(rt) => rt,
         None => {
             let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
+                .worker_threads(4)
                 .enable_all()
                 .thread_name("zhtp-client-endpoint")
                 .build()
@@ -202,6 +200,12 @@ impl ZhtpClient {
         trust_config: TrustConfig,
         config: ZhtpClientConfig,
     ) -> Result<Self> {
+        if config.session_alpn != 1 {
+            return Err(anyhow!(
+                "ZhtpClient requires session_alpn=1 (zhtp-uhp/2); public ALPN (0) performs no UHP handshake and is not supported"
+            ));
+        }
+
         // Install rustls crypto provider
         let _ = rustls::crypto::ring::default_provider().install_default();
 

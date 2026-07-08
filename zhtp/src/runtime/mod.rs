@@ -218,6 +218,7 @@ async fn try_initial_sync_from_peer(
             temp_identity.clone(),
             ZhtpClientConfig {
                 allow_bootstrap: true,
+                ..Default::default()
             },
         )
         .await
@@ -1776,6 +1777,7 @@ impl RuntimeOrchestrator {
 
                     let client_config = ZhtpClientConfig {
                         allow_bootstrap: true,
+                        ..Default::default()
                     };
                     match ZhtpClient::new_with_config(
                         node_identity,
@@ -3541,7 +3543,10 @@ impl RuntimeOrchestrator {
                                     let wallet_guard2 = self.user_wallet.read().await;
                                     if let Some(w) = wallet_guard2.as_ref() {
                                         let trust = lib_network::web4::trust::TrustConfig::bootstrap();
-                                        let cfg = lib_network::client::ZhtpClientConfig { allow_bootstrap: true };
+                                        let cfg = lib_network::client::ZhtpClientConfig {
+                                            allow_bootstrap: true,
+                                            ..Default::default()
+                                        };
                                         match lib_network::client::ZhtpClient::new_with_config(
                                             w.node_identity.clone(), trust, cfg
                                         ).await {

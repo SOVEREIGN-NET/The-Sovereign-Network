@@ -199,6 +199,7 @@ use lib_identity::ZhtpIdentity;
 // Configure ZHTP client with bootstrap mode (development only)
 let config = ZhtpClientConfig {
     allow_bootstrap: true,  // Accept any TLS certificate (INSECURE - dev only)
+    ..Default::default()    // session_alpn: 1 (zhtp-uhp/2)
 };
 let mut client = ZhtpClient::new_bootstrap_with_config(identity, config).await?;
 client.connect("127.0.0.1:443").await?;
