@@ -1,11 +1,11 @@
-//! IPC client — connects to the blockchain engine via Unix domain socket.
+//! IPC client — connects to the blockchain engine via Unix domain socket
+//! (Unix) or TCP loopback (Windows).
 //!
 //! Provides owned-type query methods equivalent to `BlockchainQuery`.
 //! Can be used as a drop-in replacement for `Arc<RwLock<Blockchain>>` reads.
 
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tracing::warn;
 
@@ -18,12 +18,23 @@ use crate::transaction::{
 use crate::types::Hash;
 use super::protocol::*;
 
+// ── Platform-specific IPC types ──────────────────────────────────────
+#[cfg(unix)]
+use tokio::net::UnixStream;
+#[cfg(unix)]
+type IpcStream = UnixStream;
+
+#[cfg(windows)]
+use tokio::net::TcpStream;
+#[cfg(windows)]
+type IpcStream = TcpStream;
+
 /// IPC client that connects to the blockchain engine.
 ///
 /// Thread-safe: wraps the stream in a Mutex so multiple tasks can share it.
 /// For higher throughput, consider a connection pool.
 pub struct IpcClient {
-    stream: Mutex<Option<UnixStream>>,
+    stream: Mutex<Option<IpcStream>>,
     socket_path: PathBuf,
 }
 
@@ -37,8 +48,25 @@ impl IpcClient {
     }
 
     /// Connect to the blockchain engine. Reconnects if already connected.
+    ///
+    /// On Unix: connects to the Unix domain socket at `socket_path`.
+    /// On Windows: reads the TCP port from `socket_path` and connects to
+    /// 127.0.0.1:{port}.
     pub async fn connect(&self) -> anyhow::Result<()> {
+        #[cfg(unix)]
         let stream = UnixStream::connect(&self.socket_path).await?;
+
+        #[cfg(windows)]
+        let stream = {
+            let port_str = std::fs::read_to_string(&self.socket_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read IPC port file '{}': {}", self.socket_path.display(), e))?;
+            let port: u16 = port_str
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid IPC port in '{}': {}", self.socket_path.display(), e))?;
+            TcpStream::connect(format!("127.0.0.1:{}", port)).await?
+        };
+
         *self.stream.lock().await = Some(stream);
         Ok(())
     }

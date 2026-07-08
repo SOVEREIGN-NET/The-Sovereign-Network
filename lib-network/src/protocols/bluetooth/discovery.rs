@@ -8,6 +8,7 @@ use tracing::{info, warn};
 use super::device;
 use super::device::{BleDevice, MeshPeer};
 use super::BluetoothMeshProtocol;
+use crate::constants::BLE_MESH_SERVICE_UUID;
 
 use sha2::{Digest, Sha256};
 

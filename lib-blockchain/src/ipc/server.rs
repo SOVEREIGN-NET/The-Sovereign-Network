@@ -1,10 +1,9 @@
-//! IPC server — listens on a Unix domain socket and dispatches queries
-//! to the blockchain engine.
+//! IPC server — listens on a Unix domain socket (Unix) or TCP loopback
+//! (Windows) and dispatches queries to the blockchain engine.
 
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixListener;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
@@ -12,7 +11,26 @@ use crate::blockchain::Blockchain;
 use crate::query::BlockchainQuery;
 use super::protocol::*;
 
-/// Start the IPC server on the given Unix socket path.
+// ── Platform-specific IPC types ──────────────────────────────────────
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
+#[cfg(unix)]
+type IpcListener = UnixListener;
+#[cfg(unix)]
+type IpcStream = UnixStream;
+
+#[cfg(windows)]
+use tokio::net::{TcpListener, TcpStream};
+#[cfg(windows)]
+type IpcListener = TcpListener;
+#[cfg(windows)]
+type IpcStream = TcpStream;
+
+/// Start the IPC server on the given socket path.
+///
+/// On Unix: binds to a Unix domain socket at `socket_path`.
+/// On Windows: binds to TCP 127.0.0.1:0 and writes the assigned port
+/// number to `socket_path` so clients can discover it.
 ///
 /// Spawns a background task that accepts connections and dispatches
 /// requests to the blockchain. Each connection is handled concurrently.
@@ -20,11 +38,28 @@ pub async fn start_ipc_server(
     socket_path: &Path,
     blockchain: Arc<RwLock<Blockchain>>,
 ) -> std::io::Result<()> {
-    // Remove stale socket file if it exists
+    // Remove stale socket / port file if it exists
     let _ = std::fs::remove_file(socket_path);
 
-    let listener = UnixListener::bind(socket_path)?;
-    info!("IPC server listening on {}", socket_path.display());
+    #[cfg(unix)]
+    let listener = {
+        let l = UnixListener::bind(socket_path)?;
+        info!("IPC server listening on {}", socket_path.display());
+        l
+    };
+
+    #[cfg(windows)]
+    let listener = {
+        let l = TcpListener::bind("127.0.0.1:0").await?;
+        let port = l.local_addr()?.port();
+        std::fs::write(socket_path, port.to_string())?;
+        info!(
+            "IPC server listening on 127.0.0.1:{} (port written to {})",
+            port,
+            socket_path.display()
+        );
+        l
+    };
 
     tokio::spawn(async move {
         loop {
@@ -45,7 +80,7 @@ pub async fn start_ipc_server(
 }
 
 async fn handle_connection(
-    mut stream: tokio::net::UnixStream,
+    mut stream: IpcStream,
     blockchain: Arc<RwLock<Blockchain>>,
 ) {
     loop {

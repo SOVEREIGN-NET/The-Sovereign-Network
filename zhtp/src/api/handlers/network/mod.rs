@@ -1031,8 +1031,16 @@ impl NetworkHandler {
         // Spawn shutdown in background so the response gets sent first
         tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            info!("Node shutdown: sending SIGTERM to self");
-            unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+            #[cfg(unix)]
+            {
+                info!("Node shutdown: sending SIGTERM to self");
+                unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+            }
+            #[cfg(windows)]
+            {
+                info!("Node shutdown: terminating process");
+                std::process::exit(0);
+            }
         });
         Ok(ZhtpResponse::json(&response, None)?)
     }
