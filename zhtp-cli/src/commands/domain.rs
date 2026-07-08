@@ -17,7 +17,6 @@ use crate::output::Output;
 
 use lib_crypto::sign_message;
 use lib_network::client::ZhtpClient;
-use std::collections::HashMap;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -283,15 +282,6 @@ async fn register_domain_impl(
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
-        .as_secs();
-    let fee = 10u64; // Domain registration fee: 10 SOV (whole tokens, matches server DOMAIN_REGISTRATION_FEE_SOV_WHOLE)
-    let message = format!("{}|{}|{}", domain, timestamp, fee);
-    let signature = sign_message(&loaded.keypair, message.as_bytes())
-        .map_err(|e| CliError::ConfigError(format!("Failed to sign registration: {}", e)))?;
-
     // Build the fee_payment_tx: signed TokenTransfer of 10 SOV from Primary wallet to DAO treasury
     output.info("Building fee payment transaction...")?;
     let fee_payment_tx_hex = build_domain_fee_payment_tx(&loaded, &client, output).await?;
@@ -304,16 +294,31 @@ async fn register_domain_impl(
         None => None,
     };
 
-    let body = serde_json::json!({
-        "domain": domain,
-        "owner": loaded.identity.did.clone(),
-        "content_mappings": HashMap::<String, serde_json::Value>::new(),
-        "metadata": metadata_json,
-        "signature": hex::encode(signature.signature),
-        "timestamp": timestamp,
-        "fee": fee,
-        "fee_payment_tx": fee_payment_tx_hex,
-    });
+    output.info("Signing domain system transaction...")?;
+    let identity = zhtp_client::Identity {
+        did: loaded.identity.did.clone(),
+        public_key: loaded.identity.public_key.dilithium_pk.to_vec(),
+        private_key: loaded.keypair.private_key.dilithium_sk.to_vec(),
+        kyber_public_key: loaded.identity.public_key.kyber_pk.to_vec(),
+        kyber_secret_key: loaded.keypair.private_key.kyber_sk.to_vec(),
+        node_id: loaded.identity.node_id.as_bytes().to_vec(),
+        device_id: loaded.identity.primary_device.clone(),
+        recovery_entropy: loaded.keypair.private_key.master_seed.to_vec(),
+        created_at: loaded.identity.created_at,
+    };
+
+    let body_json = zhtp_client::token_tx::build_domain_register_request_with_fee_payment_and_metadata(
+        &identity,
+        domain,
+        None,
+        Some(fee_payment_tx_hex),
+        metadata_json,
+        3,
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to build registration request: {}", e)))?;
+
+    let body: serde_json::Value = serde_json::from_str(&body_json)
+        .map_err(|e| CliError::ConfigError(format!("Invalid registration JSON: {}", e)))?;
 
     let response = client
         .post_json("/api/v1/web4/domains/register", &body)
