@@ -185,6 +185,9 @@ pub struct DomainRegisterParams {
     pub fee: Option<u64>,
     #[serde(default)]
     pub fee_payment_tx: Option<String>,
+    /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
+    #[serde(default)]
+    pub domain_tx_signature_hex: String,
 }
 
 /// Content mapping for domain registration
@@ -836,6 +839,109 @@ use crate::crypto::Dilithium5;
 /// Domain registration fee in SOV tokens
 const DOMAIN_REGISTRATION_FEE: u64 = 10;
 
+/// Default chain id for domain system transactions (matches server `domain_chain_id()`).
+const DEFAULT_DOMAIN_CHAIN_ID: u8 = 0x03;
+
+fn fee_payment_tx_hash_hex(fee_payment_tx_hex: &str) -> Result<String, String> {
+    let raw = hex::decode(fee_payment_tx_hex.trim())
+        .map_err(|e| format!("Invalid fee_payment_tx hex: {}", e))?;
+    let tx: Transaction =
+        bincode::deserialize(&raw).map_err(|e| format!("Failed to deserialize fee_payment_tx: {}", e))?;
+    Ok(hex::encode(tx.hash().as_bytes()))
+}
+
+fn domain_registration_metadata_fields(
+    domain: &str,
+    metadata: Option<&serde_json::Value>,
+) -> (String, String, Vec<String>) {
+    let title = metadata
+        .and_then(|m| m.get("title"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(domain)
+        .to_string();
+    let description = metadata
+        .and_then(|m| m.get("description"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Web4 website")
+        .to_string();
+    let tags: Vec<String> = metadata
+        .and_then(|m| m.get("tags"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    (title, description, tags)
+}
+
+/// Sign the domain system transaction the server expects on `POST /api/v1/web4/domains/register`.
+///
+/// Mirrors `attach_client_domain_tx_signature` in zhtp's domains handler: version=8 skeleton,
+/// `TransactionType::DomainRegistration`, memo from `DomainRegistrationPayload`, fee=0.
+pub fn sign_domain_registration_system_tx(
+    identity: &Identity,
+    domain: &str,
+    owner_did: &str,
+    fee_tx_hash: &str,
+    metadata: Option<&serde_json::Value>,
+    timestamp: u64,
+    chain_id: u8,
+) -> Result<String, String> {
+    use lib_blockchain::transaction::{DomainRegistrationPayload, TransactionPayload};
+
+    let (title, description, tags) = domain_registration_metadata_fields(domain, metadata);
+
+    let payload = DomainRegistrationPayload {
+        domain: domain.to_string(),
+        owner_did: owner_did.to_string(),
+        manifest_cid: String::new(),
+        build_hash: String::new(),
+        title,
+        description,
+        category: "general".to_string(),
+        tags,
+        duration_days: 365,
+        fee_tx_hash: fee_tx_hash.to_string(),
+        fee_amount_atoms: 0,
+        fee_payer_wallet_id: [0u8; 32],
+    };
+
+    let memo = payload
+        .encode_memo()
+        .map_err(|e| format!("Failed to encode domain registration memo: {}", e))?;
+
+    let owner_pk: [u8; 2592] = identity
+        .public_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| "identity public key must be exactly 2592 bytes".to_string())?;
+
+    let tx = Transaction {
+        version: 8,
+        chain_id,
+        transaction_type: TransactionType::DomainRegistration,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: Signature {
+            signature: vec![],
+            public_key: PublicKey::new(owner_pk),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp,
+        },
+        memo,
+        payload: TransactionPayload::None,
+    };
+
+    let signing_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, signing_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign domain system tx: {}", e))?;
+
+    Ok(hex::encode(signature_bytes))
+}
+
 /// Build a signed domain registration request (JSON format matching server's SimpleDomainRegistrationRequest)
 ///
 /// # Arguments
@@ -893,6 +999,22 @@ pub fn build_domain_register_request_with_fee_payment(
     let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
+    let fee_tx_hex = fee_payment_tx
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "fee_payment_tx is required".to_string())?;
+    let fee_tx_hash = fee_payment_tx_hash_hex(fee_tx_hex)?;
+    let domain_tx_signature_hex = sign_domain_registration_system_tx(
+        identity,
+        domain,
+        &identity.did,
+        &fee_tx_hash,
+        None,
+        timestamp,
+        DEFAULT_DOMAIN_CHAIN_ID,
+    )?;
+
     let request = DomainRegisterParams {
         domain: domain.to_string(),
         owner: identity.did.clone(),
@@ -902,6 +1024,7 @@ pub fn build_domain_register_request_with_fee_payment(
         timestamp,
         fee: Some(DOMAIN_REGISTRATION_FEE),
         fee_payment_tx,
+        domain_tx_signature_hex,
     };
 
     serde_json::to_string(&request).map_err(|e| format!("Failed to serialize request: {}", e))

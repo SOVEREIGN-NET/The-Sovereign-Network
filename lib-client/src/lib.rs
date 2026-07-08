@@ -103,6 +103,7 @@ pub use token_tx::{
     // Domain-specific (new JSON-based API)
     build_domain_register_request,
     build_domain_register_request_with_fee_payment,
+    sign_domain_registration_system_tx,
     // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx,
     build_domain_transfer_request,
