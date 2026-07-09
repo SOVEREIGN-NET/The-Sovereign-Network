@@ -4,8 +4,9 @@
 //! `lib_network::client::ZhtpClient` so the FFI inherits the UHP handshake,
 //! auth context, and wire framing without re-implementing transport.
 //!
-//! Threading: each handle owns a dedicated Tokio current-thread runtime on a
-//! worker thread. FFI callers may call from any thread; commands route through
+//! Threading: each handle owns a worker thread that drives connect, handshake,
+//! RPC, and inbound work on the shared `CLIENT_ENDPOINT_RUNTIME` from
+//! lib-network. FFI callers may call from any thread; commands route through
 //! a tokio mpsc queue.
 
 #![cfg(not(target_arch = "wasm32"))]
@@ -74,44 +75,59 @@ enum InboundEvent {
     Error(String),
 }
 
-/// Spawn the per-session worker thread. The thread builds its own
-/// tokio runtime, then **does the QUIC connect + UHP handshake on
-/// that runtime** before signalling readiness. This is load-bearing:
-/// Quinn's connection driver is tied to the runtime that called
-/// `Endpoint::connect`, so the connect and all subsequent RPCs MUST
-/// share a runtime. Previously the connect happened on a temporary
-/// runtime in `zhtp_quic_session_open` that was dropped before the
-/// worker started — that left the connection's I/O driver dead and
-/// every subsequent `open_bi()` returned `"closed"`.
+/// Spawn the per-session worker thread. The thread drives the QUIC connect,
+/// UHP handshake, RPC loop, and inbound streams on the shared
+/// `CLIENT_ENDPOINT_RUNTIME` before signalling readiness. Quinn ties the
+/// endpoint driver to the runtime that created it; a per-session
+/// current-thread runtime caused iOS `EPERM` on `Endpoint::connect`.
 fn spawn_session_worker(
     addr: String,
+    server_name: String,
+    session_alpn: u8,
     identity: ZhtpIdentity,
     rx: tokio::sync::mpsc::Receiver<SessionCmd>,
     ready: oneshot::Sender<Result<()>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
+        // Quinn ties the endpoint driver to the runtime that created it.
+        // Run the whole session (connect, handshake, RPC, inbound) on the
+        // shared `CLIENT_ENDPOINT_RUNTIME` — a per-session current-thread
+        // runtime causes iOS EPERM on `Endpoint::connect`.
+        let runtime = match lib_network::client::client_endpoint_runtime() {
             Ok(rt) => rt,
             Err(e) => {
-                let _ = ready.send(Err(anyhow!("runtime build failed: {}", e)));
+                eprintln!(
+                    "[zhtp_quic_session] client_endpoint_runtime failed: {:?}",
+                    e
+                );
+                let _ = ready.send(Err(e.context("client_endpoint_runtime")));
                 return;
             }
         };
-        runtime.block_on(async move {
+        let handle = runtime.handle().clone();
+        handle.block_on(async move {
             let trust = TrustConfig::bootstrap();
-            let config = ZhtpClientConfig { allow_bootstrap: true };
+            let config = ZhtpClientConfig {
+                allow_bootstrap: true,
+                session_alpn,
+            };
             let mut client = match ZhtpClient::new_with_config(identity, trust, config).await {
                 Ok(c) => c,
                 Err(e) => {
+                    eprintln!(
+                        "[zhtp_quic_session] ZhtpClient::new_with_config failed: {:?}",
+                        e
+                    );
                     let _ = ready.send(Err(e.context("ZhtpClient::new_with_config")));
                     return;
                 }
             };
-            if let Err(e) = client.connect(&addr).await {
-                let _ = ready.send(Err(e.context("ZhtpClient::connect")));
+            if let Err(e) = client.connect_with_sni(&addr, &server_name).await {
+                eprintln!(
+                    "[zhtp_quic_session] connect failed addr={} sni={} alpn={}: {:?}",
+                    addr, server_name, session_alpn, e
+                );
+                let _ = ready.send(Err(e.context("ZhtpClient::connect_with_sni")));
                 return;
             }
             // Hand the open client to the loop and signal the caller
@@ -306,13 +322,14 @@ fn to_zhtp_identity(id: &Identity) -> Result<ZhtpIdentity> {
 // =============================================================================
 
 /// Open a persistent QUIC session.
-/// `alpn`: 0 = zhtp-public/1, 1 = zhtp-uhp/2 (authenticated).
+/// `alpn`: must be `1` (`zhtp-uhp/2`, authenticated UHP). Public ALPN (`0`)
+/// is not supported here — gateways treat `zhtp-public/1` as no-UHP read-only.
 /// Returns null on failure.
 #[no_mangle]
 pub extern "C" fn zhtp_quic_session_open(
     host: *const c_char,
     port: u16,
-    _sni: *const c_char,
+    sni: *const c_char,
     _spki_pin_hex: *const c_char,
     alpn: u8,
     identity: *const crate::IdentityHandle,
@@ -320,7 +337,11 @@ pub extern "C" fn zhtp_quic_session_open(
     if host.is_null() {
         return std::ptr::null_mut();
     }
-    if alpn == 1 && identity.is_null() {
+    // Session path always performs UHP v2 after connect; public ALPN is rejected.
+    if alpn != 1 {
+        return std::ptr::null_mut();
+    }
+    if identity.is_null() {
         return std::ptr::null_mut();
     }
 
@@ -330,14 +351,16 @@ pub extern "C" fn zhtp_quic_session_open(
     };
     let addr = format!("{}:{}", host_str, port);
 
-    let id = if identity.is_null() {
-        match crate::identity::generate_identity("anon-device".to_string()) {
-            Ok(id) => id,
-            Err(_) => return std::ptr::null_mut(),
-        }
+    let server_name = if sni.is_null() {
+        "zhtp-node".to_string()
     } else {
-        unsafe { (*identity).inner.clone() }
+        match unsafe { CStr::from_ptr(sni) }.to_str() {
+            Ok(s) if !s.is_empty() => s.to_string(),
+            _ => "zhtp-node".to_string(),
+        }
     };
+
+    let id = unsafe { (*identity).inner.clone() };
 
     let zhtp_identity = match to_zhtp_identity(&id) {
         Ok(z) => z,
@@ -346,7 +369,7 @@ pub extern "C" fn zhtp_quic_session_open(
 
     let (tx, rx) = tokio::sync::mpsc::channel::<SessionCmd>(64);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
-    let worker = spawn_session_worker(addr, zhtp_identity, rx, ready_tx);
+    let worker = spawn_session_worker(addr, server_name, alpn, zhtp_identity, rx, ready_tx);
 
     // Block until the worker has finished the QUIC connect + UHP
     // handshake. Returning the handle before the connection is

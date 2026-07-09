@@ -40,18 +40,10 @@ use tokio::io::{duplex, AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 /// constructor — that is the entire point of the test. If you change
 /// one, change the other and re-bless the hex.
 fn quic_capabilities_shape() -> HandshakeCapabilities {
-    HandshakeCapabilities {
-        protocols: vec!["quic".to_string()],
-        max_throughput: 100_000_000,
-        max_message_size: 10_485_760,
-        encryption_methods: vec!["chacha20-poly1305".to_string(), "aes-256-gcm".to_string()],
-        pqc_capability: PqcCapability::Kyber1024Dilithium5,
-        dht_capable: true,
-        relay_capable: true,
-        storage_capacity: 0,
-        web4_capable: true,
-        custom_features: vec![],
-    }
+    let mut caps = HandshakeCapabilities::default();
+    caps.protocols = vec!["quic".to_string()];
+    caps.pqc_capability = PqcCapability::Kyber1024Dilithium5;
+    caps
 }
 
 fn make_identity(device: &str) -> lib_identity::ZhtpIdentity {

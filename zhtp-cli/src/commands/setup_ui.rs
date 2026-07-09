@@ -202,6 +202,7 @@ async fn try_get_status(server: &str) -> Result<serde_json::Value, String> {
     let trust_config = lib_network::web4::trust::TrustConfig::bootstrap();
     let config = lib_network::client::ZhtpClientConfig {
         allow_bootstrap: true,
+        ..Default::default()
     };
     let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
         .await
@@ -255,6 +256,7 @@ async fn connect_bridge_client(server: &str) -> Result<lib_network::client::Zhtp
     let trust_config = lib_network::web4::trust::TrustConfig::bootstrap();
     let config = lib_network::client::ZhtpClientConfig {
         allow_bootstrap: true,
+        ..Default::default()
     };
     let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
         .await
@@ -308,6 +310,7 @@ async fn try_register_identity(server: &str) -> Result<serde_json::Value, String
     let trust_config = lib_network::web4::trust::TrustConfig::bootstrap();
     let config = lib_network::client::ZhtpClientConfig {
         allow_bootstrap: true,
+        ..Default::default()
     };
     let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
         .await
@@ -470,6 +473,7 @@ async fn try_get_directory(server: &str) -> Result<serde_json::Value, String> {
     let trust_config = lib_network::web4::trust::TrustConfig::bootstrap();
     let config = lib_network::client::ZhtpClientConfig {
         allow_bootstrap: true,
+        ..Default::default()
     };
     let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
         .await

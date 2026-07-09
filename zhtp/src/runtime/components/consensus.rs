@@ -654,6 +654,7 @@ async fn catchup_sync_from_peer(
         node_identity,
         ZhtpClientConfig {
             allow_bootstrap: true,
+            ..Default::default()
         },
     )
     .await

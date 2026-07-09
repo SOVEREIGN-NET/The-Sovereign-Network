@@ -395,17 +395,11 @@ pub async fn handshake_as_responder(
 /// `lib-network/tests/handshake_wire_bytes_test.rs::capture_client_hello_bytes_for_diff`.
 /// Run that test with `--nocapture` to get the canonical hex dump and
 /// compare against an equivalent capture from any reimplementation.
+/// Minimal QUIC capabilities — matches the mobile `quinn-ffi`
+/// `build_capabilities()` envelope that production gateways accept.
 fn create_quic_capabilities() -> HandshakeCapabilities {
-    HandshakeCapabilities {
-        protocols: vec!["quic".to_string()],
-        max_throughput: 100_000_000,
-        max_message_size: 10_485_760,
-        encryption_methods: vec!["chacha20-poly1305".to_string(), "aes-256-gcm".to_string()],
-        pqc_capability: PqcCapability::Kyber1024Dilithium5,
-        dht_capable: true,
-        relay_capable: true,
-        storage_capacity: 0,
-        web4_capable: true,
-        custom_features: vec![],
-    }
+    let mut caps = HandshakeCapabilities::default();
+    caps.protocols = vec!["quic".to_string()];
+    caps.pqc_capability = PqcCapability::Kyber1024Dilithium5;
+    caps
 }

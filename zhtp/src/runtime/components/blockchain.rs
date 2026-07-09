@@ -337,6 +337,7 @@ impl BlockchainComponent {
 
                 let cfg = ZhtpClientConfig {
                     allow_bootstrap: true,
+                    ..Default::default()
                 };
                 let mut client = match ZhtpClient::new_bootstrap_with_config(temp_id, cfg).await {
                     Ok(c) => c,

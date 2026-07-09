@@ -166,7 +166,10 @@ async fn main() -> Result<()> {
     println!("Connecting to {}...", SERVER);
     let transport_identity = load_transport_identity().await?;
     let trust_config = TrustConfig::bootstrap();
-    let config = ZhtpClientConfig { allow_bootstrap: true };
+    let config = ZhtpClientConfig {
+        allow_bootstrap: true,
+        ..Default::default()
+    };
     let mut client = ZhtpClient::new_with_config(transport_identity, trust_config, config)
         .await
         .context("create client")?;
