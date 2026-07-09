@@ -10,9 +10,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use lib_blockchain::{
+    contracts::sovereign_asset::SupplyMode,
     integration::crypto_integration::{Signature, SignatureAlgorithm},
     protocol::ProtocolParams,
-    contracts::sovereign_asset::SupplyMode,
+    rewards_policy::{policy_hash, validate_rewards_policy},
     transaction::{
         asset_tx::{AssetLaunchPayloadV1, RewardsLaunchConfig},
         hash_transaction, Transaction,
@@ -84,6 +85,9 @@ struct Args {
     /// Keystore for rewards spend delegate (BUBL only).
     #[arg(long)]
     rewards_delegate_dir: Option<PathBuf>,
+    /// Rewards policy JSON (`zhtp/rewards-policy/v1`). Hashed for on-chain `policy_hash`.
+    #[arg(long, default_value = "schemas/zhtp/rewards-policy/examples/bubl-v1.json")]
+    policy_file: PathBuf,
     #[arg(long, default_value_t = 0x03)]
     chain_id: u8,
     #[arg(long, default_value_t = 0)]
@@ -133,6 +137,15 @@ fn token_meta(token: &FoundingToken) -> (&'static str, &'static str, u8, SupplyM
             (CBE_NAME, CBE_SYMBOL, CBE_DECIMALS, SupplyMode::Elastic)
         }
     }
+}
+
+fn load_rewards_policy_refs(policy_path: &std::path::Path) -> Result<([u8; 32], [u8; 32])> {
+    let bytes = std::fs::read(policy_path)
+        .with_context(|| format!("read rewards policy {}", policy_path.display()))?;
+    let policy = validate_rewards_policy(&bytes).context("validate rewards policy")?;
+    let hash = policy_hash(&policy).context("hash rewards policy")?;
+    let digest = hash.as_array();
+    Ok((digest, digest))
 }
 
 fn placeholder_manifest() -> ([u8; 32], [u8; 32]) {
@@ -216,7 +229,7 @@ fn main() -> Result<()> {
     let rewards = match (&args.token, &args.rewards_delegate_dir) {
         (FoundingToken::Bubl, Some(dir)) => {
             let delegate_kp = load_keypair(dir)?;
-            let (policy_cid, policy_hash) = placeholder_manifest();
+            let (policy_cid, policy_hash) = load_rewards_policy_refs(&args.policy_file)?;
             Some(RewardsLaunchConfig {
                 spend_delegate_key_id: delegate_kp.public_key.key_id,
                 policy_cid,

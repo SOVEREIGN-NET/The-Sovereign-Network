@@ -5097,6 +5097,77 @@ mod tests {
     }
 
     #[test]
+    fn test_asset_launch_writes_rewards_module_state() {
+        use crate::contracts::sovereign_asset::{AssetModuleFlags, RewardsModuleState};
+        use crate::transaction::asset_tx::{AssetLaunchPayloadV1, RewardsLaunchConfig};
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let delegate_key = [0xDD; 32];
+        let policy_cid = [0x11; 32];
+        let policy_hash = [0x22; 32];
+        let payload = AssetLaunchPayloadV1 {
+            name: "Bubble".to_string(),
+            symbol: "BUBL".to_string(),
+            decimals: 18,
+            initial_supply: 1_000,
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: 2_000,
+            supply_mode: crate::contracts::sovereign_asset::SupplyMode::Fixed,
+            manifest_cid: [1u8; 32],
+            manifest_hash: [2u8; 32],
+            curve: None,
+            rewards: Some(RewardsLaunchConfig {
+                spend_delegate_key_id: delegate_key,
+                policy_cid,
+                policy_hash,
+            }),
+            governance: None,
+            transfer_authority: false,
+        };
+        let memo = payload.encode_memo().expect("valid asset launch memo");
+        let tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::AssetLaunch,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo,
+            payload: crate::transaction::TransactionPayload::None,
+        };
+        let expected_asset_id = hash_transaction(&tx).as_array();
+
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).expect("AssetLaunch should apply");
+
+        let asset = store
+            .get_sovereign_asset(&expected_asset_id)
+            .expect("read asset")
+            .expect("asset exists");
+        assert!(asset.module_flags.has_rewards());
+        assert_eq!(asset.module_bitmask() & AssetModuleFlags::REWARDS, AssetModuleFlags::REWARDS);
+
+        let rewards_state = store
+            .get_rewards_module_state(&expected_asset_id)
+            .expect("read rewards state")
+            .expect("rewards state exists");
+        assert_eq!(
+            rewards_state,
+            RewardsModuleState {
+                spend_delegate_key_id: delegate_key,
+                policy_cid,
+                policy_hash,
+                nonce: 0,
+            }
+        );
+    }
+
+    #[test]
     fn test_contract_deployment_writes_contract_code() {
         let store = create_test_store();
         let executor = create_test_executor(store.clone());

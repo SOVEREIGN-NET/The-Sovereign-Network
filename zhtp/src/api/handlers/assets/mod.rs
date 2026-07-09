@@ -1,7 +1,9 @@
 //! Sovereign Asset discovery API (ADR: docs/arch/sovereign-asset.md, SA-2).
 
 use anyhow::Result;
-use lib_blockchain::contracts::sovereign_asset::{AssetIdSource, SovereignAsset, SupplyMode};
+use lib_blockchain::contracts::sovereign_asset::{
+    AssetIdSource, RewardsModuleState, SovereignAsset, SupplyMode,
+};
 use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
@@ -129,7 +131,25 @@ fn to_list_item(asset: &SovereignAsset) -> AssetListItem {
     }
 }
 
-fn to_detail(asset: &SovereignAsset) -> AssetDetailResponse {
+fn rewards_detail(
+    asset: &SovereignAsset,
+    state: Option<&RewardsModuleState>,
+) -> Option<serde_json::Value> {
+    if !asset.module_flags.has_rewards() {
+        return None;
+    }
+    let header = asset.rewards.as_ref();
+    Some(json!({
+        "spend_delegate_key_id": state
+            .map(|s| hex::encode(s.spend_delegate_key_id))
+            .or_else(|| header.and_then(|h| h.spend_delegate_key_id.map(hex::encode))),
+        "policy_cid": state.map(|s| hex::encode(s.policy_cid)),
+        "policy_hash": state.map(|s| hex::encode(s.policy_hash)),
+        "nonce": state.map(|s| s.nonce),
+    }))
+}
+
+fn to_detail(asset: &SovereignAsset, rewards_state: Option<&RewardsModuleState>) -> AssetDetailResponse {
     AssetDetailResponse {
         asset_id: hex::encode(asset.asset_id),
         id_source: id_source_label(asset.id_source).to_string(),
@@ -153,11 +173,7 @@ fn to_detail(asset: &SovereignAsset) -> AssetDetailResponse {
                 "sell_enabled": c.sell_enabled,
             })
         }),
-        rewards: asset.rewards.as_ref().map(|r| {
-            json!({
-                "spend_delegate_key_id": r.spend_delegate_key_id.map(hex::encode),
-            })
-        }),
+        rewards: rewards_detail(asset, rewards_state),
         governance: asset.governance.as_ref().map(|g| {
             json!({
                 "verifier": match g.verifier {
@@ -202,7 +218,11 @@ impl AssetsHandler {
         let asset = bc
             .get_sovereign_asset(&asset_id)
             .ok_or_else(|| anyhow::anyhow!("Asset not found"))?;
-        create_json_response(serde_json::to_value(to_detail(&asset))?)
+        let rewards_state = bc.get_rewards_module_state(&asset_id);
+        create_json_response(serde_json::to_value(to_detail(
+            &asset,
+            rewards_state.as_ref(),
+        ))?)
     }
 
     async fn handle_interface(&self, asset_id_hex: &str) -> Result<ZhtpResponse> {
