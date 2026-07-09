@@ -2257,7 +2257,18 @@ impl<'a> StatefulTransactionValidator<'a> {
                     crate::transaction::domain::DOMAIN_REGISTRATION_PREFIX_V2,
                 );
                 if memo_is_v2 {
-                    if let Some(bc) = self.blockchain {
+                    // CONS-516 companion-fee path: DOMREG2 memo with zeroed inline
+                    // fee fields + non-empty fee_tx_hash. Payment is enforced by the
+                    // user-signed TokenTransfer referenced in fee_tx_hash (validated
+                    // by the API handler before this tx reaches mempool). Matches
+                    // process_domain_transactions which skips apply_domain_registration_fee
+                    // when both inline fee fields are zero.
+                    let is_cons516_companion = payload.fee_amount_atoms == 0
+                        && payload.fee_payer_wallet_id == [0u8; 32]
+                        && !payload.fee_tx_hash.is_empty();
+                    if is_cons516_companion {
+                        // owner_did vs signer check above is sufficient here.
+                    } else if let Some(bc) = self.blockchain {
                         let required = bc.tx_fee_config.domain_registration_fee_atoms;
                         if payload.fee_amount_atoms < required {
                             tracing::warn!(

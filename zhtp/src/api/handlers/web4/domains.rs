@@ -855,8 +855,11 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
-                    fee_amount_atoms: registration_fee_sov,
-                    fee_payer_wallet_id: owner_wallet_id_bytes,
+                    // CONS-516: fee paid by companion TokenTransfer; V2 memo
+                    // carries fee_tx_hash binding only. Inline fee fields zeroed
+                    // so client/server skeletons stay byte-identical.
+                    fee_amount_atoms: 0,
+                    fee_payer_wallet_id: [0u8; 32],
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
