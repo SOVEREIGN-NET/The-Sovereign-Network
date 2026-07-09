@@ -1161,24 +1161,46 @@ pub enum ServerAction {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum RewardAction {
-    /// Show reward orchestrator status
-    Status,
-    /// Show combined reward metrics
-    Metrics,
-    /// Show routing reward details
-    Routing,
-    /// Show storage reward details
-    Storage,
-    /// Show reward configuration
-    Config,
-    /// Claim pending rewards (placeholder)
-    Claim,
-    /// Show reward history / past rounds (placeholder)
+    /// BUBL/mobile rewards status for a DID (live API)
+    Status {
+        /// Beneficiary DID (e.g. did:zhtp:...)
+        #[arg(long)]
+        did: String,
+    },
+    /// BUBL balance and lifetime stats for a DID (live API)
+    Balance {
+        #[arg(long)]
+        did: String,
+    },
+    /// Claim a reward event: welcome | daily_checkin | active_session (live API)
+    Claim {
+        #[arg(long)]
+        did: String,
+        #[arg(long)]
+        event: String,
+    },
+    /// Claim new-conversation-partner reward (live API)
+    Conversation {
+        #[arg(long)]
+        did: String,
+        #[arg(long)]
+        peer_did: String,
+    },
+    /// Reward claim history for a DID (live API)
     History {
-        /// Number of rounds to show (default: 10, max: 1000)
-        #[arg(short, long, default_value = "10")]
+        #[arg(long)]
+        did: String,
+        #[arg(short, long, default_value = "50")]
         limit: usize,
     },
+    /// [legacy] PoUW orchestrator metrics (placeholder)
+    Metrics,
+    /// [legacy] Routing reward details (placeholder)
+    Routing,
+    /// [legacy] Storage reward details (placeholder)
+    Storage,
+    /// [legacy] Reward configuration (placeholder)
+    Config,
 }
 
 #[derive(Subcommand, Debug, Clone)]

@@ -7,14 +7,14 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 //!
-//! Placeholder implementation — commands display structured data using real
-//! reward types from `lib-economy` and `zhtp::rewards` but do not yet
-//! query a live node.  Future iterations will wire `ZhtpClient` calls to
-//! node API endpoints such as `/api/v1/rewards/status`.
+//! BUBL/mobile rewards CLI — wired to `/api/v1/rewards/*` on live nodes.
+//! Legacy PoUW orchestrator subcommands (metrics/routing/storage/config) remain placeholders.
 
 use crate::argument_parsing::{RewardAction, RewardArgs, ZhtpCli};
-use crate::error::CliResult;
+use crate::commands::web4_utils::connect_default;
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
+use lib_network::client::ZhtpClient;
 use lib_economy::rewards::{RewardRound, RewardStatistics, UsefulWorkType, ValidatorReward};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -28,25 +28,29 @@ use zhtp::rewards::budget_tracker::{BudgetTracker, RewardSource};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RewardOperation {
     Status,
+    Balance,
+    Claim,
+    Conversation,
+    History,
     Metrics,
     Routing,
     Storage,
     Config,
-    Claim,
-    History,
 }
 
 impl RewardOperation {
     /// Get user-friendly description
     pub fn description(&self) -> &'static str {
         match self {
-            RewardOperation::Status => "Show reward orchestrator status",
-            RewardOperation::Metrics => "Show combined reward metrics",
-            RewardOperation::Routing => "Show routing reward details",
-            RewardOperation::Storage => "Show storage reward details",
-            RewardOperation::Config => "Show reward configuration",
-            RewardOperation::Claim => "Claim pending rewards",
-            RewardOperation::History => "Show reward history",
+            RewardOperation::Status => "Show BUBL rewards status for a DID",
+            RewardOperation::Balance => "Show BUBL rewards balance for a DID",
+            RewardOperation::Claim => "Claim a BUBL reward event",
+            RewardOperation::Conversation => "Claim new-partner BUBL reward",
+            RewardOperation::History => "Show BUBL reward claim history",
+            RewardOperation::Metrics => "Show combined reward metrics (legacy placeholder)",
+            RewardOperation::Routing => "Show routing reward details (legacy placeholder)",
+            RewardOperation::Storage => "Show storage reward details (legacy placeholder)",
+            RewardOperation::Config => "Show reward configuration (legacy placeholder)",
         }
     }
 
@@ -54,12 +58,14 @@ impl RewardOperation {
     pub fn emoji(&self) -> &'static str {
         match self {
             RewardOperation::Status => "📊",
+            RewardOperation::Balance => "💳",
+            RewardOperation::Claim => "💰",
+            RewardOperation::Conversation => "💬",
+            RewardOperation::History => "📜",
             RewardOperation::Metrics => "📈",
             RewardOperation::Routing => "🔄",
             RewardOperation::Storage => "💾",
             RewardOperation::Config => "⚙️",
-            RewardOperation::Claim => "💰",
-            RewardOperation::History => "📜",
         }
     }
 }
@@ -67,13 +73,15 @@ impl RewardOperation {
 /// Determine operation from arguments
 pub fn action_to_operation(action: &RewardAction) -> RewardOperation {
     match action {
-        RewardAction::Status => RewardOperation::Status,
+        RewardAction::Status { .. } => RewardOperation::Status,
+        RewardAction::Balance { .. } => RewardOperation::Balance,
+        RewardAction::Claim { .. } => RewardOperation::Claim,
+        RewardAction::Conversation { .. } => RewardOperation::Conversation,
+        RewardAction::History { .. } => RewardOperation::History,
         RewardAction::Metrics => RewardOperation::Metrics,
         RewardAction::Routing => RewardOperation::Routing,
         RewardAction::Storage => RewardOperation::Storage,
         RewardAction::Config => RewardOperation::Config,
-        RewardAction::Claim => RewardOperation::Claim,
-        RewardAction::History { .. } => RewardOperation::History,
     }
 }
 
@@ -322,13 +330,15 @@ pub fn build_config_response(
 /// Get user-friendly header message.
 pub fn get_operation_header(operation: RewardOperation) -> String {
     match operation {
-        RewardOperation::Status => format!("{} SOV Reward Orchestrator Status", operation.emoji()),
-        RewardOperation::Metrics => format!("{} Combined Reward Metrics", operation.emoji()),
-        RewardOperation::Routing => format!("{} Routing Reward Details", operation.emoji()),
-        RewardOperation::Storage => format!("{} Storage Reward Details", operation.emoji()),
-        RewardOperation::Config => format!("{} Reward System Configuration", operation.emoji()),
-        RewardOperation::Claim => format!("{} Claim Rewards", operation.emoji()),
-        RewardOperation::History => format!("{} Reward History", operation.emoji()),
+        RewardOperation::Status => format!("{} BUBL Rewards Status", operation.emoji()),
+        RewardOperation::Balance => format!("{} BUBL Rewards Balance", operation.emoji()),
+        RewardOperation::Claim => format!("{} Claim BUBL Reward", operation.emoji()),
+        RewardOperation::Conversation => format!("{} Claim Partner Reward", operation.emoji()),
+        RewardOperation::History => format!("{} BUBL Reward History", operation.emoji()),
+        RewardOperation::Metrics => format!("{} Combined Reward Metrics (legacy)", operation.emoji()),
+        RewardOperation::Routing => format!("{} Routing Reward Details (legacy)", operation.emoji()),
+        RewardOperation::Storage => format!("{} Storage Reward Details (legacy)", operation.emoji()),
+        RewardOperation::Config => format!("{} Reward System Configuration (legacy)", operation.emoji()),
     }
 }
 
@@ -345,7 +355,7 @@ pub async fn handle_reward_command(args: RewardArgs, cli: &ZhtpCli) -> CliResult
 /// Handle reward command (testable implementation).
 pub async fn handle_reward_command_impl(
     args: RewardArgs,
-    _cli: &ZhtpCli,
+    cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
     let operation = action_to_operation(&args.action);
@@ -359,34 +369,119 @@ pub async fn handle_reward_command_impl(
         get_operation_header(operation)
     ))?;
 
-    match operation {
-        RewardOperation::Status => handle_status_impl(output).await,
-        RewardOperation::Metrics => handle_metrics_impl(output).await,
-        RewardOperation::Routing => handle_routing_impl(output).await,
-        RewardOperation::Storage => handle_storage_impl(output).await,
-        RewardOperation::Config => handle_config_impl(output).await,
-        RewardOperation::Claim => handle_claim_impl(output).await,
-        RewardOperation::History => {
-            let limit = match args.action {
-                RewardAction::History { limit } => limit.min(1000),
-                _ => 10,
-            };
-            handle_history_impl(output, limit).await
+    match args.action {
+        RewardAction::Status { did } => handle_live_status_impl(&cli.server, &did, output).await,
+        RewardAction::Balance { did } => handle_live_balance_impl(&cli.server, &did, output).await,
+        RewardAction::Claim { did, event } => {
+            handle_live_claim_impl(&cli.server, &did, &event, output).await
         }
+        RewardAction::Conversation { did, peer_did } => {
+            handle_live_conversation_impl(&cli.server, &did, &peer_did, output).await
+        }
+        RewardAction::History { did, limit } => {
+            handle_live_history_impl(&cli.server, &did, limit.min(200), output).await
+        }
+        RewardAction::Metrics => handle_metrics_impl(output).await,
+        RewardAction::Routing => handle_routing_impl(output).await,
+        RewardAction::Storage => handle_storage_impl(output).await,
+        RewardAction::Config => handle_config_impl(output).await,
     }
 }
 
-async fn handle_status_impl(output: &dyn Output) -> CliResult<()> {
-    let budget = build_placeholder_budget_tracker();
-    let stats = build_placeholder_reward_statistics();
+fn encode_did_for_path(did: &str) -> String {
+    urlencoding::encode(did).to_string()
+}
 
-    output.print(&format_budget_tracker(&budget))?;
-    output.print("")?;
-    output.print(&format_reward_statistics(&stats))?;
-    output.print("")?;
-    output.info("Live data requires a running node with the reward orchestrator enabled.")?;
+async fn rewards_get_json(client: &ZhtpClient, path: &str) -> CliResult<serde_json::Value> {
+    let response = client
+        .get(path)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Rewards API GET failed: {}", e)))?;
+    ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ConfigError(format!("Failed to parse rewards response: {}", e)))
+}
+
+async fn rewards_post_json(
+    client: &ZhtpClient,
+    path: &str,
+    body: &serde_json::Value,
+) -> CliResult<serde_json::Value> {
+    let response = client
+        .post_json(path, body)
+        .await
+        .map_err(|e| CliError::ConfigError(format!("Rewards API POST failed: {}", e)))?;
+    ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ConfigError(format!("Failed to parse rewards response: {}", e)))
+}
+
+fn print_json_pretty(output: &dyn Output, value: &serde_json::Value) -> CliResult<()> {
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| CliError::ConfigError(format!("JSON format error: {}", e)))?;
+    output.print(&text)?;
+    Ok(())
+}
+
+async fn handle_live_status_impl(server: &str, did: &str, output: &dyn Output) -> CliResult<()> {
+    let client = connect_default(server).await?;
+    let path = format!("/api/v1/rewards/status/{}", encode_did_for_path(did));
+    let json = rewards_get_json(&client, &path).await?;
+    print_json_pretty(output, &json)?;
     output.print("╚════════════════════════════════════════════════════════╝")?;
+    Ok(())
+}
 
+async fn handle_live_balance_impl(server: &str, did: &str, output: &dyn Output) -> CliResult<()> {
+    let client = connect_default(server).await?;
+    let path = format!("/api/v1/rewards/balance/{}", encode_did_for_path(did));
+    let json = rewards_get_json(&client, &path).await?;
+    print_json_pretty(output, &json)?;
+    output.print("╚════════════════════════════════════════════════════════╝")?;
+    Ok(())
+}
+
+async fn handle_live_claim_impl(
+    server: &str,
+    did: &str,
+    event: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let client = connect_default(server).await?;
+    let body = json!({ "did": did, "event": event });
+    let json = rewards_post_json(&client, "/api/v1/rewards/claim", &body).await?;
+    print_json_pretty(output, &json)?;
+    output.print("╚════════════════════════════════════════════════════════╝")?;
+    Ok(())
+}
+
+async fn handle_live_conversation_impl(
+    server: &str,
+    did: &str,
+    peer_did: &str,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let client = connect_default(server).await?;
+    let body = json!({ "did": did, "peer_did": peer_did });
+    let json = rewards_post_json(&client, "/api/v1/rewards/conversation", &body).await?;
+    print_json_pretty(output, &json)?;
+    output.print("╚════════════════════════════════════════════════════════╝")?;
+    Ok(())
+}
+
+async fn handle_live_history_impl(
+    server: &str,
+    did: &str,
+    limit: usize,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let client = connect_default(server).await?;
+    let path = format!(
+        "/api/v1/rewards/history/{}?limit={}",
+        encode_did_for_path(did),
+        limit
+    );
+    let json = rewards_get_json(&client, &path).await?;
+    print_json_pretty(output, &json)?;
+    output.print("╚════════════════════════════════════════════════════════╝")?;
     Ok(())
 }
 
@@ -497,36 +592,6 @@ async fn handle_config_impl(output: &dyn Output) -> CliResult<()> {
     Ok(())
 }
 
-async fn handle_claim_impl(output: &dyn Output) -> CliResult<()> {
-    output.warning("Reward claiming is not yet implemented.")?;
-    output.print("")?;
-    output.print("Planned claim flow:")?;
-    output.print("  1. Query node for pending rewards via /api/v1/rewards/pending")?;
-    output.print("  2. Build and sign claim transaction")?;
-    output.print("  3. Submit to reward coordinator contract")?;
-    output.print("  4. Display transaction receipt")?;
-    output.print("")?;
-    output.info("This command will be wired to the live node API in a future release.")?;
-    output.print("╚════════════════════════════════════════════════════════╝")?;
-
-    Ok(())
-}
-
-async fn handle_history_impl(output: &dyn Output, limit: usize) -> CliResult<()> {
-    let rounds = build_placeholder_reward_history(limit);
-    output.print(&format!("Showing last {} reward rounds (placeholder data):\n", rounds.len()))?;
-
-    for round in &rounds {
-        output.print(&format_reward_round(round))?;
-        output.print("")?;
-    }
-
-    output.info("Live history will be fetched from the blockchain index in a future release.")?;
-    output.print("╚════════════════════════════════════════════════════════╝")?;
-
-    Ok(())
-}
-
 // ============================================================================
 // TESTS
 // ============================================================================
@@ -537,14 +602,34 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_all_variants() {
-        assert_eq!(action_to_operation(&RewardAction::Status), RewardOperation::Status);
+        assert_eq!(
+            action_to_operation(&RewardAction::Status {
+                did: "did:zhtp:ab".to_string()
+            }),
+            RewardOperation::Status
+        );
+        assert_eq!(
+            action_to_operation(&RewardAction::Balance {
+                did: "did:zhtp:ab".to_string()
+            }),
+            RewardOperation::Balance
+        );
+        assert_eq!(
+            action_to_operation(&RewardAction::Claim {
+                did: "did:zhtp:ab".to_string(),
+                event: "welcome".to_string()
+            }),
+            RewardOperation::Claim
+        );
         assert_eq!(action_to_operation(&RewardAction::Metrics), RewardOperation::Metrics);
         assert_eq!(action_to_operation(&RewardAction::Routing), RewardOperation::Routing);
         assert_eq!(action_to_operation(&RewardAction::Storage), RewardOperation::Storage);
         assert_eq!(action_to_operation(&RewardAction::Config), RewardOperation::Config);
-        assert_eq!(action_to_operation(&RewardAction::Claim), RewardOperation::Claim);
         assert_eq!(
-            action_to_operation(&RewardAction::History { limit: 5 }),
+            action_to_operation(&RewardAction::History {
+                did: "did:zhtp:ab".to_string(),
+                limit: 5
+            }),
             RewardOperation::History
         );
     }
@@ -582,7 +667,7 @@ mod tests {
     fn test_build_placeholder_reward_round() {
         let round = build_placeholder_reward_round(100);
         assert_eq!(round.height, 100);
-        assert_eq!(round.total_rewards, 830);
+        assert_eq!(round.total_rewards, lib_types::sov::atoms(830));
         assert!(!round.validator_rewards.is_empty());
     }
 
