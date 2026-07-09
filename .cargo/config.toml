@@ -4,3 +4,15 @@
 # for all cargo-invoked processes. Harmless in production (larger stacks only).
 [env]
 RUST_MIN_STACK = "16777216"
+
+# Windows: the main thread created by #[tokio::main] inherits the OS-default
+# 1 MB stack, which is too small for the deeply-nested startup futures in
+# RuntimeOrchestrator::start_node().  Raising the linker stack reserve to 16 MB
+# prevents "thread 'main' has overflowed its stack" crashes on stock Windows.
+# This is a linker-level setting and does NOT affect runtime memory usage
+# (only the reserved address space, not committed pages).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:16777216"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--stack,16777216"]
