@@ -12,6 +12,8 @@
 //!
 //! The keystore MUST be the entity that will fund `/api/v1/rewards/*` transfers
 //! (`ZHTP_REWARDS_TREASURY_KEYSTORE` on validators).
+//!
+//! Full operator runbook: `docs/ops/dao-launch-bootstrap.md` (DAO D2).
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
