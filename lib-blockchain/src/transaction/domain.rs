@@ -295,4 +295,256 @@ mod tests {
         let bogus = b"DOMREG9:garbage".to_vec();
         assert!(DomainRegistrationPayload::decode_memo(&bogus).is_err());
     }
+
+    #[test]
+    fn cons516_rejects_fee_tx_hash_not_in_mempool() {
+        use crate::blockchain::Blockchain;
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::Transaction;
+        use crate::types::transaction_type::TransactionType;
+
+        let bc = Blockchain::default();
+        let signer = [0x11u8; 32];
+        let payload = DomainRegistrationPayload {
+            domain: "evil.sov".to_string(),
+            owner_did: format!("did:zhtp:{}", hex::encode(signer)),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 365,
+            fee_tx_hash: "ab".repeat(32),
+            fee_amount_atoms: 0,
+            fee_payer_wallet_id: [0u8; 32],
+        };
+        let domain_tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::DomainRegistration,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: Signature {
+                signature: vec![0u8; 64],
+                public_key: PublicKey {
+                    dilithium_pk: [0u8; 2592],
+                    kyber_pk: [0u8; 1568],
+                    key_id: signer,
+                },
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
+            memo: payload.encode_memo().unwrap(),
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        let err = validate_cons516_companion_fee(&bc, &domain_tx, &payload).unwrap_err();
+        assert!(
+            err.contains("not found in mempool"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn cons516_accepts_valid_companion_token_transfer() {
+        use crate::blockchain::Blockchain;
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+        use crate::transaction::{TokenTransferData, Transaction};
+        use crate::types::transaction_type::TransactionType;
+
+        let mut bc = Blockchain::default();
+        let signer = [0x22u8; 32];
+        let sig = Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: signer,
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+        let treasury = crate::Blockchain::deterministic_treasury_wallet_id().as_array();
+        let fee_tx = Transaction::new_token_transfer(
+            TokenTransferData {
+                token_id: generate_lib_token_id(),
+                from: signer,
+                to: treasury,
+                amount: DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS,
+                nonce: 0,
+            },
+            sig.clone(),
+            vec![],
+        );
+        let fee_hash = hex::encode(fee_tx.hash().as_bytes());
+        bc.pending_transactions.push(fee_tx);
+
+        let payload = DomainRegistrationPayload {
+            domain: "paid.sov".to_string(),
+            owner_did: format!("did:zhtp:{}", hex::encode(signer)),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 365,
+            fee_tx_hash: fee_hash,
+            fee_amount_atoms: 0,
+            fee_payer_wallet_id: [0u8; 32],
+        };
+        let domain_tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::DomainRegistration,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: sig,
+            memo: payload.encode_memo().unwrap(),
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        validate_cons516_companion_fee(&bc, &domain_tx, &payload)
+            .expect("valid companion fee tx in mempool");
+    }
+
+    #[test]
+    fn cons516_rejects_underpaid_companion() {
+        use crate::blockchain::Blockchain;
+        use crate::contracts::utils::generate_lib_token_id;
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
+        use crate::transaction::{TokenTransferData, Transaction};
+        use crate::types::transaction_type::TransactionType;
+
+        let mut bc = Blockchain::default();
+        let signer = [0x33u8; 32];
+        let sig = Signature {
+            signature: vec![0u8; 64],
+            public_key: PublicKey {
+                dilithium_pk: [0u8; 2592],
+                kyber_pk: [0u8; 1568],
+                key_id: signer,
+            },
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+        let treasury = crate::Blockchain::deterministic_treasury_wallet_id().as_array();
+        let fee_tx = Transaction::new_token_transfer(
+            TokenTransferData {
+                token_id: generate_lib_token_id(),
+                from: signer,
+                to: treasury,
+                amount: DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS - 1,
+                nonce: 0,
+            },
+            sig.clone(),
+            vec![],
+        );
+        let fee_hash = hex::encode(fee_tx.hash().as_bytes());
+        bc.pending_transactions.push(fee_tx);
+
+        let payload = DomainRegistrationPayload {
+            domain: "cheap.sov".to_string(),
+            owner_did: format!("did:zhtp:{}", hex::encode(signer)),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title: String::new(),
+            description: String::new(),
+            category: "test".to_string(),
+            tags: vec![],
+            duration_days: 365,
+            fee_tx_hash: fee_hash,
+            fee_amount_atoms: 0,
+            fee_payer_wallet_id: [0u8; 32],
+        };
+        let domain_tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::DomainRegistration,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: sig,
+            memo: payload.encode_memo().unwrap(),
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        let err = validate_cons516_companion_fee(&bc, &domain_tx, &payload).unwrap_err();
+        assert!(err.contains("below required"), "unexpected error: {err}");
+    }
+}
+
+/// Validate CONS-516 companion-fee binding for DOMREG2 registrations.
+///
+/// When inline fee fields are zero, `fee_tx_hash` must reference a **pending**
+/// mempool `TokenTransfer` that pays ≥ `domain_registration_fee_atoms` SOV from
+/// the domain signer's key to the DAO treasury wallet.
+pub fn validate_cons516_companion_fee(
+    bc: &crate::blockchain::Blockchain,
+    domain_tx: &crate::transaction::Transaction,
+    payload: &DomainRegistrationPayload,
+) -> Result<(), String> {
+    use crate::types::transaction_type::TransactionType;
+
+    let fee_hash_hex = payload.fee_tx_hash.trim();
+    if fee_hash_hex.len() != 64
+        || !fee_hash_hex.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err("fee_tx_hash must be 64 hex chars".into());
+    }
+    let fee_hash_bytes =
+        hex::decode(fee_hash_hex).map_err(|_| "fee_tx_hash is not valid hex".to_string())?;
+    if fee_hash_bytes.len() != 32 {
+        return Err("fee_tx_hash must decode to 32 bytes".into());
+    }
+    let mut fee_hash = [0u8; 32];
+    fee_hash.copy_from_slice(&fee_hash_bytes);
+
+    let fee_tx = bc
+        .get_pending_transactions()
+        .into_iter()
+        .find(|t| t.hash().as_array() == fee_hash)
+        .ok_or_else(|| {
+            format!(
+                "fee_tx_hash {} not found in mempool (companion TokenTransfer required)",
+                fee_hash_hex
+            )
+        })?;
+
+    if fee_tx.transaction_type != TransactionType::TokenTransfer {
+        return Err(format!(
+            "fee_tx_hash must reference TokenTransfer, got {:?}",
+            fee_tx.transaction_type
+        ));
+    }
+    let transfer = fee_tx
+        .token_transfer_data()
+        .ok_or_else(|| "companion tx missing TokenTransfer payload".to_string())?;
+
+    let required = bc.tx_fee_config.domain_registration_fee_atoms;
+    let sov_id = crate::contracts::utils::generate_lib_token_id();
+    if transfer.token_id != sov_id {
+        return Err("companion fee must use SOV token".into());
+    }
+    if transfer.amount < required {
+        return Err(format!(
+            "companion fee {} atoms below required {} atoms",
+            transfer.amount, required
+        ));
+    }
+    let signer_key = domain_tx.signature.public_key.key_id;
+    if transfer.from != signer_key {
+        return Err("companion fee must be sent from domain signer key".into());
+    }
+    let treasury = crate::Blockchain::deterministic_treasury_wallet_id();
+    if transfer.to != treasury.as_array() {
+        return Err("companion fee recipient must be DAO treasury wallet".into());
+    }
+    Ok(())
 }

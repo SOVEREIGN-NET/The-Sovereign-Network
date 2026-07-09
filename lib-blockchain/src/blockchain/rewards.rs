@@ -1,6 +1,5 @@
 //! BUBL reward eligibility facades (sled-first reads).
 
-use crate::storage::table::TableAccess;
 use crate::transaction::reward_claim::{
     daily_claim_key, partner_claim_key, partner_count_key, RewardEventKind, RewardStreakRecord,
 };
@@ -94,30 +93,5 @@ impl crate::blockchain::Blockchain {
             }
         }
         RewardStreakRecord::default()
-    }
-
-    /// Case-insensitive username taken check — credential registry sled-first (#2639).
-    pub fn credential_username_taken(&self, username_lower: &str) -> bool {
-        if let Some(store) = self.get_store() {
-            match store.iter::<crate::projections::CredentialProjectionTable>() {
-                Ok(iter) => {
-                    for (_, record) in iter {
-                        if record.credential.username.to_lowercase() == username_lower {
-                            return true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "credential_username_taken: sled iter failed; failing closed"
-                    );
-                    return true;
-                }
-            }
-        }
-        self.credential_registry
-            .keys()
-            .any(|u| u.to_lowercase() == username_lower)
     }
 }
