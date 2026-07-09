@@ -787,12 +787,10 @@ impl Web4Handler {
             simple_request.domain, total_fees
         );
 
-        // Insert into blockchain.domain_registry so the catalog reflects this immediately.
-        {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+        // Enqueue the client-signed DomainRegistration / DomainUpdate system tx on the
+        // normal mempool path (same as fee_payment_tx). On-chain domain_registry is
+        // updated only after the tx is committed in a block.
+        let domain_system_tx_hash = {
             let title = simple_request
                 .metadata
                 .as_ref()
@@ -874,11 +872,24 @@ impl Web4Handler {
                 memo,
                 simple_request.timestamp,
             )?;
+            let domain_tx_hash_hex = hex::encode(domain_tx.hash().as_bytes());
             let mut blockchain = self.blockchain.write().await;
-            if let Err(e) = blockchain.add_system_transaction(domain_tx, lib_blockchain::SystemOriginator::Web4DomainRegister) {
-                warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
-            }
-        }
+            blockchain
+                .add_pending_transaction(domain_tx)
+                .map_err(|e| {
+                    anyhow!(
+                        "domain {} tx rejected by mempool: {}",
+                        if is_update { "update" } else { "registration" },
+                        e
+                    )
+                })?;
+            info!(
+                " Domain {} tx submitted: {}",
+                if is_update { "update" } else { "registration" },
+                &domain_tx_hash_hex[..16.min(domain_tx_hash_hex.len())]
+            );
+            domain_tx_hash_hex
+        };
 
         // Get the ACTUAL content mappings from domain registry (with correct DHT hashes)
         let actual_content_mappings = match self.name_resolver.resolve(&simple_request.domain).await
@@ -894,12 +905,12 @@ impl Web4Handler {
 
         // ========================================================================
         // NOTE: Domain registration fees are paid via canonical SOV TokenTransfer above.
-        // Contract deployment handled separately from fee payment
+        // Both fee_payment_tx and domain system tx sit in mempool until the next block.
         // ========================================================================
-        let domain_tx_hash = Some(fee_tx_hash_hex);
         info!(
-            " Web4 domain registration transaction completed: {:?}",
-            domain_tx_hash
+            " Web4 domain registration txs submitted: fee={} domain={}",
+            &fee_tx_hash_hex[..16.min(fee_tx_hash_hex.len())],
+            &domain_system_tx_hash[..16.min(domain_system_tx_hash.len())]
         );
 
         // Register content ownership with wallet using ACTUAL owner identity
@@ -952,11 +963,12 @@ impl Web4Handler {
             "message": "Domain registered successfully on Web4 blockchain"
         });
 
-        // Add blockchain transaction hash if deployment succeeded
-        if let Some(tx_hash) = domain_tx_hash {
-            response["blockchain_transaction"] = serde_json::json!(tx_hash);
-            response["contract_deployed"] = serde_json::json!(true);
-        }
+        response["tx_hash"] = serde_json::json!(domain_system_tx_hash);
+        response["fee_payment_tx_hash"] = serde_json::json!(fee_tx_hash_hex);
+        response["domain_tx_hash"] = serde_json::json!(domain_system_tx_hash);
+        response["blockchain_transaction"] = serde_json::json!(domain_system_tx_hash);
+        response["contract_deployed"] = serde_json::json!(true);
+        response["pending_confirmation"] = serde_json::json!(true);
 
         let response_json = serde_json::to_vec(&response)
             .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
@@ -1117,12 +1129,7 @@ impl Web4Handler {
 
         // Submit domain registration/update transaction. Uses DomainUpdate for
         // existing domains to preserve version incrementing in block processor.
-        {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-
+        let domain_system_tx_hash = {
             let is_update = {
                 let blockchain = self.blockchain.read().await;
                 blockchain.domain_registry.contains_key(&request.domain)
@@ -1196,11 +1203,19 @@ impl Web4Handler {
                 memo,
                 request.timestamp,
             )?;
+            let domain_tx_hash_hex = hex::encode(domain_tx.hash().as_bytes());
             let mut blockchain = self.blockchain.write().await;
-            if let Err(e) = blockchain.add_system_transaction(domain_tx, lib_blockchain::SystemOriginator::Web4DomainUpdate) {
-                warn!("Failed to submit domain {} tx: {}", if is_update { "update" } else { "registration" }, e);
-            }
-        }
+            blockchain
+                .add_pending_transaction(domain_tx)
+                .map_err(|e| {
+                    anyhow!(
+                        "domain {} tx rejected by mempool: {}",
+                        if is_update { "update" } else { "registration" },
+                        e
+                    )
+                })?;
+            domain_tx_hash_hex
+        };
 
         let response = serde_json::json!({
             "status": "success",
@@ -1210,6 +1225,9 @@ impl Web4Handler {
             "registration_id": registration_result.registration_id,
             "fees_charged": registration_fee_whole,
             "fee_payment_tx_hash": fee_tx_hash_hex,
+            "domain_tx_hash": domain_system_tx_hash,
+            "tx_hash": domain_system_tx_hash,
+            "pending_confirmation": true,
             "message": "Domain registered successfully"
         });
 
