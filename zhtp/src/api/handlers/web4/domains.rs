@@ -1399,7 +1399,7 @@ impl Web4Handler {
     /// List domains for an owner
     /// GET /api/v1/web4/domains?owner={did}
     pub async fn list_domains(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let owner = request.uri.splitn(2, '?').nth(1).and_then(|query| {
+        let owner_raw = request.uri.splitn(2, '?').nth(1).and_then(|query| {
             query.split('&').find_map(|pair| {
                 let mut parts = pair.splitn(2, '=');
                 let key = parts.next()?;
@@ -1411,8 +1411,12 @@ impl Web4Handler {
                 }
             })
         });
-        let _owner = match owner {
-            Some(value) if !value.is_empty() => value,
+        let owner = match owner_raw {
+            Some(value) if !value.is_empty() => {
+                urlencoding::decode(value)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| value.to_string())
+            }
             _ => {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
@@ -1421,16 +1425,51 @@ impl Web4Handler {
             }
         };
 
-        // NOTE: list_domains_by_owner requires iterating all persisted domains, which is not
-        // yet implemented in the DomainRegistry. This endpoint is reserved for future use.
-        // For now, we return a not-implemented error rather than silently returning empty results,
-        // which would confuse API clients expecting functional behavior.
-        return Err(anyhow!(
-            "The list_domains_by_owner endpoint is not yet implemented. \
-             This feature requires registry support for domain enumeration by owner. \
-             Please use domain lookup endpoints for specific domains or track deployments \
-             in your application state."
-        ));
+        let on_chain = {
+            let blockchain = self.blockchain.read().await;
+            blockchain.get_all_domains().clone()
+        };
+        let sled_records = self.domain_registry.list_all_domain_records().await;
+        let entries = filter_catalog_entries_by_owner(
+            &merge_catalog_entries(&on_chain, sled_records),
+            &owner,
+        );
+
+        let domains: Vec<serde_json::Value> = entries
+            .into_iter()
+            .map(|entry| {
+                let expires_at = entry
+                    .get("expires_at")
+                    .map(|v| {
+                        if let Some(n) = v.as_u64() {
+                            n.to_string()
+                        } else {
+                            v.as_str().unwrap_or("").to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "domain": entry.get("domain").and_then(|v| v.as_str()).unwrap_or(""),
+                    "owner": entry.get("owner").and_then(|v| v.as_str()).unwrap_or(""),
+                    "expires_at": expires_at,
+                    "content_cid": entry.get("manifest_cid").and_then(|v| v.as_str()),
+                    "classification": "commercial",
+                })
+            })
+            .collect();
+
+        let count = domains.len();
+        let body = serde_json::to_vec(&serde_json::json!({
+            "domains": domains,
+            "count": count,
+        }))
+        .map_err(|e| anyhow!("Failed to serialize domain list: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            body,
+            "application/json".to_string(),
+            None,
+        ))
     }
 
     /// Transfer domain to new owner
@@ -2212,6 +2251,22 @@ impl Web4Handler {
 /// and the corresponding sled record (if any) is silently dropped. Sled-only domains
 /// are appended and tagged `"sled_cache"`. The returned list is sorted alphabetically
 /// by domain name for deterministic output.
+fn filter_catalog_entries_by_owner(
+    entries: &[serde_json::Value],
+    owner: &str,
+) -> Vec<serde_json::Value> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("owner")
+                .and_then(|v| v.as_str())
+                .is_some_and(|record_owner| record_owner == owner)
+        })
+        .cloned()
+        .collect()
+}
+
 fn merge_catalog_entries(
     on_chain: &std::collections::HashMap<String, lib_blockchain::transaction::OnChainDomainRecord>,
     sled_records: Vec<lib_network::web4::DomainRecord>,
