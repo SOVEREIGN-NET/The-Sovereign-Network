@@ -851,6 +851,26 @@ pub fn fee_tx_hash_from_hex(fee_payment_tx_hex: &str) -> Result<String, String> 
     Ok(hex::encode(tx.hash().as_bytes()))
 }
 
+/// Extract canonical fee amount and payer wallet from a signed fee TokenTransfer.
+pub fn fee_transfer_fields_from_hex(
+    fee_payment_tx_hex: &str,
+) -> Result<(u128, [u8; 32]), String> {
+    let bytes = hex::decode(fee_payment_tx_hex.trim())
+        .map_err(|e| format!("fee_payment_tx is not valid hex: {}", e))?;
+    let tx = lib_blockchain::transaction::decode_client_transaction(&bytes)
+        .map_err(|e| format!("fee_payment_tx decode failed: {}", e))?;
+    if tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
+        return Err(format!(
+            "fee_payment_tx must be a TokenTransfer, got {:?}",
+            tx.transaction_type
+        ));
+    }
+    let transfer = tx
+        .token_transfer_data()
+        .ok_or_else(|| "fee_payment_tx missing TokenTransfer payload".to_string())?;
+    Ok((transfer.amount, transfer.from))
+}
+
 fn domain_registration_title_description_tags(
     domain: &str,
     metadata: Option<&serde_json::Value>,
@@ -885,6 +905,8 @@ pub fn sign_domain_registration_system_tx(
     domain: &str,
     owner_did: &str,
     fee_tx_hash_hex: &str,
+    fee_amount_atoms: u128,
+    fee_payer_wallet_id: [u8; 32],
     timestamp: u64,
     title: &str,
     description: &str,
@@ -905,8 +927,8 @@ pub fn sign_domain_registration_system_tx(
         tags,
         duration_days: 365,
         fee_tx_hash: fee_tx_hash_hex.to_string(),
-        fee_amount_atoms: 0,
-        fee_payer_wallet_id: [0u8; 32],
+        fee_amount_atoms,
+        fee_payer_wallet_id,
     };
     let memo = payload
         .encode_memo()
@@ -1014,14 +1036,17 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
     }
 
     let fee_tx_hash_hex = fee_tx_hash_from_hex(&fee_payment_tx)?;
+    let (fee_amount_atoms, fee_payer_wallet_id) = fee_transfer_fields_from_hex(&fee_payment_tx)?;
+    const SOV_ATOM_18: u128 = 1_000_000_000_000_000_000;
+    let fee_whole = (fee_amount_atoms / SOV_ATOM_18) as u64;
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
         .as_secs();
 
-    // Sign: domain|timestamp|fee_amount
-    let message = format!("{}|{}|{}", domain, timestamp, DOMAIN_REGISTRATION_FEE);
+    // Sign: domain|timestamp|fee_amount (whole SOV, must match fee_payment_tx)
+    let message = format!("{}|{}|{}", domain, timestamp, fee_whole);
     let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
@@ -1032,6 +1057,8 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
         domain,
         &identity.did,
         &fee_tx_hash_hex,
+        fee_amount_atoms,
+        fee_payer_wallet_id,
         timestamp,
         &title,
         &description,
@@ -1046,7 +1073,7 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
         metadata,
         signature: hex::encode(&signature),
         timestamp,
-        fee: Some(DOMAIN_REGISTRATION_FEE),
+        fee: Some(fee_whole),
         fee_payment_tx: Some(fee_payment_tx),
         domain_tx_signature_hex,
     };

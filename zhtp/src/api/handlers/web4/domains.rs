@@ -494,7 +494,7 @@ impl Web4Handler {
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
         let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
 
-        let fee_tx_hash_hex = if is_register {
+        let (fee_tx_hash_hex, owner_wallet_id_bytes) = if is_register {
             // Resolve the owner's Primary wallet and run the optimistic
             // SOV balance preview. Only relevant on the register path;
             // updates skip this entire block (reviewer #2691/L455).
@@ -640,7 +640,7 @@ impl Web4Handler {
                 registration_fee_whole,
                 hex::encode(&owner_wallet_id_bytes[..8])
             );
-            hex_hash
+            (hex_hash, owner_wallet_id_bytes)
         } else {
             // Update path: no consensus-level fee, no balance preview,
             // no wallet resolution. The handler still records the legacy
@@ -650,7 +650,7 @@ impl Web4Handler {
                 " Domain {} already registered — applying as DomainUpdate (no fee debit)",
                 simple_request.domain
             );
-            String::new()
+            (String::new(), [0u8; 32])
         };
 
         // Prepare content mappings WITH RICH METADATA for storage
@@ -781,6 +781,15 @@ impl Web4Handler {
         let registration_response =
             registration_result.map_err(|e| anyhow!("Domain registration failed: {}", e))?;
 
+        if !registration_response.success {
+            return Err(anyhow!(
+                "Domain registration failed: {}",
+                registration_response
+                    .error
+                    .unwrap_or_else(|| "invalid registration proof".to_string())
+            ));
+        }
+
         let total_fees = registration_response.fees_charged;
         info!(
             " Domain {} registered with {} SOV fees",
@@ -846,13 +855,8 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
-                    // CONS-516: V1 fields (zeroed) so `process_domain_transactions`
-                    // takes the legacy no-debit branch. The fee is paid by the
-                    // separate user-signed TokenTransfer enqueued above; the
-                    // chain debit-attempt path is unreachable from an unsigned
-                    // system tx (signer key_id is zeroed → owner re-check fails).
-                    fee_amount_atoms: 0,
-                    fee_payer_wallet_id: [0u8; 32],
+                    fee_amount_atoms: registration_fee_sov,
+                    fee_payer_wallet_id: owner_wallet_id_bytes,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
