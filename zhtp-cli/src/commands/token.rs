@@ -275,11 +275,11 @@ pub async fn handle_token_command_with_output<O: Output>(
     }
 }
 
-/// Handle token creation
+/// Handle token creation (also used by `dao launch`).
 /// NOTE: Creator identity is derived from authenticated session on server
-async fn handle_create<O: Output>(
+pub async fn handle_create(
     cli: &ZhtpCli,
-    output: &O,
+    output: &dyn Output,
     name: &str,
     symbol: &str,
     supply: u128,
