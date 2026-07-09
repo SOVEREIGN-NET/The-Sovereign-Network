@@ -12,6 +12,10 @@ pub const TOKEN_CREATION_MEMO_PREFIX: &[u8] = b"ZHTP_TOKEN_CREATE_V1:";
 pub const MAX_TOKEN_NAME_BYTES: usize = 64;
 /// Maximum token symbol length.
 pub const MAX_TOKEN_SYMBOL_BYTES: usize = 10;
+/// SovSwap / DAO launch UI symbol cap (stricter than protocol max).
+pub const DAO_LAUNCH_MAX_SYMBOL_CHARS: usize = 6;
+/// Minimum whole-token supply for DAO launch (atoms = whole * 10^decimals).
+pub const DAO_LAUNCH_MIN_WHOLE_SUPPLY: u128 = 1_000;
 /// Maximum memo bytes accepted for token creation payload.
 pub const MAX_TOKEN_CREATION_MEMO_BYTES: usize = 4096;
 /// Canonical treasury allocation for non-SOV token deployments (20%).
@@ -85,6 +89,51 @@ impl TokenCreationPayloadV1 {
             return Err("treasury_recipient must be non-zero".to_string());
         }
         Ok(())
+    }
+
+    /// Stricter SovSwap-aligned constraints for the DAO launch user path (M2).
+    ///
+    /// Protocol `validate()` allows symbols up to 10 chars; the app uses ≤6
+    /// uppercase. Minimum supply is 1_000 whole tokens at `decimals` precision.
+    pub fn validate_dao_launch_ui_constraints(&self) -> Result<(), String> {
+        self.validate()?;
+        if self.symbol.len() > DAO_LAUNCH_MAX_SYMBOL_CHARS {
+            return Err(format!(
+                "symbol length {} exceeds DAO launch max {}",
+                self.symbol.len(),
+                DAO_LAUNCH_MAX_SYMBOL_CHARS
+            ));
+        }
+        if !self
+            .symbol
+            .chars()
+            .all(|c| c.is_ascii_uppercase() && c.is_ascii_alphabetic())
+        {
+            return Err("symbol must be uppercase A-Z".to_string());
+        }
+        let scale = 10u128
+            .checked_pow(self.decimals as u32)
+            .ok_or_else(|| format!("decimals {} overflow for supply scale", self.decimals))?;
+        let min_atoms = DAO_LAUNCH_MIN_WHOLE_SUPPLY
+            .checked_mul(scale)
+            .ok_or_else(|| "minimum supply atoms overflow".to_string())?;
+        if self.initial_supply < min_atoms {
+            return Err(format!(
+                "initial_supply must be at least {} whole tokens ({} atoms at {} decimals)",
+                DAO_LAUNCH_MIN_WHOLE_SUPPLY, min_atoms, self.decimals
+            ));
+        }
+        Ok(())
+    }
+
+    /// Minimum launch supply in atomic units for the given display decimals.
+    pub fn dao_launch_min_supply_atoms(decimals: u8) -> Result<u128, String> {
+        let scale = 10u128
+            .checked_pow(decimals as u32)
+            .ok_or_else(|| format!("decimals {} overflow for supply scale", decimals))?;
+        DAO_LAUNCH_MIN_WHOLE_SUPPLY
+            .checked_mul(scale)
+            .ok_or_else(|| "minimum supply atoms overflow".to_string())
     }
 
     /// Deterministically split initial supply into (creator, treasury) allocation.
@@ -204,5 +253,36 @@ mod tests {
         };
 
         assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn dao_launch_ui_constraints_enforce_symbol_and_supply() {
+        let ok = TokenCreationPayloadV1 {
+            name: "Bubble".to_string(),
+            symbol: "BUBL".to_string(),
+            initial_supply: 1_000 * 10u128.pow(18),
+            decimals: 18,
+            treasury_allocation_bps: TOKEN_CREATION_TREASURY_ALLOCATION_BPS,
+            treasury_recipient: [1u8; 32],
+        };
+        assert!(ok.validate_dao_launch_ui_constraints().is_ok());
+
+        let long_symbol = TokenCreationPayloadV1 {
+            symbol: "SEVENNN".to_string(),
+            ..ok.clone()
+        };
+        assert!(long_symbol.validate_dao_launch_ui_constraints().is_err());
+
+        let lowercase = TokenCreationPayloadV1 {
+            symbol: "bubl".to_string(),
+            ..ok.clone()
+        };
+        assert!(lowercase.validate_dao_launch_ui_constraints().is_err());
+
+        let low_supply = TokenCreationPayloadV1 {
+            initial_supply: 999 * 10u128.pow(18),
+            ..ok
+        };
+        assert!(low_supply.validate_dao_launch_ui_constraints().is_err());
     }
 }

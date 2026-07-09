@@ -11,6 +11,7 @@ use crate::commands::web4_utils::{
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::contracts::derive_dao_id;
+use lib_blockchain::transaction::TokenCreationPayloadV1;
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::DaoExecutionData;
 use lib_blockchain::types::dao::DAOType;
@@ -380,6 +381,17 @@ async fn handle_dao_command_impl(
             symbol,
             &treasury[..16.min(treasury.len())]
         ))?;
+        let draft = TokenCreationPayloadV1 {
+            name: name.clone(),
+            symbol: symbol.clone(),
+            initial_supply: supply,
+            decimals,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient: [1u8; 32],
+        };
+        draft.validate_dao_launch_ui_constraints().map_err(|e| {
+            CliError::ConfigError(format!("DAO launch validation failed: {e}"))
+        })?;
         token::handle_create(cli, output, &name, &symbol, supply, decimals, &treasury).await?;
         let token_id = hex::encode(lib_blockchain::contracts::utils::generate_custom_token_id(
             &name, &symbol,

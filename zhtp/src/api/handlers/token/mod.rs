@@ -248,6 +248,13 @@ impl TokenHandler {
                 ));
             }
         };
+        if let Err(e) = payload.validate_dao_launch_ui_constraints() {
+            tracing::error!("[token/create] DAO launch constraints FAILED: {}", e);
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                format!("DAO launch validation failed: {}", e),
+            ));
+        }
         let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
         let TokenCreationPayloadV1 {
             name,
