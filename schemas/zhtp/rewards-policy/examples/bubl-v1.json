@@ -1,0 +1,44 @@
+{
+  "schema": "zhtp/rewards-policy/v1",
+  "asset_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "description": "Canonical BUBL mobile rewards policy. Replace asset_id with launch tx hash after AssetLaunch migration. Amounts match on-chain constants in reward_claim.rs and rewards/mod.rs (C2 resolved: new_partner = 20 BUBL, not 200).",
+  "triggers": [
+    {
+      "id": "welcome",
+      "event": "welcome",
+      "kind": "once_per_did",
+      "enabled": true,
+      "amount_atoms": "100000000000000000000"
+    },
+    {
+      "id": "daily_checkin",
+      "event": "daily_checkin",
+      "kind": "once_per_utc_day",
+      "enabled": true,
+      "base_amount_atoms": "10000000000000000000",
+      "streak_bonus": {
+        "per_day_atoms": "1000000000000000000",
+        "cap_days": 10
+      }
+    },
+    {
+      "id": "active_session",
+      "event": "active_session",
+      "kind": "once_per_utc_day",
+      "enabled": true,
+      "amount_atoms": "2000000000000000000"
+    },
+    {
+      "id": "new_partner",
+      "event": "new_partner",
+      "kind": "distinct_peer_per_iso_week",
+      "enabled": true,
+      "amount_atoms": "20000000000000000000",
+      "weekly_cap": 5
+    }
+  ],
+  "budget": {
+    "max_daily_outflow_atoms": "10000000000000000000000",
+    "max_lifetime_per_did_atoms": "1000000000000000000000"
+  }
+}
