@@ -731,6 +731,21 @@ pub enum IdentityAction {
         #[arg(short, long)]
         recovery_options: Vec<String>,
     },
+    /// Zero-to-creator wizard: generate keystore (if needed) + on-chain registration.
+    ///
+    /// Preferred entry point before `dao launch`. Equivalent to `register` with
+    /// documented next steps for DAO token deployment.
+    Init {
+        /// Display name for the new identity
+        #[arg(short, long)]
+        display_name: String,
+        /// Device identifier
+        #[arg(long, default_value = "cli-device")]
+        device_id: String,
+        /// Path to identity keystore directory
+        #[arg(short, long)]
+        keystore: Option<String>,
+    },
     /// Register identity on-chain (creates identity + wallets + SOV welcome bonus)
     ///
     /// If no local keystore exists, generates keys first. Then calls the node's

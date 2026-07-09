@@ -30,6 +30,7 @@ use super::web4_utils::{build_trust_config, connect_client, load_identity_from_k
 pub enum IdentityOperation {
     Create,
     CreateWithType,
+    Init,
     Verify,
     List,
     Import,
@@ -42,6 +43,7 @@ impl IdentityOperation {
         match self {
             IdentityOperation::Create => "Create standard identity",
             IdentityOperation::CreateWithType => "Create identity with specific type",
+            IdentityOperation::Init => "Initialize creator identity (keystore + on-chain register)",
             IdentityOperation::Verify => "Verify identity on blockchain",
             IdentityOperation::List => "List blockchain identities",
             IdentityOperation::Import => "Import identity from backup",
@@ -57,7 +59,7 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
     match action {
         IdentityAction::Create { .. } => IdentityOperation::Create,
         IdentityAction::CreateDid { .. } => IdentityOperation::CreateWithType,
-        IdentityAction::Register { .. } => IdentityOperation::Create,
+        IdentityAction::Init { .. } | IdentityAction::Register { .. } => IdentityOperation::Create,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
         IdentityAction::Import { .. } => IdentityOperation::Import,
@@ -110,6 +112,20 @@ async fn handle_identity_command_impl(
 
             // Imperative: File I/O
             create_identity_with_type_impl(&name, &identity_type, output).await
+        }
+        IdentityAction::Init {
+            display_name,
+            device_id,
+            keystore,
+        } => {
+            init_creator_identity(
+                &display_name,
+                &device_id,
+                keystore.as_deref(),
+                cli,
+                output,
+            )
+            .await
         }
         IdentityAction::Register {
             display_name,
@@ -439,6 +455,31 @@ async fn create_identity_impl(
     output.success(&format!("Private key saved to: {:?}", private_key_file))?;
     output.warning("Keep your identity secure! It contains cryptographic material.")?;
 
+    Ok(())
+}
+
+/// DAO creator wizard: keystore + on-chain registration + next-step guidance.
+async fn init_creator_identity(
+    display_name: &str,
+    device_id: &str,
+    keystore_path: Option<&str>,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    output.header("DAO Creator Identity Init")?;
+    register_identity_on_chain(display_name, device_id, keystore_path, cli, output).await?;
+
+    let keystore = match keystore_path {
+        Some(path) => PathBuf::from(path),
+        None => get_default_keystore_path()?,
+    };
+    output.print("")?;
+    output.success("Creator identity ready.")?;
+    output.print("Next steps:")?;
+    output.print(&format!("  1. Keystore: {:?}", keystore))?;
+    output.print("  2. Launch DAO token: zhtp-cli dao launch (see #2816) or zhtp-cli token create")?;
+    output.print("  3. Operator runbook: docs/ops/dao-launch-bootstrap.md")?;
+    output.print("  4. Rewards policy: schemas/zhtp/rewards-policy/examples/bubl-v1.json")?;
     Ok(())
 }
 
