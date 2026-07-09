@@ -2267,7 +2267,18 @@ impl<'a> StatefulTransactionValidator<'a> {
                         && payload.fee_payer_wallet_id == [0u8; 32]
                         && !payload.fee_tx_hash.is_empty();
                     if is_cons516_companion {
-                        // owner_did vs signer check above is sufficient here.
+                        let bc = self
+                            .blockchain
+                            .ok_or(ValidationError::InvalidTransaction)?;
+                        crate::transaction::domain::validate_cons516_companion_fee(
+                            bc,
+                            transaction,
+                            &payload,
+                        )
+                        .map_err(|e| {
+                            tracing::warn!("[DOMAIN_REG] CONS-516 companion fee invalid: {e}");
+                            ValidationError::InvalidTransaction
+                        })?;
                     } else if let Some(bc) = self.blockchain {
                         let required = bc.tx_fee_config.domain_registration_fee_atoms;
                         if payload.fee_amount_atoms < required {

@@ -133,14 +133,17 @@ fn validate_trigger(t: &RewardsTrigger) -> Result<(), RewardsPolicyError> {
 
     match t.kind {
         TriggerKind::OncePerDid => {
+            if event != RewardsPolicyEvent::Welcome {
+                return Err(RewardsPolicyError::InvalidAmount {
+                    trigger_id: id.clone(),
+                    reason: "once_per_did must pair with event welcome".to_string(),
+                });
+            }
             let amount = t.amount_atoms.ok_or(RewardsPolicyError::MissingField {
                 trigger_id: id.clone(),
                 field: "amount_atoms",
             })?;
             require_positive(id, amount)?;
-            if event != RewardsPolicyEvent::Welcome {
-                // allowed but warn via validation — welcome is the expected pairing
-            }
         }
         TriggerKind::OncePerUtcDay => {
             if let Some(amount) = t.amount_atoms {
@@ -199,10 +202,32 @@ fn require_positive(trigger_id: &str, amount: u128) -> Result<(), RewardsPolicyE
     Ok(())
 }
 
-/// Canonical JSON bytes for hashing (sorted keys, compact).
+fn canonicalize_json_value(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{Map, Value};
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<_> = map.keys().cloned().collect();
+            keys.sort();
+            let mut out = Map::new();
+            for k in keys {
+                if let Some(v) = map.get(&k) {
+                    out.insert(k, canonicalize_json_value(v));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json_value).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Canonical JSON bytes for hashing (recursively sorted object keys, compact).
 pub fn canonical_policy_bytes(policy: &RewardsPolicyV1) -> Result<Vec<u8>, RewardsPolicyError> {
     validate_rewards_policy_value(policy)?;
-    serde_json::to_vec(policy).map_err(|e| RewardsPolicyError::InvalidJson(e.to_string()))
+    let value =
+        serde_json::to_value(policy).map_err(|e| RewardsPolicyError::InvalidJson(e.to_string()))?;
+    let canon = canonicalize_json_value(&value);
+    serde_json::to_vec(&canon).map_err(|e| RewardsPolicyError::InvalidJson(e.to_string()))
 }
 
 /// BLAKE3 hash of canonical policy JSON — stored on-chain as `policy_hash`.
@@ -233,6 +258,72 @@ pub fn expected_amount_for_trigger(
             }
         }
     }
+}
+
+/// Canonical BUBL policy matching executor reward schedule (schema-backed).
+pub fn legacy_bubl_policy() -> RewardsPolicyV1 {
+    use super::types::StreakBonus;
+    use bubl_canonical::*;
+    RewardsPolicyV1 {
+        schema: REWARDS_POLICY_SCHEMA_V1.to_string(),
+        asset_id: "00".repeat(32),
+        description: Some("canonical BUBL TokenCreation rewards".to_string()),
+        triggers: vec![
+            RewardsTrigger {
+                id: "welcome".to_string(),
+                kind: TriggerKind::OncePerDid,
+                enabled: true,
+                event: Some(RewardsPolicyEvent::Welcome),
+                amount_atoms: Some(WELCOME),
+                base_amount_atoms: None,
+                streak_bonus: None,
+                weekly_cap: None,
+            },
+            RewardsTrigger {
+                id: "daily_checkin".to_string(),
+                kind: TriggerKind::OncePerUtcDay,
+                enabled: true,
+                event: Some(RewardsPolicyEvent::DailyCheckin),
+                amount_atoms: None,
+                base_amount_atoms: Some(CHECKIN_BASE),
+                streak_bonus: Some(StreakBonus {
+                    per_day_atoms: STREAK_PER_DAY,
+                    cap_days: STREAK_CAP_DAYS,
+                }),
+                weekly_cap: None,
+            },
+            RewardsTrigger {
+                id: "active_session".to_string(),
+                kind: TriggerKind::OncePerUtcDay,
+                enabled: true,
+                event: Some(RewardsPolicyEvent::ActiveSession),
+                amount_atoms: Some(ACTIVE_SESSION),
+                base_amount_atoms: None,
+                streak_bonus: None,
+                weekly_cap: None,
+            },
+            RewardsTrigger {
+                id: "new_partner".to_string(),
+                kind: TriggerKind::DistinctPeerPerIsoWeek,
+                enabled: true,
+                event: Some(RewardsPolicyEvent::NewPartner),
+                amount_atoms: Some(NEW_PARTNER),
+                base_amount_atoms: None,
+                streak_bonus: None,
+                weekly_cap: Some(WEEKLY_PARTNER_CAP),
+            },
+        ],
+        budget: None,
+    }
+}
+
+pub fn weekly_partner_cap(policy: &RewardsPolicyV1) -> u32 {
+    policy
+        .triggers
+        .iter()
+        .find(|t| t.enabled && t.event == Some(RewardsPolicyEvent::NewPartner))
+        .and_then(|t| t.weekly_cap)
+        .unwrap_or(0)
 }
 
 /// BUBL canonical constants for regression tests (18-decimal atoms).
@@ -360,6 +451,40 @@ mod tests {
     fn rejects_wrong_schema() {
         let mut policy = example_bubl_policy();
         policy.schema = "zhtp/rewards-policy/v0".to_string();
+        assert!(validate_rewards_policy_value(&policy).is_err());
+    }
+
+    #[test]
+    fn canonicalize_json_sorts_object_keys() {
+        use serde_json::json;
+        let unordered = json!({"z": 1, "a": 2, "m": 3});
+        let ordered = json!({"a": 2, "m": 3, "z": 1});
+        assert_eq!(
+            canonicalize_json_value(&unordered),
+            canonicalize_json_value(&ordered)
+        );
+    }
+
+    #[test]
+    fn canonical_policy_bytes_stable_across_field_order() {
+        let policy = example_bubl_policy();
+        let bytes_a = canonical_policy_bytes(&policy).unwrap();
+        let mut value = serde_json::to_value(&policy).unwrap();
+        if let serde_json::Value::Object(ref mut map) = value {
+            let desc = map.remove("description").unwrap();
+            let schema = map.remove("schema").unwrap();
+            map.insert("description".to_string(), desc);
+            map.insert("schema".to_string(), schema);
+        }
+        let policy_reordered: RewardsPolicyV1 = serde_json::from_value(value).unwrap();
+        let bytes_b = canonical_policy_bytes(&policy_reordered).unwrap();
+        assert_eq!(bytes_a, bytes_b);
+    }
+
+    #[test]
+    fn rejects_once_per_did_with_non_welcome_event() {
+        let mut policy = example_bubl_policy();
+        policy.triggers[0].event = Some(RewardsPolicyEvent::DailyCheckin);
         assert!(validate_rewards_policy_value(&policy).is_err());
     }
 }
