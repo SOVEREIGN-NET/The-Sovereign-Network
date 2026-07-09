@@ -744,6 +744,11 @@ pub mod utils {
                     return Err(TransactionCreateError::InvalidOutputs);
                 }
             }
+            TransactionType::RewardClaim => {
+                if !inputs.is_empty() || !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+            }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validation will be handled during transaction validation
                 // Requires governance_config_data and caller must have Governance role

@@ -2116,6 +2116,89 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(None)
     }
 
+    // =========================================================================
+    // BUBL reward claim eligibility (chain-native caps)
+    // =========================================================================
+
+    fn get_bubl_reward_welcome(&self, did: &str) -> StorageResult<Option<u64>> {
+        let _ = did;
+        Ok(None)
+    }
+
+    fn put_bubl_reward_welcome(&self, did: &str, height: u64) -> StorageResult<()> {
+        let _ = (did, height);
+        Ok(())
+    }
+
+    fn get_bubl_reward_daily(&self, key: &str) -> StorageResult<Option<u64>> {
+        let _ = key;
+        Ok(None)
+    }
+
+    fn put_bubl_reward_daily(&self, key: &str, height: u64) -> StorageResult<()> {
+        let _ = (key, height);
+        Ok(())
+    }
+
+    fn get_bubl_reward_partner(&self, key: &str) -> StorageResult<Option<u64>> {
+        let _ = key;
+        Ok(None)
+    }
+
+    fn put_bubl_reward_partner(&self, key: &str, height: u64) -> StorageResult<()> {
+        let _ = (key, height);
+        Ok(())
+    }
+
+    fn get_bubl_reward_partner_count(&self, key: &str) -> StorageResult<Option<u32>> {
+        let _ = key;
+        Ok(None)
+    }
+
+    fn put_bubl_reward_partner_count(&self, key: &str, count: u32) -> StorageResult<()> {
+        let _ = (key, count);
+        Ok(())
+    }
+
+    fn get_bubl_reward_streak(
+        &self,
+        did: &str,
+    ) -> StorageResult<Option<crate::transaction::RewardStreakRecord>> {
+        let _ = did;
+        Ok(None)
+    }
+
+    fn put_bubl_reward_streak(
+        &self,
+        did: &str,
+        streak: &crate::transaction::RewardStreakRecord,
+    ) -> StorageResult<()> {
+        let _ = (did, streak);
+        Ok(())
+    }
+
+    fn iter_bubl_reward_welcome(&self) -> StorageResult<Vec<(String, u64)>> {
+        Ok(vec![])
+    }
+
+    fn iter_bubl_reward_daily(&self) -> StorageResult<Vec<(String, u64)>> {
+        Ok(vec![])
+    }
+
+    fn iter_bubl_reward_partner(&self) -> StorageResult<Vec<(String, u64)>> {
+        Ok(vec![])
+    }
+
+    fn iter_bubl_reward_partner_count(&self) -> StorageResult<Vec<(String, u32)>> {
+        Ok(vec![])
+    }
+
+    fn iter_bubl_reward_streak(
+        &self,
+    ) -> StorageResult<Vec<(String, crate::transaction::RewardStreakRecord)>> {
+        Ok(vec![])
+    }
+
     /// Persist the canonical observer admission policy.
     ///
     /// This is a metadata write — like `save_oracle_state`, it does not

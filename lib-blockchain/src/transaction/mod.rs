@@ -15,6 +15,7 @@ pub mod fee;
 pub mod hashing;
 pub mod mint_authorization;
 pub mod oracle_governance;
+pub mod reward_claim;
 pub mod signing;
 pub mod system_tx_signature;
 pub mod threshold_approval;
@@ -24,6 +25,11 @@ pub mod validation;
 
 pub use credentials::{
     RegisterCredentialData, UpdateCredentialPasswordData, UserCredential,
+};
+pub use reward_claim::{
+    checkin_amount_for_day, expected_amount_for_event, key_id_from_did, RewardClaimData,
+    RewardEventKind, RewardStreakRecord, REWARD_ACTIVE_SESSION_ATOMS, REWARD_CHECKIN_BASE_ATOMS,
+    REWARD_CLAIM_MEMO, REWARD_NEW_PARTNER_ATOMS, REWARD_WELCOME_ATOMS, WEEKLY_PARTNER_CAP,
 };
 pub use domain::{
     DomainRegistrationPayload, DomainUpdatePayload, OnChainDomainRecord,

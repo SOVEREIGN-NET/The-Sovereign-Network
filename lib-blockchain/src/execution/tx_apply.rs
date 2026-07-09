@@ -327,6 +327,58 @@ impl<'a> StateMutator<'a> {
         Ok(())
     }
 
+    pub fn get_bubl_reward_welcome(&self, did: &str) -> TxApplyResult<Option<u64>> {
+        Ok(self.store.get_bubl_reward_welcome(did)?)
+    }
+
+    pub fn put_bubl_reward_welcome(&self, did: &str, height: u64) -> TxApplyResult<()> {
+        self.store.put_bubl_reward_welcome(did, height)?;
+        Ok(())
+    }
+
+    pub fn get_bubl_reward_daily(&self, key: &str) -> TxApplyResult<Option<u64>> {
+        Ok(self.store.get_bubl_reward_daily(key)?)
+    }
+
+    pub fn put_bubl_reward_daily(&self, key: &str, height: u64) -> TxApplyResult<()> {
+        self.store.put_bubl_reward_daily(key, height)?;
+        Ok(())
+    }
+
+    pub fn get_bubl_reward_partner(&self, key: &str) -> TxApplyResult<Option<u64>> {
+        Ok(self.store.get_bubl_reward_partner(key)?)
+    }
+
+    pub fn put_bubl_reward_partner(&self, key: &str, height: u64) -> TxApplyResult<()> {
+        self.store.put_bubl_reward_partner(key, height)?;
+        Ok(())
+    }
+
+    pub fn get_bubl_reward_partner_count(&self, key: &str) -> TxApplyResult<Option<u32>> {
+        Ok(self.store.get_bubl_reward_partner_count(key)?)
+    }
+
+    pub fn put_bubl_reward_partner_count(&self, key: &str, count: u32) -> TxApplyResult<()> {
+        self.store.put_bubl_reward_partner_count(key, count)?;
+        Ok(())
+    }
+
+    pub fn get_bubl_reward_streak(
+        &self,
+        did: &str,
+    ) -> TxApplyResult<Option<crate::transaction::RewardStreakRecord>> {
+        Ok(self.store.get_bubl_reward_streak(did)?)
+    }
+
+    pub fn put_bubl_reward_streak(
+        &self,
+        did: &str,
+        streak: &crate::transaction::RewardStreakRecord,
+    ) -> TxApplyResult<()> {
+        self.store.put_bubl_reward_streak(did, streak)?;
+        Ok(())
+    }
+
     pub fn get_governance_module_state(
         &self,
         asset_id: &[u8; 32],

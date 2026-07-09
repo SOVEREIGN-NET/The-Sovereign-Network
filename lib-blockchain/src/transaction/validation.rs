@@ -241,6 +241,7 @@ impl TransactionValidator {
             || matches!(
                 transaction.transaction_type,
                 TransactionType::TokenTransfer
+                    | TransactionType::RewardClaim
                     | TransactionType::RegisterObserver
                     | TransactionType::UpdateObserverMetadata
                     | TransactionType::SuspendObserver
@@ -304,6 +305,7 @@ impl TransactionValidator {
         if matches!(
             transaction.transaction_type,
             TransactionType::TokenTransfer
+                | TransactionType::RewardClaim
                 | TransactionType::TokenCreation
                 | TransactionType::AssetLaunch
                 | TransactionType::AssetModuleUpgrade
@@ -427,6 +429,11 @@ impl TransactionValidator {
                 // Sender authorization is validated in the stateful phase
                 // (StatefulTransactionValidator) which has wallet registry access
                 // to resolve legacy HD-derived wallet_ids that differ from key_id.
+            }
+            TransactionType::RewardClaim => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
@@ -783,6 +790,25 @@ impl TransactionValidator {
                 }
                 if data.from != transaction.signature.public_key.key_id {
                     return Err(ValidationError::InvalidTransaction);
+                }
+            }
+            TransactionType::RewardClaim => {
+                let data = transaction
+                    .reward_claim_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                if data.amount == 0 {
+                    return Err(ValidationError::InvalidAmount);
+                }
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if data.from != transaction.signature.public_key.key_id {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                if data.event == crate::transaction::RewardEventKind::NewPartner
+                    && data.peer_did.as_deref().unwrap_or("").is_empty()
+                {
+                    return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::TokenMint => {
@@ -1796,6 +1822,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         if matches!(
             transaction.transaction_type,
             TransactionType::TokenTransfer
+                | TransactionType::RewardClaim
                 | TransactionType::TokenCreation
                 | TransactionType::AssetLaunch
                 | TransactionType::AssetModuleUpgrade
@@ -2361,7 +2388,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::AssetModuleUpgrade
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
-            | TransactionType::AssetRewardsDelegateRotate => {}
+            | TransactionType::AssetRewardsDelegateRotate
+            | TransactionType::RewardClaim => {}
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -2434,6 +2462,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         // TokenTransfer and DaoStake have no UTXO inputs — fee is deducted from the amount
         // at block processing time. Skip UTXO-based fee validation entirely.
         if transaction.transaction_type == TransactionType::TokenTransfer
+            || transaction.transaction_type == TransactionType::RewardClaim
             || transaction.transaction_type == TransactionType::DaoStake
             || transaction.transaction_type == TransactionType::DaoUnstake
         {
@@ -3475,6 +3504,11 @@ pub mod utils {
             }
             TransactionType::TokenTransfer => {
                 transaction.token_transfer_data().is_some() && transaction.outputs.is_empty()
+            }
+            TransactionType::RewardClaim => {
+                transaction.reward_claim_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
             }
             TransactionType::TokenMint => {
                 transaction.version >= 2

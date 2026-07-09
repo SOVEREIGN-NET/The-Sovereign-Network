@@ -30,6 +30,7 @@ mod test_utils;
 #[cfg(test)]
 mod tests;
 mod credentials;
+mod rewards;
 mod dao;
 pub mod replay;
 mod contracts;

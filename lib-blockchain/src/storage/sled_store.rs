@@ -52,6 +52,11 @@ const TREE_PENDING_TRANSACTIONS: &str = "pending_transactions"; // Non-consensus
 const TREE_QUORUM_PROOFS: &str = "quorum_proofs"; // BFT quorum proofs by height
 const TREE_DAO_STAKES: &str = "dao_stakes"; // SOV stakes to sector DAOs: dao_key_id||staker → DaoStakeRecord
 const TREE_OBSERVER_REGISTRY: &str = "observer_registry"; // Observer admission records: did_hash → ObserverAdmissionRecord
+const TREE_BUBL_REWARD_WELCOME: &str = "bubl_reward_welcome";
+const TREE_BUBL_REWARD_DAILY: &str = "bubl_reward_daily";
+const TREE_BUBL_REWARD_PARTNER: &str = "bubl_reward_partner";
+const TREE_BUBL_REWARD_PARTNER_COUNT: &str = "bubl_reward_partner_count";
+const TREE_BUBL_REWARD_STREAK: &str = "bubl_reward_streak";
 const TREE_META: &str = "meta";
 const TREE_WAL: &str = "wal_block_commit"; // Write-ahead log for crash-safe block commits
 const TREE_FORK_POINTS: &str = "fork_points"; // Fork audit log — direct durable writes
@@ -112,6 +117,11 @@ pub struct SledStore {
     quorum_proofs: Tree,         // BFT quorum proofs by height
     dao_stakes: Tree,            // SOV stakes: dao_key_id (32) || staker (32) → DaoStakeRecord
     observer_registry: Tree,     // Observer admission: did_hash (32) → ObserverAdmissionRecord
+    bubl_reward_welcome: Tree,
+    bubl_reward_daily: Tree,
+    bubl_reward_partner: Tree,
+    bubl_reward_partner_count: Tree,
+    bubl_reward_streak: Tree,
     utxo_merkle_leaves: Tree,    // leaf_index (u64 BE) → [u8; 32] leaf hash
     utxo_merkle_index: Tree,     // outpoint (36 bytes) → leaf_index (u64 BE)
     utxo_merkle_meta: Tree,      // metadata: next_leaf_index, current_root
@@ -390,6 +400,21 @@ impl SledStore {
         let observer_registry = db
             .open_tree(TREE_OBSERVER_REGISTRY)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bubl_reward_welcome = db
+            .open_tree(TREE_BUBL_REWARD_WELCOME)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bubl_reward_daily = db
+            .open_tree(TREE_BUBL_REWARD_DAILY)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bubl_reward_partner = db
+            .open_tree(TREE_BUBL_REWARD_PARTNER)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bubl_reward_partner_count = db
+            .open_tree(TREE_BUBL_REWARD_PARTNER_COUNT)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let bubl_reward_streak = db
+            .open_tree(TREE_BUBL_REWARD_STREAK)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let utxo_merkle_leaves = db
             .open_tree(TREE_UTXO_MERKLE_LEAVES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -482,6 +507,11 @@ impl SledStore {
             quorum_proofs,
             dao_stakes,
             observer_registry,
+            bubl_reward_welcome,
+            bubl_reward_daily,
+            bubl_reward_partner,
+            bubl_reward_partner_count,
+            bubl_reward_streak,
             utxo_merkle_leaves,
             utxo_merkle_index,
             utxo_merkle_meta,
@@ -898,6 +928,11 @@ impl SledStore {
             TREE_CBE_ACCOUNTS => &self.cbe_accounts,
             TREE_DAO_STAKES => &self.dao_stakes,
             TREE_OBSERVER_REGISTRY => &self.observer_registry,
+            TREE_BUBL_REWARD_WELCOME => &self.bubl_reward_welcome,
+            TREE_BUBL_REWARD_DAILY => &self.bubl_reward_daily,
+            TREE_BUBL_REWARD_PARTNER => &self.bubl_reward_partner,
+            TREE_BUBL_REWARD_PARTNER_COUNT => &self.bubl_reward_partner_count,
+            TREE_BUBL_REWARD_STREAK => &self.bubl_reward_streak,
             TREE_UTXO_MERKLE_LEAVES => &self.utxo_merkle_leaves,
             TREE_UTXO_MERKLE_INDEX => &self.utxo_merkle_index,
             TREE_UTXO_MERKLE_META => &self.utxo_merkle_meta,
@@ -1065,6 +1100,40 @@ impl SledStore {
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    fn staged_u64_lookup(&self, tree: &'static str, key: &[u8]) -> Option<Option<u64>> {
+        let batch_guard = self.tx_batch.lock().ok()?;
+        let batch = batch_guard.as_ref()?;
+        let staged = batch.tree_lookup(tree, key)?;
+        staged.map(|bytes| {
+            let arr: [u8; 8] = bytes.as_ref().try_into().ok()?;
+            Some(u64::from_le_bytes(arr))
+        })
+    }
+
+    fn staged_u32_lookup(&self, tree: &'static str, key: &[u8]) -> Option<Option<u32>> {
+        let batch_guard = self.tx_batch.lock().ok()?;
+        let batch = batch_guard.as_ref()?;
+        let staged = batch.tree_lookup(tree, key)?;
+        staged.map(|bytes| {
+            let arr: [u8; 4] = bytes.as_ref().try_into().ok()?;
+            Some(u32::from_le_bytes(arr))
+        })
+    }
+
+    fn put_in_block_batch(&self, tree: &'static str, key: &[u8], value: Vec<u8>) -> StorageResult<()> {
+        let mut guard = self.tx_batch.lock().map_err(|e| {
+            StorageError::Database(format!("lock poisoned in put_in_block_batch: {e}"))
+        })?;
+        if let Some(batch) = guard.as_mut() {
+            batch.tree(tree).insert(key, value);
+            Ok(())
+        } else {
+            Err(StorageError::Database(
+                "put_in_block_batch called outside begin_block/commit_block".to_owned(),
+            ))
+        }
     }
 }
 
@@ -3349,6 +3418,192 @@ impl BlockchainStore for SledStore {
             }
         }
         Ok(records)
+    }
+
+    // =========================================================================
+    // BUBL reward claim eligibility
+    // =========================================================================
+
+    fn get_bubl_reward_welcome(&self, did: &str) -> StorageResult<Option<u64>> {
+        let key = did.as_bytes();
+        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_WELCOME, key) {
+            return Ok(staged);
+        }
+        match self.bubl_reward_welcome.get(key) {
+            Ok(Some(bytes)) if bytes.len() == 8 => Ok(Some(u64::from_le_bytes(
+                bytes.as_ref().try_into().unwrap(),
+            ))),
+            Ok(_) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bubl_reward_welcome(&self, did: &str, height: u64) -> StorageResult<()> {
+        self.put_in_block_batch(
+            TREE_BUBL_REWARD_WELCOME,
+            did.as_bytes(),
+            height.to_le_bytes().to_vec(),
+        )
+    }
+
+    fn get_bubl_reward_daily(&self, key: &str) -> StorageResult<Option<u64>> {
+        let key = key.as_bytes();
+        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_DAILY, key) {
+            return Ok(staged);
+        }
+        match self.bubl_reward_daily.get(key) {
+            Ok(Some(bytes)) if bytes.len() == 8 => Ok(Some(u64::from_le_bytes(
+                bytes.as_ref().try_into().unwrap(),
+            ))),
+            Ok(_) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bubl_reward_daily(&self, key: &str, height: u64) -> StorageResult<()> {
+        self.put_in_block_batch(
+            TREE_BUBL_REWARD_DAILY,
+            key.as_bytes(),
+            height.to_le_bytes().to_vec(),
+        )
+    }
+
+    fn get_bubl_reward_partner(&self, key: &str) -> StorageResult<Option<u64>> {
+        let key = key.as_bytes();
+        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_PARTNER, key) {
+            return Ok(staged);
+        }
+        match self.bubl_reward_partner.get(key) {
+            Ok(Some(bytes)) if bytes.len() == 8 => Ok(Some(u64::from_le_bytes(
+                bytes.as_ref().try_into().unwrap(),
+            ))),
+            Ok(_) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bubl_reward_partner(&self, key: &str, height: u64) -> StorageResult<()> {
+        self.put_in_block_batch(
+            TREE_BUBL_REWARD_PARTNER,
+            key.as_bytes(),
+            height.to_le_bytes().to_vec(),
+        )
+    }
+
+    fn get_bubl_reward_partner_count(&self, key: &str) -> StorageResult<Option<u32>> {
+        let key = key.as_bytes();
+        if let Some(staged) = self.staged_u32_lookup(TREE_BUBL_REWARD_PARTNER_COUNT, key) {
+            return Ok(staged);
+        }
+        match self.bubl_reward_partner_count.get(key) {
+            Ok(Some(bytes)) if bytes.len() == 4 => Ok(Some(u32::from_le_bytes(
+                bytes.as_ref().try_into().unwrap(),
+            ))),
+            Ok(_) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bubl_reward_partner_count(&self, key: &str, count: u32) -> StorageResult<()> {
+        self.put_in_block_batch(
+            TREE_BUBL_REWARD_PARTNER_COUNT,
+            key.as_bytes(),
+            count.to_le_bytes().to_vec(),
+        )
+    }
+
+    fn get_bubl_reward_streak(
+        &self,
+        did: &str,
+    ) -> StorageResult<Option<crate::transaction::RewardStreakRecord>> {
+        let key = did.as_bytes();
+        {
+            let batch_guard = self.tx_batch.lock().map_err(|e| {
+                StorageError::Database(format!("lock poisoned in get_bubl_reward_streak: {e}"))
+            })?;
+            if let Some(ref batch) = *batch_guard {
+                if let Some(staged) = batch.tree_lookup(TREE_BUBL_REWARD_STREAK, key) {
+                    return match staged {
+                        Some(bytes) => Ok(Some(Self::deserialize(&bytes)?)),
+                        None => Ok(None),
+                    };
+                }
+            }
+        }
+        match self.bubl_reward_streak.get(key) {
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_bubl_reward_streak(
+        &self,
+        did: &str,
+        streak: &crate::transaction::RewardStreakRecord,
+    ) -> StorageResult<()> {
+        let bytes = Self::serialize(streak)?;
+        self.put_in_block_batch(TREE_BUBL_REWARD_STREAK, did.as_bytes(), bytes)
+    }
+
+    fn iter_bubl_reward_welcome(&self) -> StorageResult<Vec<(String, u64)>> {
+        let mut out = Vec::new();
+        for result in self.bubl_reward_welcome.iter() {
+            let (key, bytes) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            if bytes.len() == 8 {
+                let height = u64::from_le_bytes(bytes.as_ref().try_into().unwrap());
+                out.push((String::from_utf8_lossy(&key).into_owned(), height));
+            }
+        }
+        Ok(out)
+    }
+
+    fn iter_bubl_reward_daily(&self) -> StorageResult<Vec<(String, u64)>> {
+        let mut out = Vec::new();
+        for result in self.bubl_reward_daily.iter() {
+            let (key, bytes) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            if bytes.len() == 8 {
+                let height = u64::from_le_bytes(bytes.as_ref().try_into().unwrap());
+                out.push((String::from_utf8_lossy(&key).into_owned(), height));
+            }
+        }
+        Ok(out)
+    }
+
+    fn iter_bubl_reward_partner(&self) -> StorageResult<Vec<(String, u64)>> {
+        let mut out = Vec::new();
+        for result in self.bubl_reward_partner.iter() {
+            let (key, bytes) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            if bytes.len() == 8 {
+                let height = u64::from_le_bytes(bytes.as_ref().try_into().unwrap());
+                out.push((String::from_utf8_lossy(&key).into_owned(), height));
+            }
+        }
+        Ok(out)
+    }
+
+    fn iter_bubl_reward_partner_count(&self) -> StorageResult<Vec<(String, u32)>> {
+        let mut out = Vec::new();
+        for result in self.bubl_reward_partner_count.iter() {
+            let (key, bytes) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            if bytes.len() == 4 {
+                let count = u32::from_le_bytes(bytes.as_ref().try_into().unwrap());
+                out.push((String::from_utf8_lossy(&key).into_owned(), count));
+            }
+        }
+        Ok(out)
+    }
+
+    fn iter_bubl_reward_streak(
+        &self,
+    ) -> StorageResult<Vec<(String, crate::transaction::RewardStreakRecord)>> {
+        let mut out = Vec::new();
+        for result in self.bubl_reward_streak.iter() {
+            let (key, bytes) = result.map_err(|e| StorageError::Database(e.to_string()))?;
+            let streak: crate::transaction::RewardStreakRecord = Self::deserialize(&bytes)?;
+            out.push((String::from_utf8_lossy(&key).into_owned(), streak));
+        }
+        Ok(out)
     }
 
     fn get_observer_policy(
