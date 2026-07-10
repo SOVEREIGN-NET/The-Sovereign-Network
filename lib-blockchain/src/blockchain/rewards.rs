@@ -1,14 +1,21 @@
 //! BUBL reward eligibility facades (sled-first reads).
 
+use crate::contracts::utils::generate_custom_token_id;
 use crate::transaction::reward_claim::{
-    daily_claim_key, partner_claim_key, partner_count_key, RewardEventKind, RewardStreakRecord,
+    daily_claim_key, partner_claim_key, partner_count_key, streak_key, welcome_claim_key,
+    RewardEventKind, RewardStreakRecord,
 };
+
+fn bubl_token_id() -> [u8; 32] {
+    generate_custom_token_id("Bubble", "BUBL")
+}
 
 impl crate::blockchain::Blockchain {
     /// Whether this DID has already claimed the one-shot welcome reward on-chain.
     pub fn bubl_reward_welcome_claimed(&self, did: &str) -> bool {
+        let key = welcome_claim_key(&bubl_token_id(), did);
         if let Some(store) = self.get_store() {
-            match store.get_bubl_reward_welcome(did) {
+            match store.get_bubl_reward_welcome(&key) {
                 Ok(Some(_)) => return true,
                 Ok(None) => {}
                 Err(e) => {
@@ -30,7 +37,7 @@ impl crate::blockchain::Blockchain {
         did: &str,
         event: RewardEventKind,
     ) -> bool {
-        let key = daily_claim_key(date, did, event);
+        let key = daily_claim_key(&bubl_token_id(), date, did, event);
         if let Some(store) = self.get_store() {
             match store.get_bubl_reward_daily(&key) {
                 Ok(Some(_)) => return true,
@@ -48,7 +55,7 @@ impl crate::blockchain::Blockchain {
     }
 
     pub fn bubl_reward_partner_claimed(&self, week: &str, did: &str, peer_did: &str) -> bool {
-        let key = partner_claim_key(week, did, peer_did);
+        let key = partner_claim_key(&bubl_token_id(), week, did, peer_did);
         if let Some(store) = self.get_store() {
             match store.get_bubl_reward_partner(&key) {
                 Ok(Some(_)) => return true,
@@ -66,7 +73,7 @@ impl crate::blockchain::Blockchain {
     }
 
     pub fn bubl_reward_partners_this_week(&self, week: &str, did: &str) -> u32 {
-        let key = partner_count_key(week, did);
+        let key = partner_count_key(&bubl_token_id(), week, did);
         if let Some(store) = self.get_store() {
             match store.get_bubl_reward_partner_count(&key) {
                 Ok(Some(c)) => return c,
@@ -83,8 +90,9 @@ impl crate::blockchain::Blockchain {
     }
 
     pub fn bubl_reward_streak(&self, did: &str) -> RewardStreakRecord {
+        let key = streak_key(&bubl_token_id(), did);
         if let Some(store) = self.get_store() {
-            match store.get_bubl_reward_streak(did) {
+            match store.get_bubl_reward_streak(&key) {
                 Ok(Some(s)) => return s,
                 Ok(None) => {}
                 Err(e) => {

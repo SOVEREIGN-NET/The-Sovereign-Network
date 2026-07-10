@@ -83,6 +83,9 @@ pub fn apply_asset_launch(
                 nonce: 0,
             },
         )?;
+        if let Some(doc) = &rewards_cfg.policy_document {
+            mutator.put_rewards_policy_document(&rewards_cfg.policy_hash, doc)?;
+        }
     }
 
     if let Some(gov_cfg) = &payload.governance {
@@ -276,6 +279,9 @@ fn enable_rewards(
             nonce: 0,
         },
     )?;
+    if let Some(doc) = &cfg.policy_document {
+        mutator.put_rewards_policy_document(&cfg.policy_hash, doc)?;
+    }
     Ok(())
 }
 

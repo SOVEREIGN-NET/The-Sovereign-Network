@@ -31,10 +31,14 @@ pub struct RewardsLaunchConfig {
     pub spend_delegate_key_id: [u8; 32],
     pub policy_cid: [u8; 32],
     pub policy_hash: [u8; 32],
+    /// Canonical JSON policy document (DHT pin source). Stored on-chain keyed by `policy_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_document: Option<Vec<u8>>,
 }
 
 impl RewardsLaunchConfig {
     pub fn validate(&self) -> Result<(), String> {
+        use crate::rewards_policy::{policy_hash, validate_rewards_policy};
         if self.spend_delegate_key_id == [0u8; 32] {
             return Err("rewards spend_delegate_key_id must be non-zero".to_string());
         }
@@ -43,6 +47,16 @@ impl RewardsLaunchConfig {
         }
         if self.policy_hash == [0u8; 32] {
             return Err("rewards policy_hash must be non-zero".to_string());
+        }
+        let doc = self
+            .policy_document
+            .as_ref()
+            .ok_or_else(|| "rewards policy_document is required".to_string())?;
+        let policy = validate_rewards_policy(doc)
+            .map_err(|e| format!("invalid rewards policy_document: {e}"))?;
+        let hash = policy_hash(&policy).map_err(|e| format!("policy hash failed: {e}"))?;
+        if hash.as_array() != self.policy_hash {
+            return Err("policy_document does not match policy_hash".to_string());
         }
         Ok(())
     }

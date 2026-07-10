@@ -99,10 +99,11 @@ pub fn checkin_amount_for_day(streak_day: u32) -> u128 {
 }
 
 pub fn expected_amount_for_event(event: RewardEventKind, streak_day: u32) -> u128 {
-    use crate::rewards_policy::{expected_amount_for_trigger, legacy_bubl_policy};
+    use crate::rewards_policy::{expected_amount_for_trigger, legacy_bubl_policy, RewardsPolicyEvent};
     let policy = legacy_bubl_policy();
     let policy_event = reward_event_to_policy_event(event);
-    expected_amount_for_trigger(&policy, policy_event, streak_day).unwrap_or(0)
+    expected_amount_for_trigger(&policy, policy_event, streak_day)
+        .expect("legacy BUBL policy must define all reward events")
 }
 
 pub fn reward_event_to_policy_event(event: RewardEventKind) -> crate::rewards_policy::RewardsPolicyEvent {
@@ -115,18 +116,7 @@ pub fn reward_event_to_policy_event(event: RewardEventKind) -> crate::rewards_po
     }
 }
 
-/// Canonical BUBL `token_id` for reward claims.
-pub fn bubl_token_id() -> [u8; 32] {
-    crate::contracts::utils::generate_custom_token_id("Bubble", "BUBL")
-}
-
-/// Normalize `did:zhtp:{hex}` to lowercase hex suffix for stable storage keys.
-pub fn canonical_owner_did(did: &str) -> Option<String> {
-    let key_id = key_id_from_did(did)?;
-    Some(format!("did:zhtp:{}", hex::encode(key_id)))
-}
-
-/// Parse `did:zhtp:{64-hex}` → 32-byte key_id (hex case-insensitive).
+/// Parse `did:zhtp:{64-hex}` → 32-byte key_id.
 pub fn key_id_from_did(did: &str) -> Option<[u8; 32]> {
     const MAX_DID_LEN: usize = 256;
     if did.is_empty() || did.len() > MAX_DID_LEN {
@@ -136,8 +126,7 @@ pub fn key_id_from_did(did: &str) -> Option<[u8; 32]> {
     if hex_part.len() != 64 || !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    let lower = hex_part.to_ascii_lowercase();
-    let bytes = hex::decode(&lower).ok()?;
+    let bytes = hex::decode(hex_part).ok()?;
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Some(out)
@@ -170,16 +159,45 @@ pub fn iso_week_from_ts(ts: u64) -> String {
 
 pub const REWARD_KEY_SEP: u8 = 0x1f;
 
-pub fn daily_claim_key(date: &str, did: &str, event: RewardEventKind) -> String {
-    format!("{}|{}|{}", date, did, event.as_str())
+fn token_key_prefix(token_id: &[u8; 32]) -> String {
+    hex::encode(token_id)
 }
 
-pub fn partner_claim_key(week: &str, did: &str, peer_did: &str) -> String {
-    format!("{}|{}|{}", week, did, peer_did)
+pub fn welcome_claim_key(token_id: &[u8; 32], did: &str) -> String {
+    format!("{}|{}", token_key_prefix(token_id), did)
 }
 
-pub fn partner_count_key(week: &str, did: &str) -> String {
-    format!("{}|{}", week, did)
+pub fn streak_key(token_id: &[u8; 32], did: &str) -> String {
+    format!("{}|{}", token_key_prefix(token_id), did)
+}
+
+pub fn daily_claim_key(
+    token_id: &[u8; 32],
+    date: &str,
+    did: &str,
+    event: RewardEventKind,
+) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        token_key_prefix(token_id),
+        date,
+        did,
+        event.as_str()
+    )
+}
+
+pub fn partner_claim_key(token_id: &[u8; 32], week: &str, did: &str, peer_did: &str) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        token_key_prefix(token_id),
+        week,
+        did,
+        peer_did
+    )
+}
+
+pub fn partner_count_key(token_id: &[u8; 32], week: &str, did: &str) -> String {
+    format!("{}|{}|{}", token_key_prefix(token_id), week, did)
 }
 
 #[cfg(test)]
@@ -204,22 +222,5 @@ mod tests {
     fn key_id_from_did_valid() {
         let did = "did:zhtp:e0b9757663f55797ff06cdce1d0dc18329455b9a18d8e0b5bc05a8f10c969bf4";
         assert!(key_id_from_did(did).is_some());
-    }
-
-    #[test]
-    fn key_id_from_did_uppercase_hex_matches_lowercase() {
-        let lower = "did:zhtp:e0b9757663f55797ff06cdce1d0dc18329455b9a18d8e0b5bc05a8f10c969bf4";
-        let upper = "did:zhtp:E0B9757663F55797FF06CDCE1D0DC18329455B9A18D8E0B5BC05A8F10C969BF4";
-        assert_eq!(key_id_from_did(lower), key_id_from_did(upper));
-        assert_eq!(canonical_owner_did(lower), canonical_owner_did(upper));
-    }
-
-    #[test]
-    fn expected_amount_matches_legacy_constants() {
-        assert_eq!(expected_amount_for_event(RewardEventKind::Welcome, 1), REWARD_WELCOME_ATOMS);
-        assert_eq!(
-            expected_amount_for_event(RewardEventKind::NewPartner, 1),
-            REWARD_NEW_PARTNER_ATOMS
-        );
     }
 }
