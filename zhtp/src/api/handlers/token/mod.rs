@@ -52,6 +52,9 @@ pub struct SubmitTokenTransactionRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateTokenRequest {
     pub signed_tx: String,
+    /// When true, apply SovSwap/DAO-launch UI constraints (M2) in addition to protocol validation.
+    #[serde(default)]
+    pub enforce_dao_launch_constraints: bool,
 }
 
 /// Request to mint tokens (client must provide signed tx)
@@ -248,6 +251,15 @@ impl TokenHandler {
                 ));
             }
         };
+        if create_req.enforce_dao_launch_constraints {
+            if let Err(e) = payload.validate_dao_launch_ui_constraints() {
+                tracing::error!("[token/create] token creation constraints FAILED: {}", e);
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Token creation validation failed: {}", e),
+                ));
+            }
+        }
         let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
         let TokenCreationPayloadV1 {
             name,

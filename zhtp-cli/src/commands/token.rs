@@ -253,6 +253,7 @@ pub async fn handle_token_command_with_output<O: Output>(
                 supply,
                 decimals,
                 &treasury_recipient,
+                false,
             )
             .await
         }
@@ -285,6 +286,7 @@ pub async fn handle_create(
     supply: u128,
     decimals: u8,
     treasury_recipient: &str,
+    enforce_dao_launch_constraints: bool,
 ) -> CliResult<()> {
     validate_decimals(decimals)?;
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
@@ -343,7 +345,10 @@ pub async fn handle_create(
     }
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
+    let request_body = json!({
+        "signed_tx": hex::encode(tx_bytes),
+        "enforce_dao_launch_constraints": enforce_dao_launch_constraints,
+    });
 
     // Reuse the QUIC client already opened above for the fee lookup.
     let response = client
