@@ -83,6 +83,12 @@ async fn handle_configure_rewards(
             keystore_path.display()
         )));
     }
+    let keystore_path = keystore_path.canonicalize().map_err(|e| {
+        CliError::ConfigError(format!(
+            "failed to canonicalize delegate keystore path {}: {e}",
+            keystore_path.display()
+        ))
+    })?;
 
     zhtp::rewards_activation::write_activation_config(&parsed_id, &keystore_path).map_err(|e| {
         CliError::ConfigError(format!("failed to write rewards activation config: {e}"))
@@ -119,12 +125,17 @@ pub fn parse_network_environment(env_str: &str) -> CliResult<Environment> {
 ///
 /// Pure function - path manipulation only
 pub fn normalize_keystore_path(ks_str: &str) -> Option<PathBuf> {
+    if ks_str.is_empty() {
+        return None;
+    }
     if ks_str.starts_with("~/") {
-        dirs::home_dir().map(|home| home.join(&ks_str[2..]))
-    } else if ks_str.is_empty() {
-        None
+        return dirs::home_dir().map(|home| home.join(&ks_str[2..]));
+    }
+    let path = PathBuf::from(ks_str);
+    if path.is_absolute() {
+        Some(path)
     } else {
-        Some(PathBuf::from(ks_str))
+        std::env::current_dir().ok().map(|cwd| cwd.join(path))
     }
 }
 
@@ -625,8 +636,9 @@ mod tests {
 
     #[test]
     fn test_normalize_keystore_path_relative() {
+        let cwd = std::env::current_dir().expect("cwd");
         let result = normalize_keystore_path("./keystore");
-        assert_eq!(result, Some(PathBuf::from("./keystore")));
+        assert_eq!(result, Some(cwd.join("keystore")));
     }
 
     #[test]

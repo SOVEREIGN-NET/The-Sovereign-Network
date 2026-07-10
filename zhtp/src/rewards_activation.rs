@@ -52,13 +52,32 @@ pub fn write_activation_config(asset_id: &[u8; 32], delegate_keystore_dir: &Path
 
 pub fn read_activation_file() -> Option<RewardsActivationFile> {
     let path = activation_config_path();
-    let raw = std::fs::read_to_string(&path).ok()?;
-    toml::from_str(&raw).ok()
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            warn!("rewards: failed to read {}: {e}", path.display());
+            return None;
+        }
+    };
+    match toml::from_str(&raw) {
+        Ok(file) => Some(file),
+        Err(e) => {
+            warn!("rewards: failed to parse {}: {e}", path.display());
+            None
+        }
+    }
 }
 
 pub fn resolve_activation() -> Option<ResolvedActivation> {
     let file = read_activation_file()?;
-    let asset_id = parse_asset_id_hex(&file.asset_id).ok()?;
+    let asset_id = match parse_asset_id_hex(&file.asset_id) {
+        Ok(id) => id,
+        Err(e) => {
+            warn!("rewards_activation.toml has invalid asset_id: {e}");
+            return None;
+        }
+    };
     let dir = PathBuf::from(&file.delegate_keystore_dir);
     if !dir.is_dir() {
         warn!(
@@ -81,9 +100,17 @@ pub fn scan_chain_eligible_assets(blockchain: &Blockchain) -> Vec<ChainEligibleA
         let Some(state) = blockchain.get_rewards_module_state(&asset_id) else {
             continue;
         };
-        let balance = blockchain
-            .token_balance(&asset_id, &state.spend_delegate_key_id)
-            .unwrap_or(0);
+        let balance = match blockchain.token_balance(&asset_id, &state.spend_delegate_key_id) {
+            Ok(balance) => balance,
+            Err(e) => {
+                warn!(
+                    "rewards: token_balance lookup failed for asset {} delegate {}: {e}",
+                    hex::encode(&asset_id[..8]),
+                    hex::encode(&state.spend_delegate_key_id[..8]),
+                );
+                continue;
+            }
+        };
         if balance > 0 {
             out.push(ChainEligibleAsset {
                 asset_id,

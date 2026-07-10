@@ -146,7 +146,7 @@ fn load_rewards_policy_bundle(
         .with_context(|| format!("read rewards policy {}", policy_path.display()))?;
     let policy = validate_rewards_policy(&bytes).context("validate rewards policy")?;
     let hash = policy_hash(&policy).context("hash rewards policy")?;
-    let policy_hash = *hash.as_array();
+    let policy_hash = hash.as_array();
     let mut cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
     cid_input.extend_from_slice(&bytes);
     let policy_cid = lib_crypto::hash_blake3(&cid_input);

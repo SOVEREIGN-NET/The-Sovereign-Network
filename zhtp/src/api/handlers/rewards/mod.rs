@@ -6,14 +6,14 @@
 //!
 //! ## Configuration
 //!
-//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the BUBL DAO
-//! `TokenCreation` creator keystore AND that key holds a positive on-chain
-//! BUBL balance. BUBL is not native SOV and not an `AssetLaunch` sovereign
-//! asset — only the deterministic DAO contract
-//! (`generate_custom_token_id("Bubble","BUBL")`). `ZHTP_REWARDS_TOKEN_ID` may
-//! override that id. `ZHTP_REWARDS_ASSET_ID` is a deprecated alias (remove
-//! after 2026-09-01). Without a matching creator signer the handler installs
-//! but every endpoint returns 503.
+//! Activated via `rewards_activation.toml` (written by `zhtp-cli node
+//! configure-rewards`) or the deprecated `ZHTP_REWARDS_TREASURY_KEYSTORE` env
+//! path. Both require a spend-delegate keystore whose key_id matches the
+//! on-chain `RewardsModuleState` and holds a positive token balance.
+//! `ZHTP_REWARDS_TOKEN_ID` may override the asset id on the legacy env path.
+//! `ZHTP_REWARDS_ASSET_ID` is a deprecated alias (remove after 2026-09-01).
+//! Without a matching delegate signer the handler installs but every endpoint
+//! returns 503.
 //!
 //! ## Storage
 //!
@@ -45,7 +45,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use lib_blockchain::contracts::utils::generate_custom_token_id;
+
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
@@ -58,9 +58,6 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 
 // ── Constants ────────────────────────────────────────────────────────
-
-const BUBL_TOKEN_NAME: &str = "Bubble";
-const BUBL_TOKEN_SYMBOL: &str = "BUBL";
 
 /// Deprecated env alias — use `ZHTP_REWARDS_TOKEN_ID`. Scheduled removal 2026-09-01.
 const DEPRECATED_REWARDS_ASSET_ID_ENV: &str = "ZHTP_REWARDS_ASSET_ID";
@@ -1203,29 +1200,18 @@ fn parse_token_id_hex(hex_id: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn resolve_rewards_token_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
+fn resolve_legacy_rewards_asset_id(
+    blockchain: &Blockchain,
+    signer_key_id: &[u8; 32],
+) -> Option<[u8; 32]> {
     if let Some(hex_id) = rewards_token_id_override() {
         return parse_token_id_hex(&hex_id);
     }
 
-    // Canonical BUBL: GENESIS-6 DAO `TokenCreation` (deterministic token_id).
-    let bubl_dao_id = generate_custom_token_id(BUBL_TOKEN_NAME, BUBL_TOKEN_SYMBOL);
-    if blockchain.get_token_contract(&bubl_dao_id).is_some() {
-        return Some(bubl_dao_id);
-    }
-
-    None
-}
-
-/// Returns true when `signer_key_id` is the on-chain creator of the DAO token.
-fn rewards_signer_authorized(
-    blockchain: &Blockchain,
-    token_id: &[u8; 32],
-    signer_key_id: &[u8; 32],
-) -> bool {
-    blockchain
-        .get_token_contract(token_id)
-        .is_some_and(|token| token.creator.key_id == *signer_key_id)
+    crate::rewards_activation::scan_chain_eligible_assets(blockchain)
+        .into_iter()
+        .find(|asset| asset.spend_delegate_key_id == *signer_key_id)
+        .map(|asset| asset.asset_id)
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
@@ -1308,21 +1294,30 @@ fn load_treasury_from_dir(
             }
         }
     } else {
-        let token_id = resolve_rewards_token_id(blockchain)?;
-        if !rewards_signer_authorized(blockchain, &token_id, &signer_key_id) {
+        let token_id = resolve_legacy_rewards_asset_id(blockchain, &signer_key_id)?;
+        match crate::rewards_activation::validate_activation_against_chain(
+            blockchain,
+            &token_id,
+            &signer_key_id,
+        ) {
+            Ok(_) => token_id,
+            Err(e) => {
+                warn!("rewards: legacy env activation rejected: {e}");
+                return None;
+            }
+        }
+    };
+
+    let balance = match blockchain.token_balance(&rewards_asset_id, &signer_key_id) {
+        Ok(balance) => balance,
+        Err(e) => {
             warn!(
-                "rewards: keystore key_id {} is not authorized to spend token {}; endpoint disabled",
-                hex::encode(&signer_key_id[..8]),
-                hex::encode(&token_id[..8]),
+                "rewards: token_balance lookup failed for token {}: {e}",
+                hex::encode(&rewards_asset_id[..8]),
             );
             return None;
         }
-        token_id
     };
-
-    let balance = blockchain
-        .token_balance(&rewards_asset_id, &signer_key_id)
-        .unwrap_or(0);
     if balance == 0 {
         warn!(
             "rewards: delegate keystore at {} holds 0 balance for token {}; endpoint disabled",
