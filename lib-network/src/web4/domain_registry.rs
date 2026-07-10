@@ -1077,16 +1077,9 @@ impl DomainRegistry {
             return Ok(false);
         }
 
-        let expected_fee =
-            Self::expected_registration_fee_whole(&request.domain, request.duration_days);
-        if request.registration_fee_whole != expected_fee {
-            warn!(
-                "Domain registration rejected: fee {} does not match expected {} for {}",
-                request.registration_fee_whole, expected_fee, request.domain
-            );
-            return Ok(false);
-        }
-
+        // Fee amount is validated by the API handler against TxFeeConfig and
+        // bound into the authorization signature below — do not re-check against
+        // the legacy dynamic pricing formula here (it diverged from governance rates).
         verify_domain_registration_signature(
             request.owner.public_key.dilithium_pk.as_slice(),
             &request.domain,

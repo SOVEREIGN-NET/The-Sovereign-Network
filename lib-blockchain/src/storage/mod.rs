@@ -862,6 +862,10 @@ pub enum StorageError {
     #[error("Storage not initialized")]
     NotInitialized,
 
+    /// Store backend does not implement this method (fail closed).
+    #[error("Storage method not implemented: {0}")]
+    NotImplemented(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -2114,6 +2118,122 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         &self,
     ) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
         Ok(None)
+    }
+
+    // =========================================================================
+    // BUBL reward claim eligibility (chain-native caps)
+    //
+    // **P0:** Default impls return `NotImplemented` — never silently report
+    // "never claimed". Only `SledStore` (or explicit overrides) may serve reads.
+    // =========================================================================
+
+    fn get_bubl_reward_welcome(&self, did: &str) -> StorageResult<Option<u64>> {
+        let _ = did;
+        Err(StorageError::NotImplemented(
+            "get_bubl_reward_welcome requires SledStore".into(),
+        ))
+    }
+
+    fn put_bubl_reward_welcome(&self, did: &str, height: u64) -> StorageResult<()> {
+        let _ = (did, height);
+        Err(StorageError::NotImplemented(
+            "put_bubl_reward_welcome requires SledStore".into(),
+        ))
+    }
+
+    fn get_bubl_reward_daily(&self, key: &str) -> StorageResult<Option<u64>> {
+        let _ = key;
+        Err(StorageError::NotImplemented(
+            "get_bubl_reward_daily requires SledStore".into(),
+        ))
+    }
+
+    fn put_bubl_reward_daily(&self, key: &str, height: u64) -> StorageResult<()> {
+        let _ = (key, height);
+        Err(StorageError::NotImplemented(
+            "put_bubl_reward_daily requires SledStore".into(),
+        ))
+    }
+
+    fn get_bubl_reward_partner(&self, key: &str) -> StorageResult<Option<u64>> {
+        let _ = key;
+        Err(StorageError::NotImplemented(
+            "get_bubl_reward_partner requires SledStore".into(),
+        ))
+    }
+
+    fn put_bubl_reward_partner(&self, key: &str, height: u64) -> StorageResult<()> {
+        let _ = (key, height);
+        Err(StorageError::NotImplemented(
+            "put_bubl_reward_partner requires SledStore".into(),
+        ))
+    }
+
+    fn get_bubl_reward_partner_count(&self, key: &str) -> StorageResult<Option<u32>> {
+        let _ = key;
+        Err(StorageError::NotImplemented(
+            "get_bubl_reward_partner_count requires SledStore".into(),
+        ))
+    }
+
+    fn put_bubl_reward_partner_count(&self, key: &str, count: u32) -> StorageResult<()> {
+        let _ = (key, count);
+        Err(StorageError::NotImplemented(
+            "put_bubl_reward_partner_count requires SledStore".into(),
+        ))
+    }
+
+    fn get_bubl_reward_streak(
+        &self,
+        did: &str,
+    ) -> StorageResult<Option<crate::transaction::RewardStreakRecord>> {
+        let _ = did;
+        Err(StorageError::NotImplemented(
+            "get_bubl_reward_streak requires SledStore".into(),
+        ))
+    }
+
+    fn put_bubl_reward_streak(
+        &self,
+        did: &str,
+        streak: &crate::transaction::RewardStreakRecord,
+    ) -> StorageResult<()> {
+        let _ = (did, streak);
+        Err(StorageError::NotImplemented(
+            "put_bubl_reward_streak requires SledStore".into(),
+        ))
+    }
+
+    fn iter_bubl_reward_welcome(&self) -> StorageResult<Vec<(String, u64)>> {
+        Err(StorageError::NotImplemented(
+            "iter_bubl_reward_welcome requires SledStore".into(),
+        ))
+    }
+
+    fn iter_bubl_reward_daily(&self) -> StorageResult<Vec<(String, u64)>> {
+        Err(StorageError::NotImplemented(
+            "iter_bubl_reward_daily requires SledStore".into(),
+        ))
+    }
+
+    fn iter_bubl_reward_partner(&self) -> StorageResult<Vec<(String, u64)>> {
+        Err(StorageError::NotImplemented(
+            "iter_bubl_reward_partner requires SledStore".into(),
+        ))
+    }
+
+    fn iter_bubl_reward_partner_count(&self) -> StorageResult<Vec<(String, u32)>> {
+        Err(StorageError::NotImplemented(
+            "iter_bubl_reward_partner_count requires SledStore".into(),
+        ))
+    }
+
+    fn iter_bubl_reward_streak(
+        &self,
+    ) -> StorageResult<Vec<(String, crate::transaction::RewardStreakRecord)>> {
+        Err(StorageError::NotImplemented(
+            "iter_bubl_reward_streak requires SledStore".into(),
+        ))
     }
 
     /// Persist the canonical observer admission policy.

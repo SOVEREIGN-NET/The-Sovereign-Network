@@ -2,6 +2,7 @@
 
 use crate::block::Block;
 use crate::blockchain::Blockchain;
+use crate::storage::table::TableAccess;
 use crate::transaction::credentials::{AuthMethod, UserCredential};
 use crate::types::transaction_type::TransactionType;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,6 +19,31 @@ pub fn lobby_auth_migrations_total() -> u64 {
 }
 
 impl Blockchain {
+    /// Case-insensitive username taken check — credential registry sled-first (#2639).
+    pub fn credential_username_taken(&self, username_lower: &str) -> bool {
+        if let Some(store) = self.get_store() {
+            match store.iter::<crate::projections::CredentialProjectionTable>() {
+                Ok(iter) => {
+                    for (_, record) in iter {
+                        if record.credential.username.to_lowercase() == username_lower {
+                            return true;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "credential_username_taken: sled iter failed; failing closed"
+                    );
+                    return true;
+                }
+            }
+        }
+        self.credential_registry
+            .keys()
+            .any(|u| u.to_lowercase() == username_lower)
+    }
+
     /// Process RegisterCredential and UpdateCredentialPassword transactions in a block.
     pub fn process_credential_transactions(&mut self, block: &Block) {
         let block_height = block.height();

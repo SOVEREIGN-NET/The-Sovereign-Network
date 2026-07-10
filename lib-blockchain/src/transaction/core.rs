@@ -880,6 +880,26 @@ impl Transaction {
         }
     }
 
+    /// Create a BUBL reward claim transaction (chain-enforced eligibility).
+    pub fn new_reward_claim_with_chain_id(
+        chain_id: u8,
+        data: crate::transaction::reward_claim::RewardClaimData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RewardClaim,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::RewardClaim(data),
+        }
+    }
+
     /// Create a new token mint transaction (balance model).
     pub fn new_token_mint(
         token_mint_data: TokenMintData,
@@ -1370,6 +1390,12 @@ impl Transaction {
     pub fn token_transfer_data(&self) -> Option<&TokenTransferData> {
         match &self.payload {
             TransactionPayload::TokenTransfer(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn reward_claim_data(&self) -> Option<&crate::transaction::reward_claim::RewardClaimData> {
+        match &self.payload {
+            TransactionPayload::RewardClaim(d) => Some(d),
             _ => None,
         }
     }
@@ -2842,4 +2868,5 @@ pub enum TransactionPayload {
     // User credentials (username + password for public zone access)
     RegisterCredential(crate::transaction::credentials::RegisterCredentialData),
     UpdateCredentialPassword(crate::transaction::credentials::UpdateCredentialPasswordData),
+    RewardClaim(crate::transaction::reward_claim::RewardClaimData),
 }

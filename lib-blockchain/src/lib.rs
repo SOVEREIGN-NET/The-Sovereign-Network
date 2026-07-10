@@ -34,6 +34,7 @@ pub mod oracle;
 pub mod pricing;
 pub mod projections;
 pub mod protocol;
+pub mod rewards_policy;
 pub mod receipts;
 pub mod resources;
 pub mod snapshot;

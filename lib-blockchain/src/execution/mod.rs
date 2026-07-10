@@ -38,6 +38,7 @@
 
 pub mod errors;
 pub mod executor;
+pub mod reward_claim;
 pub mod sovereign_asset;
 pub mod state_view;
 pub mod tx_apply;

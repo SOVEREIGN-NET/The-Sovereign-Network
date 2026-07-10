@@ -22,6 +22,7 @@ pub fn system_tx_signature_policy(ty: TransactionType) -> SystemTxSignaturePolic
     match ty {
         TransactionType::Transfer
         | TransactionType::TokenTransfer
+        | TransactionType::RewardClaim
         | TransactionType::IdentityRegistration
         | TransactionType::IdentityUpdate
         | TransactionType::IdentityRevocation

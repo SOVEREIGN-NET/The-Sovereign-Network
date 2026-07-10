@@ -1058,6 +1058,7 @@ impl BlockExecutor {
             // Phase-2 types: fall through to structural validation below.
             TransactionType::Transfer => {}
             TransactionType::TokenTransfer => {}
+            TransactionType::RewardClaim => {}
             TransactionType::TokenMint => {}
             TransactionType::TokenCreation => {}
             TransactionType::AssetLaunch => {}
@@ -1207,6 +1208,29 @@ impl BlockExecutor {
                 if data.amount == 0 {
                     return Err(TxApplyError::InvalidType(
                         "Token transfer amount must be greater than 0".to_string(),
+                    ));
+                }
+            }
+            TransactionType::RewardClaim => {
+                if tx.reward_claim_data().is_none() {
+                    return Err(TxApplyError::InvalidType(
+                        "RewardClaim requires reward_claim_data field".to_string(),
+                    ));
+                }
+                let data = tx.reward_claim_data().unwrap();
+                if data.amount == 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "RewardClaim amount must be greater than 0".to_string(),
+                    ));
+                }
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "RewardClaim must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                if tx.fee != 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "RewardClaim transaction fee must be 0".to_string(),
                     ));
                 }
             }
@@ -1452,6 +1476,7 @@ impl BlockExecutor {
         match tx.transaction_type {
             TransactionType::Coinbase => return Ok(()), // Creates value, no fee
             TransactionType::TokenTransfer => return Ok(()), // Phase 2: subsidized
+            TransactionType::RewardClaim => return Ok(()), // Phase 2: subsidized
             TransactionType::TokenMint => return Ok(()), // Phase 2: system mint
             TransactionType::TokenCreation => {
                 // Accept fee=0 (subsidized/system creation) or fee==token_creation_fee (standard).
@@ -1467,7 +1492,10 @@ impl BlockExecutor {
         }
         // System transactions (empty inputs, excluding typed token ops that must pay fees)
         // are fee-exempt. Mirrors TransactionValidator::validate_transaction() logic.
-        if tx.inputs.is_empty() && tx.transaction_type != TransactionType::TokenTransfer {
+        if tx.inputs.is_empty()
+            && tx.transaction_type != TransactionType::TokenTransfer
+            && tx.transaction_type != TransactionType::RewardClaim
+        {
             return Ok(());
         }
 
@@ -1539,6 +1567,26 @@ impl BlockExecutor {
                     return Err(TxApplyError::InvalidNonce {
                         expected: expected_nonce,
                         actual: transfer.nonce,
+                    });
+                }
+            }
+            TransactionType::RewardClaim => {
+                let claim = tx.reward_claim_data().ok_or_else(|| {
+                    TxApplyError::InvalidType("RewardClaim requires reward_claim_data".into())
+                })?;
+                let token = TokenId::new(claim.token_id);
+                let from = Address::new(claim.from);
+                let expected_nonce = view.get_token_nonce(&token, &from)?;
+                if claim.nonce < expected_nonce {
+                    return Err(TxApplyError::ReplayDropped {
+                        expected: expected_nonce,
+                        actual: claim.nonce,
+                    });
+                }
+                if claim.nonce != expected_nonce {
+                    return Err(TxApplyError::InvalidNonce {
+                        expected: expected_nonce,
+                        actual: claim.nonce,
                     });
                 }
             }
@@ -3287,6 +3335,24 @@ impl BlockExecutor {
                     to,
                     amount,
                 }))
+            }
+            TransactionType::RewardClaim => {
+                let data = tx.reward_claim_data().ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "RewardClaim requires reward_claim_data field".to_string(),
+                    )
+                })?;
+                let fee_sink = *self.fee_model.protocol_params.fee_sink_address();
+                match crate::execution::reward_claim::apply_reward_claim(
+                    mutator,
+                    data,
+                    block_height,
+                    block_timestamp,
+                    &fee_sink,
+                )? {
+                    Some(outcome) => Ok(TxOutcome::TokenTransfer(outcome)),
+                    None => Ok(TxOutcome::LegacySystem),
+                }
             }
             TransactionType::TokenMint => {
                 let mint_data = tx.token_mint_data().ok_or_else(|| {

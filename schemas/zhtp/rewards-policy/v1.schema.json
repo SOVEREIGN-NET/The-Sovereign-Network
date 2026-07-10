@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zhtp.network/schemas/rewards-policy/v1.schema.json",
+  "title": "ZHTP Rewards Policy v1",
+  "description": "DAO-configurable reward distribution policy referenced by SovereignAsset RewardsModule policy_hash on-chain.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "asset_id", "triggers"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "zhtp/rewards-policy/v1"
+    },
+    "asset_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "32-byte asset_id as 64-char hex (launch tx hash)."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "triggers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/trigger" }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_daily_outflow_atoms": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "max_lifetime_per_did_atoms": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "atoms_string": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "trigger_kind": {
+      "type": "string",
+      "enum": [
+        "once_per_did",
+        "once_per_utc_day",
+        "distinct_peer_per_iso_week"
+      ]
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "enabled"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        },
+        "kind": { "$ref": "#/$defs/trigger_kind" },
+        "enabled": { "type": "boolean" },
+        "amount_atoms": { "$ref": "#/$defs/atoms_string" },
+        "base_amount_atoms": { "$ref": "#/$defs/atoms_string" },
+        "streak_bonus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["per_day_atoms", "cap_days"],
+          "properties": {
+            "per_day_atoms": { "$ref": "#/$defs/atoms_string" },
+            "cap_days": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 365
+            }
+          }
+        },
+        "weekly_cap": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "event": {
+          "type": "string",
+          "enum": ["welcome", "daily_checkin", "active_session", "new_partner"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "once_per_did" } },
+            "required": ["kind"]
+          },
+          "then": { "required": ["amount_atoms", "event"] }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "once_per_utc_day" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "anyOf": [
+              { "required": ["amount_atoms", "event"] },
+              { "required": ["base_amount_atoms", "event"] }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "distinct_peer_per_iso_week" } },
+            "required": ["kind"]
+          },
+          "then": { "required": ["amount_atoms", "weekly_cap", "event"] }
+        }
+      ]
+    }
+  }
+}

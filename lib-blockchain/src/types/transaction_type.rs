@@ -239,6 +239,12 @@ pub enum TransactionType {
     AssetAuthorityTransfer = 65,
     /// Rotate the rewards spend delegate key.
     AssetRewardsDelegateRotate = 66,
+    /// BUBL reward claim — chain-enforced eligibility + treasury token transfer.
+    ///
+    /// Signed by the BUBL `TokenCreation` creator (or authorized delegate).
+    /// Executor validates per-event caps (welcome once, daily check-in/session,
+    /// weekly partner limits) before debiting the creator allocation.
+    RewardClaim = 67,
 }
 
 impl TransactionType {
@@ -440,6 +446,7 @@ impl TransactionType {
             TransactionType::AssetRewardsDelegateRotate => {
                 "Rotate Sovereign Asset rewards spend delegate"
             }
+            TransactionType::RewardClaim => "BUBL reward claim (chain-enforced eligibility)",
         }
     }
 
@@ -513,6 +520,7 @@ impl TransactionType {
             TransactionType::AssetManifestUpdate => "asset_manifest_update",
             TransactionType::AssetAuthorityTransfer => "asset_authority_transfer",
             TransactionType::AssetRewardsDelegateRotate => "asset_rewards_delegate_rotate",
+            TransactionType::RewardClaim => "reward_claim",
         }
     }
 
@@ -586,6 +594,7 @@ impl TransactionType {
             "asset_manifest_update" => Some(TransactionType::AssetManifestUpdate),
             "asset_authority_transfer" => Some(TransactionType::AssetAuthorityTransfer),
             "asset_rewards_delegate_rotate" => Some(TransactionType::AssetRewardsDelegateRotate),
+            "reward_claim" => Some(TransactionType::RewardClaim),
             _ => None,
         }
     }

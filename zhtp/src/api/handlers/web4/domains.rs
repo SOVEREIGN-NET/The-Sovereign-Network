@@ -6,7 +6,7 @@ use crate::web4_manifest::{
 use anyhow::anyhow;
 use base64::{engine::general_purpose, Engine as _};
 use lib_blockchain::BlockchainQuery;
-use lib_identity::{types::IdentityView, ZhtpIdentity};
+use lib_identity::{types::IdentityView, wallets::wallet_types::WalletType, ZhtpIdentity};
 use lib_access_control::{SecurityPrincipal, Role};
 use lib_types::NodeType;
 use lib_network::web4::{
@@ -494,7 +494,7 @@ impl Web4Handler {
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
         let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
 
-        let fee_tx_hash_hex = if is_register {
+        let (fee_tx_hash_hex, owner_wallet_id_bytes) = if is_register {
             // Resolve the owner's Primary wallet and run the optimistic
             // SOV balance preview. Only relevant on the register path;
             // updates skip this entire block (reviewer #2691/L455).
@@ -640,7 +640,7 @@ impl Web4Handler {
                 registration_fee_whole,
                 hex::encode(&owner_wallet_id_bytes[..8])
             );
-            hex_hash
+            (hex_hash, owner_wallet_id_bytes)
         } else {
             // Update path: no consensus-level fee, no balance preview,
             // no wallet resolution. The handler still records the legacy
@@ -650,7 +650,7 @@ impl Web4Handler {
                 " Domain {} already registered — applying as DomainUpdate (no fee debit)",
                 simple_request.domain
             );
-            String::new()
+            (String::new(), [0u8; 32])
         };
 
         // Prepare content mappings WITH RICH METADATA for storage
@@ -781,6 +781,15 @@ impl Web4Handler {
         let registration_response =
             registration_result.map_err(|e| anyhow!("Domain registration failed: {}", e))?;
 
+        if !registration_response.success {
+            return Err(anyhow!(
+                "Domain registration failed: {}",
+                registration_response
+                    .error
+                    .unwrap_or_else(|| "invalid registration proof".to_string())
+            ));
+        }
+
         let total_fees = registration_response.fees_charged;
         info!(
             " Domain {} registered with {} SOV fees",
@@ -846,11 +855,9 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
-                    // CONS-516: V1 fields (zeroed) so `process_domain_transactions`
-                    // takes the legacy no-debit branch. The fee is paid by the
-                    // separate user-signed TokenTransfer enqueued above; the
-                    // chain debit-attempt path is unreachable from an unsigned
-                    // system tx (signer key_id is zeroed → owner re-check fails).
+                    // CONS-516: fee paid by companion TokenTransfer; V2 memo
+                    // carries fee_tx_hash binding only. Inline fee fields zeroed
+                    // so client/server skeletons stay byte-identical.
                     fee_amount_atoms: 0,
                     fee_payer_wallet_id: [0u8; 32],
                 };
@@ -916,8 +923,13 @@ impl Web4Handler {
         // Register content ownership with wallet using ACTUAL owner identity
         let wallet_manager_lock = self.wallet_content_manager.write().await;
 
-        // Get primary wallet from owner's identity
-        if let Some(primary_wallet) = owner_identity.wallet_manager.wallets.values().next() {
+        // Get primary wallet from owner's identity (HashMap iteration is non-deterministic).
+        if let Some((_, primary_wallet)) = owner_identity
+            .wallet_manager
+            .wallets
+            .iter()
+            .find(|(_, wallet)| wallet.wallet_type == WalletType::Primary)
+        {
             let wallet_id = primary_wallet.id.clone();
             drop(wallet_manager_lock); // Release lock before async operations
 
@@ -1395,7 +1407,7 @@ impl Web4Handler {
     /// List domains for an owner
     /// GET /api/v1/web4/domains?owner={did}
     pub async fn list_domains(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let owner = request.uri.splitn(2, '?').nth(1).and_then(|query| {
+        let owner_raw = request.uri.splitn(2, '?').nth(1).and_then(|query| {
             query.split('&').find_map(|pair| {
                 let mut parts = pair.splitn(2, '=');
                 let key = parts.next()?;
@@ -1407,8 +1419,12 @@ impl Web4Handler {
                 }
             })
         });
-        let _owner = match owner {
-            Some(value) if !value.is_empty() => value,
+        let owner = match owner_raw {
+            Some(value) if !value.is_empty() => {
+                urlencoding::decode(value)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| value.to_string())
+            }
             _ => {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
@@ -1417,16 +1433,50 @@ impl Web4Handler {
             }
         };
 
-        // NOTE: list_domains_by_owner requires iterating all persisted domains, which is not
-        // yet implemented in the DomainRegistry. This endpoint is reserved for future use.
-        // For now, we return a not-implemented error rather than silently returning empty results,
-        // which would confuse API clients expecting functional behavior.
-        return Err(anyhow!(
-            "The list_domains_by_owner endpoint is not yet implemented. \
-             This feature requires registry support for domain enumeration by owner. \
-             Please use domain lookup endpoints for specific domains or track deployments \
-             in your application state."
-        ));
+        let sled_records = self.domain_registry.list_all_domain_records().await;
+        let entries = {
+            let blockchain = self.blockchain.read().await;
+            filter_catalog_entries_by_owner(
+                &merge_catalog_entries(blockchain.get_all_domains(), sled_records),
+                &owner,
+            )
+        };
+
+        let domains: Vec<serde_json::Value> = entries
+            .into_iter()
+            .map(|entry| {
+                let expires_at = entry
+                    .get("expires_at")
+                    .map(|v| {
+                        if let Some(n) = v.as_u64() {
+                            n.to_string()
+                        } else {
+                            v.as_str().unwrap_or("").to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "domain": entry.get("domain").and_then(|v| v.as_str()).unwrap_or(""),
+                    "owner": entry.get("owner").and_then(|v| v.as_str()).unwrap_or(""),
+                    "expires_at": expires_at,
+                    "content_cid": entry.get("manifest_cid").and_then(|v| v.as_str()),
+                    "classification": "commercial",
+                })
+            })
+            .collect();
+
+        let count = domains.len();
+        let body = serde_json::to_vec(&serde_json::json!({
+            "domains": domains,
+            "count": count,
+        }))
+        .map_err(|e| anyhow!("Failed to serialize domain list: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            body,
+            "application/json".to_string(),
+            None,
+        ))
     }
 
     /// Transfer domain to new owner
@@ -2208,6 +2258,22 @@ impl Web4Handler {
 /// and the corresponding sled record (if any) is silently dropped. Sled-only domains
 /// are appended and tagged `"sled_cache"`. The returned list is sorted alphabetically
 /// by domain name for deterministic output.
+fn filter_catalog_entries_by_owner(
+    entries: &[serde_json::Value],
+    owner: &str,
+) -> Vec<serde_json::Value> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("owner")
+                .and_then(|v| v.as_str())
+                .is_some_and(|record_owner| record_owner == owner)
+        })
+        .cloned()
+        .collect()
+}
+
 fn merge_catalog_entries(
     on_chain: &std::collections::HashMap<String, lib_blockchain::transaction::OnChainDomainRecord>,
     sled_records: Vec<lib_network::web4::DomainRecord>,
