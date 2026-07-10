@@ -6,7 +6,7 @@ use crate::web4_manifest::{
 use anyhow::anyhow;
 use base64::{engine::general_purpose, Engine as _};
 use lib_blockchain::BlockchainQuery;
-use lib_identity::{types::IdentityView, ZhtpIdentity};
+use lib_identity::{types::IdentityView, wallets::wallet_types::WalletType, ZhtpIdentity};
 use lib_access_control::{SecurityPrincipal, Role};
 use lib_types::NodeType;
 use lib_network::web4::{
@@ -928,7 +928,7 @@ impl Web4Handler {
             .wallet_manager
             .wallets
             .iter()
-            .find(|(_, wallet)| wallet.wallet_type == "Primary")
+            .find(|(_, wallet)| wallet.wallet_type == WalletType::Primary)
         {
             let wallet_id = primary_wallet.id.clone();
             drop(wallet_manager_lock); // Release lock before async operations
