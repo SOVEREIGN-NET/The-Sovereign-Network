@@ -24,7 +24,9 @@ use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
 
 
 // Access control imports
-use crate::api::principal::extract_principal_from_request;
+use crate::api::principal::{
+    extract_principal_from_request, identity_id_matches_caller, parse_identity_id_bytes,
+};
 use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
 
 /// Helper function to create JSON responses correctly
@@ -69,7 +71,12 @@ impl WalletHandler {
         extract_principal_from_request(request)
     }
 
-
+    fn parse_identity_id_or_bad_request(
+        identity_id: &str,
+    ) -> std::result::Result<[u8; 32], ZhtpResponse> {
+        parse_identity_id_bytes(identity_id)
+            .map_err(|msg| create_error_response(ZhtpStatus::BadRequest, msg))
+    }
 }
 
 #[async_trait::async_trait]
@@ -93,13 +100,10 @@ impl ZhtpRequestHandler for WalletHandler {
             }
             // GET /api/v1/wallet/balance/{wallet_type}/{identity_id}
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/wallet/balance/") => {
-                let path_parts: Vec<&str> = path
-                    .strip_prefix("/api/v1/wallet/balance/")
-                    .unwrap_or("")
-                    .split('/')
-                    .collect();
-                if path_parts.len() >= 2 {
-                    self.handle_get_balance(path_parts[0], path_parts[1], &request).await
+                let rest = path.strip_prefix("/api/v1/wallet/balance/").unwrap_or("");
+                if let Some((wallet_type, identity_id)) = rest.split_once('/') {
+                    self.handle_get_balance(wallet_type, identity_id, &request)
+                        .await
                 } else {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
@@ -256,19 +260,10 @@ impl WalletHandler {
         identity_id: &str,
         request: &ZhtpRequest,
     ) -> Result<ZhtpResponse> {
-        // Parse identity ID from hex string
-        let identity_hash = hex::decode(identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
         let identity_hash = Hash(identity_id_bytes);
 
         // TODO: Gate cross-identity wallet list once mobile app is updated.
@@ -467,19 +462,10 @@ impl WalletHandler {
             }
         };
 
-        // Parse identity ID
-        let identity_hash = hex::decode(identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
         let identity_hash = Hash(identity_id_bytes);
 
         // TODO: Gate cross-identity balance once mobile app is updated.
@@ -611,19 +597,10 @@ impl WalletHandler {
         identity_id: &str,
         request: &ZhtpRequest,
     ) -> Result<ZhtpResponse> {
-        // Parse identity ID
-        let identity_hash = hex::decode(identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
         let identity_hash = Hash(identity_id_bytes);
 
         // TODO: Gate cross-identity statistics once mobile app is updated.
@@ -697,9 +674,9 @@ impl WalletHandler {
         let principal = self.extract_principal(&request);
         let req_data: CrossWalletTransferRequest = serde_json::from_slice(&request.body)?;
 
-        // Verify caller owns the identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&req_data.identity_id, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot transfer from an identity you don't own".to_string(),
@@ -727,19 +704,10 @@ impl WalletHandler {
             }
         };
 
-        // Parse identity ID
-        let identity_hash = hex::decode(&req_data.identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
 
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -816,28 +784,19 @@ impl WalletHandler {
         let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
 
-        // Verify caller owns the identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&req_data.identity_id, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot stake from an identity you don't own".to_string(),
             ));
         }
 
-        // Parse identity ID
-        let identity_hash = hex::decode(&req_data.identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
 
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -922,28 +881,19 @@ impl WalletHandler {
         let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
 
-        // Verify caller owns the identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&req_data.identity_id, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot unstake from an identity you don't own".to_string(),
             ));
         }
 
-        // Parse identity ID
-        let identity_hash = hex::decode(&req_data.identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
 
         // Get the identity
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -1264,19 +1214,10 @@ impl WalletHandler {
         identity_id: &str,
         request: &ZhtpRequest,
     ) -> Result<ZhtpResponse> {
-        // Parse identity ID
-        let identity_hash = hex::decode(identity_id)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for identity_id: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(identity_id) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
         let identity_hash = Hash(identity_id_bytes);
 
         // Graph-traversal guard: WalletGraph / Read
@@ -1405,28 +1346,19 @@ impl WalletHandler {
         let send_req: SimpleSendRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
-        // Verify caller owns the from_identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != send_req.from_identity && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&send_req.from_identity, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot send from an identity you don't own".to_string(),
             ));
         }
 
-        // Parse identity ID
-        let identity_hash = hex::decode(&send_req.from_identity)
-            .map_err(|e| anyhow::anyhow!("Invalid hex for from_identity: {}", e))?;
-
-        if identity_hash.len() != 32 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Identity ID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut identity_id_bytes = [0u8; 32];
-        identity_id_bytes.copy_from_slice(&identity_hash);
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&send_req.from_identity) {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
 
         // Parse recipient address (validate format)
         let _to_address_bytes = hex::decode(&send_req.to_address)
