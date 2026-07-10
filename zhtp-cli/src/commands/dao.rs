@@ -381,18 +381,29 @@ async fn handle_dao_command_impl(
             symbol,
             &treasury[..16.min(treasury.len())]
         ))?;
+        let treasury_key_id = parse_hex_32("treasury_recipient", &treasury)?;
         let draft = TokenCreationPayloadV1 {
             name: name.clone(),
             symbol: symbol.clone(),
             initial_supply: supply,
             decimals,
             treasury_allocation_bps: 2_000,
-            treasury_recipient: [1u8; 32],
+            treasury_recipient: treasury_key_id,
         };
         draft.validate_dao_launch_ui_constraints().map_err(|e| {
             CliError::ConfigError(format!("DAO launch validation failed: {e}"))
         })?;
-        token::handle_create(cli, output, &name, &symbol, supply, decimals, &treasury).await?;
+        token::handle_create(
+            cli,
+            output,
+            &name,
+            &symbol,
+            supply,
+            decimals,
+            &treasury,
+            true,
+        )
+        .await?;
         let token_id = hex::encode(lib_blockchain::contracts::utils::generate_custom_token_id(
             &name, &symbol,
         ));
