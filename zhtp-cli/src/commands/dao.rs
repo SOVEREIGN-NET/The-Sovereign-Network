@@ -3,6 +3,7 @@
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 
 use crate::argument_parsing::{format_output, DaoAction, DaoArgs, ZhtpCli};
+use crate::commands::token;
 use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
 use crate::commands::web4_utils::{
     connect_default, default_keystore_path, load_identity_from_keystore,
@@ -116,7 +117,8 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
         DaoAction::Balance | DaoAction::TreasuryBalance => Some(DaoOperation::Balance),
         DaoAction::RegistryList => Some(DaoOperation::RegistryList),
         DaoAction::RegistryGet { .. } => Some(DaoOperation::RegistryGet),
-        DaoAction::RegistryRegister { .. }
+        DaoAction::Launch { .. }
+        | DaoAction::RegistryRegister { .. }
         | DaoAction::FactoryCreate { .. }
         | DaoAction::EntityRegistryInit { .. }
         | DaoAction::EntityRegistryStatus
@@ -352,14 +354,61 @@ fn build_registry_get_endpoint(dao_id: &str) -> String {
     format!("/api/v1/dao/registry/{}", dao_id.trim_start_matches("0x"))
 }
 
+fn default_protocol_treasury_key_id_hex() -> String {
+    hex::encode(lib_crypto::hash_blake3(b"SOV_DAO_TREASURY_V1"))
+}
+
 async fn handle_dao_command_impl(
     args: DaoArgs,
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let client = connect_default(&cli.server).await?;
+    // Launch delegates to token::handle_create (connects internally).
+    if let DaoAction::Launch {
+        ref name,
+        ref symbol,
+        supply,
+        decimals,
+        ref treasury_recipient,
+    } = args.action
+    {
+        output.header("DAO Launch (TokenCreation)")?;
+        let treasury = treasury_recipient.unwrap_or_else(default_protocol_treasury_key_id_hex);
+        output.info(&format!(
+            "Launching {} ({}) — 80% creator / 20% treasury ({})",
+            name,
+            symbol,
+            &treasury[..16.min(treasury.len())]
+        ))?;
+        token::handle_create(cli, output, &name, &symbol, supply, decimals, &treasury).await?;
+        let token_id = hex::encode(lib_blockchain::contracts::utils::generate_custom_token_id(
+            &name, &symbol,
+        ));
+        const TREASURY_BPS: u128 = 2_000; // 20% — matches TokenCreationPayloadV1
+        let treasury_atoms = supply.saturating_mul(TREASURY_BPS) / 10_000;
+        let creator_atoms = supply.saturating_sub(treasury_atoms);
+        output.print("")?;
+        output.success("DAO token deployed.")?;
+        output.print(&format!("Deterministic token_id: {}", token_id))?;
+        output.print(&format!(
+            "Creator allocation: {} atoms (80%)",
+            creator_atoms
+        ))?;
+        output.print(&format!(
+            "Treasury allocation: {} atoms (20%) → {}",
+            treasury_atoms,
+            &treasury[..16.min(treasury.len())]
+        ))?;
+        output.print(&format!("Share (future): zhtp://asset/{}", token_id))?;
+        output.print(
+            "Next: publish rewards policy (D1), fund delegate (C4), enable rewards (N3)",
+        )?;
+        return Ok(());
+    }
 
+    let client = connect_default(&cli.server).await?;
     match args.action {
+        DaoAction::Launch { .. } => unreachable!("handled above"),
         DaoAction::Info => {
             let operation = DaoOperation::Info;
             handle_dao_operation_impl(&client, operation, None, None, None, None, cli, output).await

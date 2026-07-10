@@ -275,11 +275,11 @@ pub async fn handle_token_command_with_output<O: Output>(
     }
 }
 
-/// Handle token creation
+/// Handle token creation (also used by `dao launch`).
 /// NOTE: Creator identity is derived from authenticated session on server
-async fn handle_create<O: Output>(
+pub async fn handle_create(
     cli: &ZhtpCli,
-    output: &O,
+    output: &dyn Output,
     name: &str,
     symbol: &str,
     supply: u128,
@@ -362,6 +362,9 @@ async fn handle_create<O: Output>(
             reason: format!("Failed to parse response: {}", e),
         })?;
 
+    let formatted = format_output(&response_json, &cli.format)?;
+    output.print(&formatted)?;
+
     if response_json
         .get("success")
         .and_then(|v| v.as_bool())
@@ -375,18 +378,19 @@ async fn handle_create<O: Output>(
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
         ))?;
+        Ok(())
     } else {
         let error = response_json
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
         output.error(&format!("Failed to create token: {}", error))?;
+        Err(CliError::ApiCallFailed {
+            endpoint: "/api/v1/token/create".to_string(),
+            status: 0,
+            reason: error.to_string(),
+        })
     }
-
-    let formatted = format_output(&response_json, &cli.format)?;
-    output.print(&formatted)?;
-
-    Ok(())
 }
 
 /// Handle token minting

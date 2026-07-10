@@ -501,6 +501,24 @@ pub enum OracleAction {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DaoAction {
+    /// Launch a DAO token (TokenCreation + 80/20 split). Phase 1 minimal.
+    Launch {
+        /// Token name (e.g. Bubble)
+        #[arg(short, long)]
+        name: String,
+        /// Token symbol (e.g. BUBL)
+        #[arg(short, long)]
+        symbol: String,
+        /// Initial supply in atomic units (whole_tokens * 10^--decimals)
+        #[arg(short, long)]
+        supply: u128,
+        /// Display decimals
+        #[arg(short, long, default_value = "18")]
+        decimals: u8,
+        /// Treasury recipient key_id (32-byte hex). Defaults to protocol DAO treasury.
+        #[arg(long)]
+        treasury_recipient: Option<String>,
+    },
     /// Get DAO information (orchestrated)
     Info,
     /// Create new proposal (orchestrated)
