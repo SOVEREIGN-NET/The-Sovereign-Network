@@ -10,7 +10,7 @@
 //! BUBL/mobile rewards CLI — wired to `/api/v1/rewards/*` on live nodes.
 //! Legacy PoUW orchestrator subcommands (metrics/routing/storage/config) remain placeholders.
 
-use crate::argument_parsing::{RewardAction, RewardArgs, ZhtpCli};
+use crate::argument_parsing::{RewardAction, RewardArgs, RewardClaimEvent, ZhtpCli};
 use crate::commands::web4_utils::connect_default;
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
@@ -373,7 +373,7 @@ pub async fn handle_reward_command_impl(
         RewardAction::Status { did } => handle_live_status_impl(&cli.server, &did, output).await,
         RewardAction::Balance { did } => handle_live_balance_impl(&cli.server, &did, output).await,
         RewardAction::Claim { did, event } => {
-            handle_live_claim_impl(&cli.server, &did, &event, output).await
+            handle_live_claim_impl(&cli.server, &did, event, output).await
         }
         RewardAction::Conversation { did, peer_did } => {
             handle_live_conversation_impl(&cli.server, &did, &peer_did, output).await
@@ -393,12 +393,16 @@ fn encode_did_for_path(did: &str) -> String {
 }
 
 async fn rewards_get_json(client: &ZhtpClient, path: &str) -> CliResult<serde_json::Value> {
-    let response = client
-        .get(path)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Rewards API GET failed: {}", e)))?;
-    ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ConfigError(format!("Failed to parse rewards response: {}", e)))
+    let response = client.get(path).await.map_err(|e| CliError::ApiCallFailed {
+        endpoint: path.to_string(),
+        status: 0,
+        reason: e.to_string(),
+    })?;
+    ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+        endpoint: path.to_string(),
+        status: 0,
+        reason: format!("Failed to parse response: {}", e),
+    })
 }
 
 async fn rewards_post_json(
@@ -406,17 +410,20 @@ async fn rewards_post_json(
     path: &str,
     body: &serde_json::Value,
 ) -> CliResult<serde_json::Value> {
-    let response = client
-        .post_json(path, body)
-        .await
-        .map_err(|e| CliError::ConfigError(format!("Rewards API POST failed: {}", e)))?;
-    ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ConfigError(format!("Failed to parse rewards response: {}", e)))
+    let response = client.post_json(path, body).await.map_err(|e| CliError::ApiCallFailed {
+        endpoint: path.to_string(),
+        status: 0,
+        reason: e.to_string(),
+    })?;
+    ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+        endpoint: path.to_string(),
+        status: 0,
+        reason: format!("Failed to parse response: {}", e),
+    })
 }
 
 fn print_json_pretty(output: &dyn Output, value: &serde_json::Value) -> CliResult<()> {
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|e| CliError::ConfigError(format!("JSON format error: {}", e)))?;
+    let text = serde_json::to_string_pretty(value)?;
     output.print(&text)?;
     Ok(())
 }
@@ -442,11 +449,11 @@ async fn handle_live_balance_impl(server: &str, did: &str, output: &dyn Output) 
 async fn handle_live_claim_impl(
     server: &str,
     did: &str,
-    event: &str,
+    event: RewardClaimEvent,
     output: &dyn Output,
 ) -> CliResult<()> {
     let client = connect_default(server).await?;
-    let body = json!({ "did": did, "event": event });
+    let body = json!({ "did": did, "event": event.as_api_str() });
     let json = rewards_post_json(&client, "/api/v1/rewards/claim", &body).await?;
     print_json_pretty(output, &json)?;
     output.print("╚════════════════════════════════════════════════════════╝")?;
@@ -617,7 +624,7 @@ mod tests {
         assert_eq!(
             action_to_operation(&RewardAction::Claim {
                 did: "did:zhtp:ab".to_string(),
-                event: "welcome".to_string()
+                event: RewardClaimEvent::Welcome,
             }),
             RewardOperation::Claim
         );
@@ -631,6 +638,15 @@ mod tests {
                 limit: 5
             }),
             RewardOperation::History
+        );
+    }
+
+    #[test]
+    fn test_encode_did_for_path() {
+        assert_eq!(encode_did_for_path("did:zhtp:abc"), "did%3Azhtp%3Aabc");
+        assert_eq!(
+            encode_did_for_path("did:zhtp:user:colon"),
+            "did%3Azhtp%3Auser%3Acolon"
         );
     }
 

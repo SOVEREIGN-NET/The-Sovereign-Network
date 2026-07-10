@@ -7,7 +7,7 @@
 use crate::commands;
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::Value;
 
 /// ZHTP Orchestrator CLI
@@ -1159,6 +1159,27 @@ pub enum ServerAction {
     Config,
 }
 
+/// BUBL reward claim event types accepted by `/api/v1/rewards/claim`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RewardClaimEvent {
+    Welcome,
+    #[value(name = "daily_checkin")]
+    DailyCheckin,
+    #[value(name = "active_session")]
+    ActiveSession,
+}
+
+impl RewardClaimEvent {
+    /// Wire/API string for this event.
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Welcome => "welcome",
+            Self::DailyCheckin => "daily_checkin",
+            Self::ActiveSession => "active_session",
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum RewardAction {
     /// BUBL/mobile rewards status for a DID (live API)
@@ -1177,7 +1198,7 @@ pub enum RewardAction {
         #[arg(long)]
         did: String,
         #[arg(long)]
-        event: String,
+        event: RewardClaimEvent,
     },
     /// Claim new-conversation-partner reward (live API)
     Conversation {
