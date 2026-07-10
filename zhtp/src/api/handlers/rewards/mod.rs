@@ -6,14 +6,14 @@
 //!
 //! ## Configuration
 //!
-//! Activated when `ZHTP_REWARDS_TREASURY_KEYSTORE` points at the BUBL DAO
-//! `TokenCreation` creator keystore AND that key holds a positive on-chain
-//! BUBL balance. BUBL is not native SOV and not an `AssetLaunch` sovereign
-//! asset — only the deterministic DAO contract
-//! (`generate_custom_token_id("Bubble","BUBL")`). `ZHTP_REWARDS_TOKEN_ID` may
-//! override that id. `ZHTP_REWARDS_ASSET_ID` is a deprecated alias (remove
-//! after 2026-09-01). Without a matching creator signer the handler installs
-//! but every endpoint returns 503.
+//! Activated via `rewards_activation.toml` (written by `zhtp-cli node
+//! configure-rewards`) or the deprecated `ZHTP_REWARDS_TREASURY_KEYSTORE` env
+//! path. Both require a spend-delegate keystore whose key_id matches the
+//! on-chain `RewardsModuleState` and holds a positive token balance.
+//! `ZHTP_REWARDS_TOKEN_ID` may override the asset id on the legacy env path.
+//! `ZHTP_REWARDS_ASSET_ID` is a deprecated alias (remove after 2026-09-01).
+//! Without a matching delegate signer the handler installs but every endpoint
+//! returns 503.
 //!
 //! ## Storage
 //!
@@ -45,7 +45,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use lib_blockchain::contracts::utils::generate_custom_token_id;
+
 use lib_blockchain::transaction::{Transaction, TokenTransferData};
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
@@ -58,9 +58,6 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 
 // ── Constants ────────────────────────────────────────────────────────
-
-const BUBL_TOKEN_NAME: &str = "Bubble";
-const BUBL_TOKEN_SYMBOL: &str = "BUBL";
 
 /// Deprecated env alias — use `ZHTP_REWARDS_TOKEN_ID`. Scheduled removal 2026-09-01.
 const DEPRECATED_REWARDS_ASSET_ID_ENV: &str = "ZHTP_REWARDS_ASSET_ID";
@@ -1203,38 +1200,69 @@ fn parse_token_id_hex(hex_id: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn resolve_rewards_token_id(blockchain: &Blockchain) -> Option<[u8; 32]> {
+fn resolve_legacy_rewards_asset_id(
+    blockchain: &Blockchain,
+    signer_key_id: &[u8; 32],
+) -> Option<[u8; 32]> {
     if let Some(hex_id) = rewards_token_id_override() {
         return parse_token_id_hex(&hex_id);
     }
 
-    // Canonical BUBL: GENESIS-6 DAO `TokenCreation` (deterministic token_id).
-    let bubl_dao_id = generate_custom_token_id(BUBL_TOKEN_NAME, BUBL_TOKEN_SYMBOL);
-    if blockchain.get_token_contract(&bubl_dao_id).is_some() {
-        return Some(bubl_dao_id);
-    }
-
-    None
-}
-
-/// Returns true when `signer_key_id` is the on-chain creator of the DAO token.
-fn rewards_signer_authorized(
-    blockchain: &Blockchain,
-    token_id: &[u8; 32],
-    signer_key_id: &[u8; 32],
-) -> bool {
-    blockchain
-        .get_token_contract(token_id)
-        .is_some_and(|token| token.creator.key_id == *signer_key_id)
+    crate::rewards_activation::scan_chain_eligible_assets(blockchain)
+        .into_iter()
+        .find(|asset| asset.spend_delegate_key_id == *signer_key_id)
+        .map(|asset| asset.asset_id)
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
+    let eligible = crate::rewards_activation::scan_chain_eligible_assets(blockchain);
+    if !eligible.is_empty() {
+        info!(
+            "rewards: chain scan found {} asset(s) with rewards module + funded delegate",
+            eligible.len()
+        );
+        for a in &eligible {
+            info!(
+                "rewards: eligible asset_id={} delegate={} balance={}",
+                hex::encode(&a.asset_id[..8]),
+                hex::encode(&a.spend_delegate_key_id[..8]),
+                a.delegate_balance
+            );
+        }
+    }
+
+    if let Some(activation) = crate::rewards_activation::resolve_activation() {
+        return load_treasury_from_dir(
+            blockchain,
+            &activation.delegate_keystore_dir,
+            Some(activation.asset_id),
+            activation.source,
+        );
+    }
+
+    // Legacy interim: env-only keystore + BUBL token_id discovery (TokenCreation path).
     let dir = std::env::var("ZHTP_REWARDS_TREASURY_KEYSTORE").ok()?;
-    let path = PathBuf::from(&dir);
+    warn!(
+        "rewards: ZHTP_REWARDS_TREASURY_KEYSTORE is deprecated — use `zhtp-cli node configure-rewards` (removal after 2026-09-01)"
+    );
+    load_treasury_from_dir(
+        blockchain,
+        &PathBuf::from(&dir),
+        None,
+        crate::rewards_activation::ActivationSource::LegacyEnv,
+    )
+}
+
+fn load_treasury_from_dir(
+    blockchain: &Blockchain,
+    path: &PathBuf,
+    asset_id_override: Option<[u8; 32]>,
+    source: crate::rewards_activation::ActivationSource,
+) -> Option<TreasuryConfig> {
     if !path.is_dir() {
         warn!(
-            "rewards: ZHTP_REWARDS_TREASURY_KEYSTORE='{}' is not a directory",
-            dir
+            "rewards: keystore path '{}' is not a directory",
+            path.display()
         );
         return None;
     }
@@ -1244,37 +1272,66 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
         Ok(k) => k,
         Err(e) => {
             warn!(
-                "rewards: failed to load treasury keystore from {}: {}",
-                dir, e
+                "rewards: failed to load delegate keystore from {}: {}",
+                path.display(),
+                e
             );
             return None;
         }
     };
-    let rewards_asset_id = resolve_rewards_token_id(blockchain)?;
     let signer_key_id = keypair.public_key.key_id;
 
-    if !rewards_signer_authorized(blockchain, &rewards_asset_id, &signer_key_id) {
-        warn!(
-            "rewards: keystore key_id {} is not authorized to spend token {}; endpoint disabled",
-            hex::encode(&signer_key_id[..8]),
-            hex::encode(&rewards_asset_id[..8]),
-        );
-        return None;
-    }
+    let rewards_asset_id = if let Some(id) = asset_id_override {
+        match crate::rewards_activation::validate_activation_against_chain(
+            blockchain,
+            &id,
+            &signer_key_id,
+        ) {
+            Ok(_) => id,
+            Err(e) => {
+                warn!("rewards: chain-native activation rejected: {e}");
+                return None;
+            }
+        }
+    } else {
+        let token_id = resolve_legacy_rewards_asset_id(blockchain, &signer_key_id)?;
+        match crate::rewards_activation::validate_activation_against_chain(
+            blockchain,
+            &token_id,
+            &signer_key_id,
+        ) {
+            Ok(_) => token_id,
+            Err(e) => {
+                warn!("rewards: legacy env activation rejected: {e}");
+                return None;
+            }
+        }
+    };
 
-    let balance = blockchain
-        .token_balance(&rewards_asset_id, &signer_key_id)
-        .unwrap_or(0);
+    let balance = match blockchain.token_balance(&rewards_asset_id, &signer_key_id) {
+        Ok(balance) => balance,
+        Err(e) => {
+            warn!(
+                "rewards: token_balance lookup failed for token {}: {e}",
+                hex::encode(&rewards_asset_id[..8]),
+            );
+            return None;
+        }
+    };
     if balance == 0 {
         warn!(
-            "rewards: signer keystore at {} holds 0 balance for token {}; endpoint disabled",
-            dir,
+            "rewards: delegate keystore at {} holds 0 balance for token {}; endpoint disabled",
+            path.display(),
             hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
+    let source_label = match source {
+        crate::rewards_activation::ActivationSource::ConfigFile => "rewards_activation.toml",
+        crate::rewards_activation::ActivationSource::LegacyEnv => "ZHTP_REWARDS_TREASURY_KEYSTORE",
+    };
     info!(
-        "rewards: BUBL signer loaded — token_id={} key_id={} balance={}",
+        "rewards: signer loaded via {source_label} — token_id={} key_id={} balance={}",
         hex::encode(&rewards_asset_id[..8]),
         hex::encode(&signer_key_id[..8]),
         balance,
