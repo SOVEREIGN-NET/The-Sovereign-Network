@@ -24,7 +24,9 @@ use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
 
 
 // Access control imports
-use crate::api::principal::{extract_principal_from_request, parse_identity_id_bytes};
+use crate::api::principal::{
+    extract_principal_from_request, identity_id_matches_caller, parse_identity_id_bytes,
+};
 use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
 
 /// Helper function to create JSON responses correctly
@@ -69,7 +71,9 @@ impl WalletHandler {
         extract_principal_from_request(request)
     }
 
-    fn parse_identity_id_or_bad_request(identity_id: &str) -> Result<[u8; 32], ZhtpResponse> {
+    fn parse_identity_id_or_bad_request(
+        identity_id: &str,
+    ) -> std::result::Result<[u8; 32], ZhtpResponse> {
         parse_identity_id_bytes(identity_id)
             .map_err(|msg| create_error_response(ZhtpStatus::BadRequest, msg))
     }
@@ -670,9 +674,9 @@ impl WalletHandler {
         let principal = self.extract_principal(&request);
         let req_data: CrossWalletTransferRequest = serde_json::from_slice(&request.body)?;
 
-        // Verify caller owns the identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&req_data.identity_id, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot transfer from an identity you don't own".to_string(),
@@ -780,9 +784,9 @@ impl WalletHandler {
         let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
 
-        // Verify caller owns the identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&req_data.identity_id, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot stake from an identity you don't own".to_string(),
@@ -877,9 +881,9 @@ impl WalletHandler {
         let principal = self.extract_principal(&request);
         let req_data: StakingRequest = serde_json::from_slice(&request.body)?;
 
-        // Verify caller owns the identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != req_data.identity_id && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&req_data.identity_id, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot unstake from an identity you don't own".to_string(),
@@ -1342,9 +1346,9 @@ impl WalletHandler {
         let send_req: SimpleSendRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
-        // Verify caller owns the from_identity
-        let caller_hex = principal.did.strip_prefix("did:zhtp:").unwrap_or(&principal.did);
-        if caller_hex != send_req.from_identity && principal.role != lib_access_control::Role::Council {
+        if !identity_id_matches_caller(&send_req.from_identity, &principal.did)
+            && principal.role != lib_access_control::Role::Council
+        {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
                 "Cannot send from an identity you don't own".to_string(),

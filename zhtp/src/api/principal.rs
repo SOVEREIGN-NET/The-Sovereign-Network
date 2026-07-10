@@ -21,7 +21,9 @@ mod tests {
     }
 }
 
-pub fn parse_identity_id_bytes(identity_id: &str) -> Result<[u8; 32], String> {
+pub(crate) fn parse_identity_id_bytes(
+    identity_id: &str,
+) -> std::result::Result<[u8; 32], String> {
     let hex_part = identity_id
         .strip_prefix("did:zhtp:")
         .unwrap_or(identity_id);
@@ -33,6 +35,15 @@ pub fn parse_identity_id_bytes(identity_id: &str) -> Result<[u8; 32], String> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+/// Compare request identity (raw hex or `did:zhtp:`) to caller DID.
+pub(crate) fn identity_id_matches_caller(request_identity: &str, caller_did: &str) -> bool {
+    let caller_hex = caller_did.strip_prefix("did:zhtp:").unwrap_or(caller_did);
+    let request_hex = request_identity
+        .strip_prefix("did:zhtp:")
+        .unwrap_or(request_identity);
+    caller_hex == request_hex
 }
 
 use lib_access_control::{Role, SecurityPrincipal};
