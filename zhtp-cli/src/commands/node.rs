@@ -53,7 +53,51 @@ pub fn action_to_operation(action: &NodeAction) -> NodeOperation {
         NodeAction::Restart => NodeOperation::Restart,
         NodeAction::SetupUi => NodeOperation::Status, // handled separately
         NodeAction::HaltConsensus { .. } => NodeOperation::Status, // handled separately
+        NodeAction::ConfigureRewards { .. } => NodeOperation::Status, // handled separately
     }
+}
+
+async fn handle_configure_rewards(
+    asset_id: &str,
+    delegate_keystore: &str,
+    data_dir: Option<&str>,
+    _cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    let data_root = data_dir
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp")))
+        .ok_or_else(|| CliError::ConfigError("could not resolve node data directory".into()))?;
+
+    zhtp::set_node_data_dir(data_root);
+
+    let parsed_id = zhtp::rewards_activation::parse_asset_id_hex(asset_id).map_err(|e| {
+        CliError::ConfigError(format!("invalid --asset-id: {e}"))
+    })?;
+
+    let keystore_path = normalize_keystore_path(delegate_keystore)
+        .ok_or_else(|| CliError::ConfigError("invalid --delegate-keystore path".into()))?;
+    if !keystore_path.is_dir() {
+        return Err(CliError::ConfigError(format!(
+            "delegate keystore is not a directory: {}",
+            keystore_path.display()
+        )));
+    }
+
+    zhtp::rewards_activation::write_activation_config(&parsed_id, &keystore_path).map_err(|e| {
+        CliError::ConfigError(format!("failed to write rewards activation config: {e}"))
+    })?;
+
+    let out_path = zhtp::rewards_activation::activation_config_path();
+    output.header("Rewards activation configured")?;
+    output.print(&format!("Wrote: {}", out_path.display()))?;
+    output.print(&format!("asset_id: {}", hex::encode(parsed_id)))?;
+    output.print(&format!(
+        "delegate_keystore: {}",
+        keystore_path.display()
+    ))?;
+    output.print("Restart the node (or redeploy) for /api/v1/rewards/* to pick up the config.")?;
+    Ok(())
 }
 
 /// Parse environment/network type from string
@@ -105,6 +149,16 @@ async fn handle_node_command_impl(
     // Handle setup-ui separately (it starts its own HTTP server)
     if matches!(args.action, NodeAction::SetupUi) {
         return crate::commands::setup_ui::run_setup_ui(cli, output).await;
+    }
+
+    if let NodeAction::ConfigureRewards {
+        ref asset_id,
+        ref delegate_keystore,
+        ref data_dir,
+    } = args.action
+    {
+        return handle_configure_rewards(asset_id, delegate_keystore, data_dir.as_deref(), cli, output)
+            .await;
     }
 
     // Handle halt-consensus via QUIC API call
@@ -261,6 +315,9 @@ async fn handle_node_command_impl(
         NodeAction::HaltConsensus { .. } => {
             // Already handled above, unreachable
             unreachable!("HaltConsensus handled before match")
+        }
+        NodeAction::ConfigureRewards { .. } => {
+            unreachable!("ConfigureRewards handled before match")
         }
     }
 }

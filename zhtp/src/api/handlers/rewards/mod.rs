@@ -1229,12 +1229,54 @@ fn rewards_signer_authorized(
 }
 
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
+    let eligible = crate::rewards_activation::scan_chain_eligible_assets(blockchain);
+    if !eligible.is_empty() {
+        info!(
+            "rewards: chain scan found {} asset(s) with rewards module + funded delegate",
+            eligible.len()
+        );
+        for a in &eligible {
+            info!(
+                "rewards: eligible asset_id={} delegate={} balance={}",
+                hex::encode(&a.asset_id[..8]),
+                hex::encode(&a.spend_delegate_key_id[..8]),
+                a.delegate_balance
+            );
+        }
+    }
+
+    if let Some(activation) = crate::rewards_activation::resolve_activation() {
+        return load_treasury_from_dir(
+            blockchain,
+            &activation.delegate_keystore_dir,
+            Some(activation.asset_id),
+            activation.source,
+        );
+    }
+
+    // Legacy interim: env-only keystore + BUBL token_id discovery (TokenCreation path).
     let dir = std::env::var("ZHTP_REWARDS_TREASURY_KEYSTORE").ok()?;
-    let path = PathBuf::from(&dir);
+    warn!(
+        "rewards: ZHTP_REWARDS_TREASURY_KEYSTORE is deprecated — use `zhtp-cli node configure-rewards` (removal after 2026-09-01)"
+    );
+    load_treasury_from_dir(
+        blockchain,
+        &PathBuf::from(&dir),
+        None,
+        crate::rewards_activation::ActivationSource::LegacyEnv,
+    )
+}
+
+fn load_treasury_from_dir(
+    blockchain: &Blockchain,
+    path: &PathBuf,
+    asset_id_override: Option<[u8; 32]>,
+    source: crate::rewards_activation::ActivationSource,
+) -> Option<TreasuryConfig> {
     if !path.is_dir() {
         warn!(
-            "rewards: ZHTP_REWARDS_TREASURY_KEYSTORE='{}' is not a directory",
-            dir
+            "rewards: keystore path '{}' is not a directory",
+            path.display()
         );
         return None;
     }
@@ -1244,37 +1286,57 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
         Ok(k) => k,
         Err(e) => {
             warn!(
-                "rewards: failed to load treasury keystore from {}: {}",
-                dir, e
+                "rewards: failed to load delegate keystore from {}: {}",
+                path.display(),
+                e
             );
             return None;
         }
     };
-    let rewards_asset_id = resolve_rewards_token_id(blockchain)?;
     let signer_key_id = keypair.public_key.key_id;
 
-    if !rewards_signer_authorized(blockchain, &rewards_asset_id, &signer_key_id) {
-        warn!(
-            "rewards: keystore key_id {} is not authorized to spend token {}; endpoint disabled",
-            hex::encode(&signer_key_id[..8]),
-            hex::encode(&rewards_asset_id[..8]),
-        );
-        return None;
-    }
+    let rewards_asset_id = if let Some(id) = asset_id_override {
+        match crate::rewards_activation::validate_activation_against_chain(
+            blockchain,
+            &id,
+            &signer_key_id,
+        ) {
+            Ok(_) => id,
+            Err(e) => {
+                warn!("rewards: chain-native activation rejected: {e}");
+                return None;
+            }
+        }
+    } else {
+        let token_id = resolve_rewards_token_id(blockchain)?;
+        if !rewards_signer_authorized(blockchain, &token_id, &signer_key_id) {
+            warn!(
+                "rewards: keystore key_id {} is not authorized to spend token {}; endpoint disabled",
+                hex::encode(&signer_key_id[..8]),
+                hex::encode(&token_id[..8]),
+            );
+            return None;
+        }
+        token_id
+    };
 
     let balance = blockchain
         .token_balance(&rewards_asset_id, &signer_key_id)
         .unwrap_or(0);
     if balance == 0 {
         warn!(
-            "rewards: signer keystore at {} holds 0 balance for token {}; endpoint disabled",
-            dir,
+            "rewards: delegate keystore at {} holds 0 balance for token {}; endpoint disabled",
+            path.display(),
             hex::encode(&rewards_asset_id[..8]),
         );
         return None;
     }
+    let source_label = match source {
+        crate::rewards_activation::ActivationSource::ConfigFile => "rewards_activation.toml",
+        crate::rewards_activation::ActivationSource::LegacyEnv => "ZHTP_REWARDS_TREASURY_KEYSTORE",
+    };
     info!(
-        "rewards: BUBL signer loaded — token_id={} key_id={} balance={}",
+        "rewards: signer loaded via {source_label} — token_id={} key_id={} balance={}",
         hex::encode(&rewards_asset_id[..8]),
         hex::encode(&signer_key_id[..8]),
         balance,

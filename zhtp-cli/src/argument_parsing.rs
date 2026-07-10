@@ -340,6 +340,18 @@ pub enum NodeAction {
         #[arg(short, long, default_value = "upgrade")]
         reason: String,
     },
+    /// Write chain-native rewards activation config (N3 interim operator path)
+    ConfigureRewards {
+        /// Sovereign asset / token id (64-char hex)
+        #[arg(long)]
+        asset_id: String,
+        /// Spend-delegate keystore directory (user_identity.json + user_private_key.json)
+        #[arg(long)]
+        delegate_keystore: String,
+        /// Node data directory (default: --data-dir or ~/.zhtp)
+        #[arg(long, env = "ZHTP_DATA_DIR")]
+        data_dir: Option<String>,
+    },
 }
 
 /// Wallet operation commands
