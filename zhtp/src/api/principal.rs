@@ -1,5 +1,40 @@
 //! Shared principal extraction for ZHTP API handlers.
 
+/// Parse `identity_id` from API paths or JSON — accepts canonical `did:zhtp:<64-hex>` or raw 64-char hex.
+#[cfg(test)]
+mod tests {
+    use super::parse_identity_id_bytes;
+
+    #[test]
+    fn parse_raw_hex_identity() {
+        let hex = "59e07e17556e2955581443538839d576974e4f8a9af424c0a2cc7df79c995c9d";
+        let bytes = parse_identity_id_bytes(hex).unwrap();
+        assert_eq!(hex::encode(bytes), hex);
+    }
+
+    #[test]
+    fn parse_did_zhtp_identity() {
+        let hex = "59e07e17556e2955581443538839d576974e4f8a9af424c0a2cc7df79c995c9d";
+        let did = format!("did:zhtp:{hex}");
+        let bytes = parse_identity_id_bytes(&did).unwrap();
+        assert_eq!(hex::encode(bytes), hex);
+    }
+}
+
+pub fn parse_identity_id_bytes(identity_id: &str) -> Result<[u8; 32], String> {
+    let hex_part = identity_id
+        .strip_prefix("did:zhtp:")
+        .unwrap_or(identity_id);
+    let bytes = hex::decode(hex_part)
+        .map_err(|e| format!("Invalid hex for identity_id: {e}"))?;
+    if bytes.len() != 32 {
+        return Err("Identity ID must be 32 bytes".to_string());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
 use lib_access_control::{Role, SecurityPrincipal};
 use lib_protocols::types::ZhtpRequest;
 use lib_types::NodeType;
