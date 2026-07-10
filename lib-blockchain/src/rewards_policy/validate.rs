@@ -250,10 +250,14 @@ pub fn expected_amount_for_trigger(
                 Some(fixed)
             } else {
                 let base = trigger.base_amount_atoms?;
-                let bonus = trigger.streak_bonus.as_ref().map(|sb| {
-                    let days = streak_day.saturating_sub(1).min(sb.cap_days) as u128;
-                    sb.per_day_atoms.saturating_mul(days)
-                })?;
+                let bonus = trigger
+                    .streak_bonus
+                    .as_ref()
+                    .map(|sb| {
+                        let days = streak_day.saturating_sub(1).min(sb.cap_days) as u128;
+                        sb.per_day_atoms.saturating_mul(days)
+                    })
+                    .unwrap_or(0);
                 Some(base.saturating_add(bonus))
             }
         }
@@ -264,7 +268,7 @@ pub fn expected_amount_for_trigger(
 pub fn legacy_bubl_policy() -> RewardsPolicyV1 {
     use super::types::StreakBonus;
     use bubl_canonical::*;
-    RewardsPolicyV1 {
+    let policy = RewardsPolicyV1 {
         schema: REWARDS_POLICY_SCHEMA_V1.to_string(),
         asset_id: "00".repeat(32),
         description: Some("canonical BUBL TokenCreation rewards".to_string()),
@@ -314,7 +318,9 @@ pub fn legacy_bubl_policy() -> RewardsPolicyV1 {
             },
         ],
         budget: None,
-    }
+    };
+    validate_rewards_policy_value(&policy).expect("legacy BUBL policy must validate");
+    policy
 }
 
 pub fn weekly_partner_cap(policy: &RewardsPolicyV1) -> u32 {
@@ -411,6 +417,17 @@ mod tests {
         let bytes = std::fs::read(path).expect("read bubl example");
         let policy = validate_rewards_policy(&bytes).expect("valid");
         assert_eq!(policy.triggers.len(), 4);
+    }
+
+    #[test]
+    fn base_amount_without_streak_bonus_is_valid() {
+        let mut policy = example_bubl_policy();
+        policy.triggers[1].streak_bonus = None;
+        assert!(validate_rewards_policy_value(&policy).is_ok());
+        assert_eq!(
+            expected_amount_for_trigger(&policy, RewardsPolicyEvent::DailyCheckin, 5),
+            Some(CHECKIN_BASE)
+        );
     }
 
     #[test]

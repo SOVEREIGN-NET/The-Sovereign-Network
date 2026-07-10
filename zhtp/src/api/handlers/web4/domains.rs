@@ -923,8 +923,13 @@ impl Web4Handler {
         // Register content ownership with wallet using ACTUAL owner identity
         let wallet_manager_lock = self.wallet_content_manager.write().await;
 
-        // Get primary wallet from owner's identity
-        if let Some(primary_wallet) = owner_identity.wallet_manager.wallets.values().next() {
+        // Get primary wallet from owner's identity (HashMap iteration is non-deterministic).
+        if let Some((_, primary_wallet)) = owner_identity
+            .wallet_manager
+            .wallets
+            .iter()
+            .find(|(_, wallet)| wallet.wallet_type == "Primary")
+        {
             let wallet_id = primary_wallet.id.clone();
             drop(wallet_manager_lock); // Release lock before async operations
 
@@ -1428,15 +1433,14 @@ impl Web4Handler {
             }
         };
 
-        let on_chain = {
-            let blockchain = self.blockchain.read().await;
-            blockchain.get_all_domains().clone()
-        };
         let sled_records = self.domain_registry.list_all_domain_records().await;
-        let entries = filter_catalog_entries_by_owner(
-            &merge_catalog_entries(&on_chain, sled_records),
-            &owner,
-        );
+        let entries = {
+            let blockchain = self.blockchain.read().await;
+            filter_catalog_entries_by_owner(
+                &merge_catalog_entries(blockchain.get_all_domains(), sled_records),
+                &owner,
+            )
+        };
 
         let domains: Vec<serde_json::Value> = entries
             .into_iter()

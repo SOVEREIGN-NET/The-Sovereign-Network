@@ -205,8 +205,26 @@ fn build_signed_token_creation(
     Ok((tx, expected_id))
 }
 
+fn validate_canonical_rewards_policy() -> Result<lib_blockchain::types::Hash> {
+    use lib_blockchain::rewards_policy::{policy_hash, validate_rewards_policy};
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/zhtp/rewards-policy/examples/bubl-v1.json"
+    );
+    let bytes = std::fs::read(path).context("read canonical BUBL rewards policy example")?;
+    let policy = validate_rewards_policy(&bytes).context("validate rewards policy")?;
+    policy_hash(&policy).map_err(|e| anyhow::anyhow!("policy_hash: {e}"))
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
+    if matches!(args.token, FoundingToken::Bubl) {
+        let policy_hash = validate_canonical_rewards_policy()?;
+        eprintln!(
+            "rewards policy validated (zhtp/rewards-policy/v1); policy_hash={}",
+            hex::encode(policy_hash.as_bytes())
+        );
+    }
     let keypair = load_keypair(&args.keystore_dir)?;
     let treasury = treasury_key_id(&args)?;
     if treasury == keypair.public_key.key_id {

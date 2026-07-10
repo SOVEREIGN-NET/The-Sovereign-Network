@@ -1102,24 +1102,52 @@ impl SledStore {
         Ok(())
     }
 
-    fn staged_u64_lookup(&self, tree: &'static str, key: &[u8]) -> Option<Option<u64>> {
-        let batch_guard = self.tx_batch.lock().ok()?;
-        let batch = batch_guard.as_ref()?;
-        let staged = batch.tree_lookup(tree, key)?;
-        staged.map(|bytes| {
-            let arr: [u8; 8] = bytes.as_ref().try_into().ok()?;
-            Some(u64::from_le_bytes(arr))
-        })
+    fn staged_u64_lookup(
+        &self,
+        tree: &'static str,
+        key: &[u8],
+    ) -> StorageResult<Option<Option<u64>>> {
+        let batch_guard = self.tx_batch.lock().map_err(|e| {
+            StorageError::Database(format!("tx_batch lock poisoned in staged_u64_lookup: {e}"))
+        })?;
+        let Some(batch) = batch_guard.as_ref() else {
+            return Ok(None);
+        };
+        let Some(staged) = batch.tree_lookup(tree, key) else {
+            return Ok(None);
+        };
+        let Some(bytes) = staged else {
+            return Ok(Some(None));
+        };
+        let arr: [u8; 8] = bytes
+            .as_ref()
+            .try_into()
+            .map_err(|_| StorageError::Database("staged u64 value wrong length".into()))?;
+        Ok(Some(Some(u64::from_le_bytes(arr))))
     }
 
-    fn staged_u32_lookup(&self, tree: &'static str, key: &[u8]) -> Option<Option<u32>> {
-        let batch_guard = self.tx_batch.lock().ok()?;
-        let batch = batch_guard.as_ref()?;
-        let staged = batch.tree_lookup(tree, key)?;
-        staged.map(|bytes| {
-            let arr: [u8; 4] = bytes.as_ref().try_into().ok()?;
-            Some(u32::from_le_bytes(arr))
-        })
+    fn staged_u32_lookup(
+        &self,
+        tree: &'static str,
+        key: &[u8],
+    ) -> StorageResult<Option<Option<u32>>> {
+        let batch_guard = self.tx_batch.lock().map_err(|e| {
+            StorageError::Database(format!("tx_batch lock poisoned in staged_u32_lookup: {e}"))
+        })?;
+        let Some(batch) = batch_guard.as_ref() else {
+            return Ok(None);
+        };
+        let Some(staged) = batch.tree_lookup(tree, key) else {
+            return Ok(None);
+        };
+        let Some(bytes) = staged else {
+            return Ok(Some(None));
+        };
+        let arr: [u8; 4] = bytes
+            .as_ref()
+            .try_into()
+            .map_err(|_| StorageError::Database("staged u32 value wrong length".into()))?;
+        Ok(Some(Some(u32::from_le_bytes(arr))))
     }
 
     fn put_in_block_batch(&self, tree: &'static str, key: &[u8], value: Vec<u8>) -> StorageResult<()> {
@@ -3426,7 +3454,7 @@ impl BlockchainStore for SledStore {
 
     fn get_bubl_reward_welcome(&self, did: &str) -> StorageResult<Option<u64>> {
         let key = did.as_bytes();
-        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_WELCOME, key) {
+        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_WELCOME, key)? {
             return Ok(staged);
         }
         match self.bubl_reward_welcome.get(key) {
@@ -3448,7 +3476,7 @@ impl BlockchainStore for SledStore {
 
     fn get_bubl_reward_daily(&self, key: &str) -> StorageResult<Option<u64>> {
         let key = key.as_bytes();
-        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_DAILY, key) {
+        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_DAILY, key)? {
             return Ok(staged);
         }
         match self.bubl_reward_daily.get(key) {
@@ -3470,7 +3498,7 @@ impl BlockchainStore for SledStore {
 
     fn get_bubl_reward_partner(&self, key: &str) -> StorageResult<Option<u64>> {
         let key = key.as_bytes();
-        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_PARTNER, key) {
+        if let Some(staged) = self.staged_u64_lookup(TREE_BUBL_REWARD_PARTNER, key)? {
             return Ok(staged);
         }
         match self.bubl_reward_partner.get(key) {
@@ -3492,7 +3520,7 @@ impl BlockchainStore for SledStore {
 
     fn get_bubl_reward_partner_count(&self, key: &str) -> StorageResult<Option<u32>> {
         let key = key.as_bytes();
-        if let Some(staged) = self.staged_u32_lookup(TREE_BUBL_REWARD_PARTNER_COUNT, key) {
+        if let Some(staged) = self.staged_u32_lookup(TREE_BUBL_REWARD_PARTNER_COUNT, key)? {
             return Ok(staged);
         }
         match self.bubl_reward_partner_count.get(key) {
