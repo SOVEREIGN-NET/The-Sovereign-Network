@@ -219,6 +219,9 @@ impl AssetsHandler {
             .get_sovereign_asset(&asset_id)
             .ok_or_else(|| anyhow::anyhow!("Asset not found"))?;
         let rewards_state = bc.get_rewards_module_state(&asset_id);
+        if asset.module_flags.has_rewards() && rewards_state.is_none() {
+            anyhow::bail!("rewards module state unavailable for asset {}", asset_id_hex);
+        }
         create_json_response(serde_json::to_value(to_detail(
             &asset,
             rewards_state.as_ref(),

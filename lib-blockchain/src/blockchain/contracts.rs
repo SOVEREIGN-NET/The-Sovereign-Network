@@ -1361,7 +1361,17 @@ impl Blockchain {
         asset_id: &[u8; 32],
     ) -> Option<crate::contracts::sovereign_asset::RewardsModuleState> {
         let store = self.get_store()?;
-        store.get_rewards_module_state(asset_id).ok().flatten()
+        match store.get_rewards_module_state(asset_id) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!(
+                    "Failed to load rewards module state for asset {}: {}",
+                    hex::encode(asset_id),
+                    e
+                );
+                None
+            }
+        }
     }
 
     pub fn register_web4_contract(
