@@ -374,7 +374,9 @@ async fn handle_dao_command_impl(
     } = args.action
     {
         output.header("DAO Launch (TokenCreation)")?;
-        let treasury = treasury_recipient.unwrap_or_else(default_protocol_treasury_key_id_hex);
+        let treasury = treasury_recipient
+            .clone()
+            .unwrap_or_else(default_protocol_treasury_key_id_hex);
         output.info(&format!(
             "Launching {} ({}) — 80% creator / 20% treasury ({})",
             name,
