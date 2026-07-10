@@ -139,7 +139,9 @@ fn token_meta(token: &FoundingToken) -> (&'static str, &'static str, u8, SupplyM
     }
 }
 
-fn load_rewards_policy_refs(policy_path: &std::path::Path) -> Result<([u8; 32], [u8; 32])> {
+fn load_rewards_policy_bundle(
+    policy_path: &std::path::Path,
+) -> Result<([u8; 32], [u8; 32], Vec<u8>)> {
     let bytes = std::fs::read(policy_path)
         .with_context(|| format!("read rewards policy {}", policy_path.display()))?;
     let policy = validate_rewards_policy(&bytes).context("validate rewards policy")?;
@@ -148,7 +150,7 @@ fn load_rewards_policy_refs(policy_path: &std::path::Path) -> Result<([u8; 32], 
     let mut cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
     cid_input.extend_from_slice(&bytes);
     let policy_cid = lib_crypto::hash_blake3(&cid_input);
-    Ok((policy_cid, policy_hash))
+    Ok((policy_cid, policy_hash, bytes))
 }
 
 fn placeholder_manifest() -> ([u8; 32], [u8; 32]) {
@@ -232,11 +234,13 @@ fn main() -> Result<()> {
     let rewards = match (&args.token, &args.rewards_delegate_dir) {
         (FoundingToken::Bubl, Some(dir)) => {
             let delegate_kp = load_keypair(dir)?;
-            let (policy_cid, policy_hash) = load_rewards_policy_refs(&args.policy_file)?;
+            let (policy_cid, policy_hash, policy_document) =
+                load_rewards_policy_bundle(&args.policy_file)?;
             Some(RewardsLaunchConfig {
                 spend_delegate_key_id: delegate_kp.public_key.key_id,
                 policy_cid,
                 policy_hash,
+                policy_document: Some(policy_document),
             })
         }
         (FoundingToken::Bubl, None) => {

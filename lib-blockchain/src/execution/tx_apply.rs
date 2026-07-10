@@ -327,6 +327,22 @@ impl<'a> StateMutator<'a> {
         Ok(())
     }
 
+    pub fn get_rewards_policy_document(
+        &self,
+        policy_hash: &[u8; 32],
+    ) -> TxApplyResult<Option<Vec<u8>>> {
+        Ok(self.store.get_rewards_policy_document(policy_hash)?)
+    }
+
+    pub fn put_rewards_policy_document(
+        &self,
+        policy_hash: &[u8; 32],
+        document: &[u8],
+    ) -> TxApplyResult<()> {
+        self.store.put_rewards_policy_document(policy_hash, document)?;
+        Ok(())
+    }
+
     pub fn get_bubl_reward_welcome(&self, did: &str) -> TxApplyResult<Option<u64>> {
         Ok(self.store.get_bubl_reward_welcome(did)?)
     }

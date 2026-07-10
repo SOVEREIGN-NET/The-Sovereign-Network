@@ -5106,9 +5106,16 @@ mod tests {
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
+        use crate::rewards_policy::{legacy_bubl_policy, policy_hash, validate_rewards_policy_value};
+
         let delegate_key = [0xDD; 32];
-        let policy_cid = [0x11; 32];
-        let policy_hash = [0x22; 32];
+        let policy = legacy_bubl_policy();
+        validate_rewards_policy_value(&policy).expect("legacy policy valid");
+        let policy_hash_arr = policy_hash(&policy).expect("policy hash").as_array();
+        let policy_document = serde_json::to_vec(&policy).expect("policy json");
+        let mut policy_cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
+        policy_cid_input.extend_from_slice(&policy_document);
+        let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
         let payload = AssetLaunchPayloadV1 {
             name: "Bubble".to_string(),
             symbol: "BUBL".to_string(),
@@ -5123,7 +5130,8 @@ mod tests {
             rewards: Some(RewardsLaunchConfig {
                 spend_delegate_key_id: delegate_key,
                 policy_cid,
-                policy_hash,
+                policy_hash: policy_hash_arr,
+                policy_document: Some(policy_document),
             }),
             governance: None,
             transfer_authority: false,
@@ -5161,10 +5169,15 @@ mod tests {
             RewardsModuleState {
                 spend_delegate_key_id: delegate_key,
                 policy_cid,
-                policy_hash,
+                policy_hash: policy_hash_arr,
                 nonce: 0,
             }
         );
+        let stored_doc = store
+            .get_rewards_policy_document(&policy_hash_arr)
+            .expect("read policy doc")
+            .expect("policy doc exists");
+        assert!(!stored_doc.is_empty());
     }
 
     #[test]
