@@ -1,8 +1,8 @@
 //! BUBL rewards endpoints.
 //!
-//! Inline-mint reward distribution from the BUBL treasury identity to
-//! end-user DIDs. Server-enforced caps; no body signing required (see
-//! `notifications/mod.rs` for the same rationale).
+//! Hybrid reward settlement (N2): spend-delegate attestation via signed
+//! `RewardClaim` txs. Eligibility reads consensus trees; executor enforces
+//! policy at commit. No request-body signing (see `notifications/mod.rs`).
 //!
 //! ## Configuration
 //!
@@ -46,16 +46,17 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 
-use lib_blockchain::transaction::{Transaction, TokenTransferData};
+use lib_blockchain::transaction::reward_claim::RewardEventKind;
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
 use lib_crypto::types::keys::{PrivateKey, PublicKey};
-use lib_crypto::Signature;
 use lib_identity::ZhtpIdentity;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
 use crate::keyfile_names::{KeystorePrivateKey, USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
+
+mod settlement;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -82,12 +83,6 @@ const WEEKLY_PARTNER_CAP: u32 = 5;
 const HISTORY_DEFAULT_LIMIT: usize = 50;
 const HISTORY_MAX_LIMIT: usize = 200;
 const MAX_DID_LEN: usize = 256;
-
-/// Sentinel value written into a reservation slot via `compare_and_swap`
-/// before the mint, then either overwritten with the real marker on
-/// success or removed on mint failure. Any non-empty byte is sufficient —
-/// `compare_and_swap` distinguishes `None` from `Some(_)` only.
-const SLOT_PENDING: &[u8] = b"P";
 
 const TREE_WELCOMED: &str = "welcomed";
 const TREE_CHECKINS: &str = "checkins";
@@ -410,92 +405,8 @@ impl RewardsHandler {
         }
     }
 
-    fn load_streak(&self, did: &str) -> StreakState {
-        match self.streak.get(did.as_bytes()) {
-            Ok(Some(bytes)) => bincode::deserialize(&bytes).unwrap_or_default(),
-            _ => StreakState::default(),
-        }
-    }
-
-    fn save_streak(&self, did: &str, state: &StreakState) -> Result<()> {
-        let bytes = bincode::serialize(state)?;
-        self.streak.insert(did.as_bytes(), bytes)?;
-        Ok(())
-    }
-
-    fn count_partners_this_week(&self, did: &str) -> u32 {
-        let week = Self::iso_week();
-        let key = Self::partners_count_key(&week, did);
-        self.partners_count
-            .get(&key)
-            .ok()
-            .flatten()
-            .and_then(|v| v.as_ref().try_into().ok().map(u32::from_le_bytes))
-            .unwrap_or(0)
-    }
-
-    /// Build, sign, and submit a TokenTransfer from the BUBL creator
-    /// (= the loaded rewards keystore) → recipient. Returns the tx hash hex
-    /// on success.
-    ///
-    /// The keystore configured via `ZHTP_REWARDS_TREASURY_KEYSTORE` MUST be
-    /// the keypair that signed the original BUBL `TokenCreation` transaction.
-    /// At deploy time TokenCreation credits the creator's `creator_allocation`
-    /// to the creator's full `PublicKey`, so a normal TokenTransfer signed by
-    /// the same keypair can debit it. The "treasury" 20 % allocation is
-    /// minted to `PublicKey { dilithium_pk: [0; 2592], kyber_pk: [0; 1568],
-    /// key_id: treasury_recipient }` (an unsignable address — see
-    /// `lib-blockchain/src/blockchain/contracts.rs:688-692`) and is therefore
-    /// inaccessible by design. Rewards are funded out of the creator share.
-    async fn mint_to_user(&self, recipient_key_id: [u8; 32], amount: u128) -> Result<String> {
-        let treasury = self
-            .treasury
-            .as_ref()
-            .ok_or_else(|| anyhow!("rewards treasury not configured"))?;
-
-        // Chain enforces strict per-(token, from) nonce equality via
-        // `is_nonce_current` (`blockchain.rs:2262-2290`). Read the expected
-        // nonce inside the same read-lock window we hold for submission. The
-        // write-lock during `add_pending_transaction` below serialises
-        // concurrent claims so this read-then-use is safe.
-        let nonce = {
-            let bc = self.blockchain.read().await;
-            bc.token_nonce(&treasury.rewards_asset_id, &treasury.signer_key_id)
-                .map_err(|e| anyhow!("nonce lookup failed: {e}"))?
-        };
-
-        let data = TokenTransferData {
-            token_id: treasury.rewards_asset_id,
-            from: treasury.signer_key_id,
-            to: recipient_key_id,
-            amount,
-            nonce,
-        };
-
-        let mut tx = Transaction::new_token_transfer_with_chain_id(
-            chain_id_from_env(),
-            data,
-            Signature::default(),
-            b"bubl:reward:v1".to_vec(),
-        );
-        let sig = treasury
-            .keypair
-            .sign(tx.signing_hash().as_bytes())
-            .map_err(|e| anyhow!("rewards sign failed: {}", e))?;
-        // No PublicKey mutation: `data.from = signer_key_id =
-        // keypair.public_key.key_id`, kyber_pk is the keystore's real kyber,
-        // and the key_id binding check at `validation.rs:1170-1192` expects
-        // `blake3(dilithium || kyber)` when kyber is non-zero — which is how
-        // `KeyPair::new` derives `public_key.key_id` in the first place. The
-        // `balance_of(&sender_pk)` lookup at `contracts.rs:374` then matches
-        // the creator-allocation entry written by `TokenCreation`.
-        tx.signature = sig;
-
-        let tx_hash = hex::encode(tx.hash().as_bytes());
-        let mut bc = self.blockchain.write().await;
-        bc.add_pending_transaction(tx)
-            .map_err(|e| anyhow!("Failed to submit reward tx: {}", e))?;
-        Ok(tx_hash)
+    fn rewards_asset_id(&self) -> Option<[u8; 32]> {
+        self.treasury.as_ref().map(|t| t.rewards_asset_id)
     }
 
     // ── handlers ─────────────────────────────────────────────────────
@@ -521,50 +432,55 @@ impl RewardsHandler {
     }
 
     async fn do_welcome(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
-        // Atomically reserve the welcome slot BEFORE minting. The previous
-        // `get` → mint → `insert` sequence let two concurrent claims both
-        // pass the check and double-mint. CAS the slot from `None` to a
-        // pending sentinel; rivals see Some(_) and bail with
-        // `welcome_already_claimed`. If the mint fails afterwards we
-        // release the slot so retries succeed.
-        match self.welcomed.compare_and_swap(
-            did.as_bytes(),
-            None::<&[u8]>,
-            Some(SLOT_PENDING),
-        ) {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => {
+        let treasury = match self.treasury.as_ref() {
+            Some(t) => t,
+            None => return Self::unavailable(),
+        };
+        let token_id = treasury.rewards_asset_id;
+
+        {
+            let bc = self.blockchain.read().await;
+            if bc.reward_welcome_claimed(&token_id, did) {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
                     "reason": "welcome_already_claimed",
                 }));
             }
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("welcome reservation failed: {}", e),
-                );
-            }
         }
-        let tx_hash = match self.mint_to_user(key_id, REWARD_WELCOME).await {
+
+        let amount = {
+            let bc = self.blockchain.read().await;
+            bc.reward_expected_amount(&token_id, RewardEventKind::Welcome, 1)
+                .unwrap_or(REWARD_WELCOME)
+        };
+
+        let tx_hash = match settlement::submit_reward_claim(
+            &self.blockchain,
+            treasury,
+            did,
+            key_id,
+            RewardEventKind::Welcome,
+            amount,
+            None,
+        )
+        .await
+        {
             Ok(h) => h,
             Err(e) => {
-                // Release the pending slot so the next attempt can retry.
-                let _ = self.welcomed.remove(did.as_bytes());
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
-                    format!("mint failed: {}", e),
+                    format!("reward claim submit failed: {}", e),
                 );
             }
         };
-        let now = Self::now_secs();
-        let _ = self.welcomed.insert(did.as_bytes(), &now.to_le_bytes());
 
-        let event = RewardEvent { seq: 0, // filled by record_event below
+        let now = Self::now_secs();
+        let event = RewardEvent {
+            seq: 0,
             at: now,
             event: "welcome".into(),
-            amount: REWARD_WELCOME,
+            amount,
             tx_hash: tx_hash.clone(),
             meta_streak_day: None,
             meta_peer_did: None,
@@ -573,25 +489,25 @@ impl RewardsHandler {
 
         Self::ok_json(json!({
             "awarded": true,
-            "amount": REWARD_WELCOME.to_string(),
-            "amount_display": (REWARD_WELCOME / ATOM_18).to_string(),
+            "amount": amount.to_string(),
+            "amount_display": (amount / ATOM_18).to_string(),
             "event": "welcome",
             "tx_hash": tx_hash,
         }))
     }
 
     async fn do_daily_checkin(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
+        let treasury = match self.treasury.as_ref() {
+            Some(t) => t,
+            None => return Self::unavailable(),
+        };
+        let token_id = treasury.rewards_asset_id;
         let date = Self::utc_date();
-        let key = Self::day_compound_key(&date, did);
+        let today_ord = Self::utc_day_ordinal();
 
-        // CAS-reserve today's slot before doing any work. See `do_welcome`
-        // for rationale — same race fix.
-        match self
-            .checkins
-            .compare_and_swap(&key, None::<&[u8]>, Some(SLOT_PENDING))
         {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => {
+            let bc = self.blockchain.read().await;
+            if bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::DailyCheckin) {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
@@ -599,48 +515,46 @@ impl RewardsHandler {
                     "next_eligible_at": Self::next_utc_midnight_secs(),
                 }));
             }
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("checkin reservation failed: {}", e),
-                );
-            }
         }
 
-        // Compute streak: consecutive if last_day == today-1, else reset to 1.
-        let today_ord = Self::utc_day_ordinal();
-        let mut streak = self.load_streak(did);
-        let next_streak = if streak.last_day == today_ord - 1 {
-            streak.current_streak.saturating_add(1)
-        } else {
-            1
+        let (next_streak, amount, longest_streak) = {
+            let bc = self.blockchain.read().await;
+            let streak = bc.reward_streak(&token_id, did);
+            let next_streak = if streak.last_day == today_ord - 1 {
+                streak.current_streak.saturating_add(1)
+            } else {
+                1
+            };
+            let amount = bc
+                .reward_checkin_amount_for_streak(&token_id, next_streak)
+                .unwrap_or_else(|| Self::checkin_amount_for_day(next_streak));
+            let longest = next_streak.max(streak.longest_streak);
+            (next_streak, amount, longest)
         };
-        let amount = Self::checkin_amount_for_day(next_streak);
 
-        let tx_hash = match self.mint_to_user(key_id, amount).await {
+        let tx_hash = match settlement::submit_reward_claim(
+            &self.blockchain,
+            treasury,
+            did,
+            key_id,
+            RewardEventKind::DailyCheckin,
+            amount,
+            None,
+        )
+        .await
+        {
             Ok(h) => h,
             Err(e) => {
-                let _ = self.checkins.remove(&key);
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
-                    format!("mint failed: {}", e),
+                    format!("reward claim submit failed: {}", e),
                 );
             }
         };
 
-        // Promote the pending slot to a permanent marker.
-        let _ = self.checkins.insert(&key, &[1u8]);
-
-        // Update streak state.
-        streak.last_day = today_ord;
-        streak.current_streak = next_streak;
-        if next_streak > streak.longest_streak {
-            streak.longest_streak = next_streak;
-        }
-        let _ = self.save_streak(did, &streak);
-
         let now = Self::now_secs();
-        let event = RewardEvent { seq: 0, // filled by record_event below
+        let event = RewardEvent {
+            seq: 0,
             at: now,
             event: "daily_checkin".into(),
             amount,
@@ -649,7 +563,7 @@ impl RewardsHandler {
             meta_peer_did: None,
         };
         let streak_snapshot = next_streak;
-        let longest_snapshot = streak.longest_streak;
+        let longest_snapshot = longest_streak;
         self.record_event(did, event, move |s| {
             s.checkin_count = s.checkin_count.saturating_add(1);
             s.current_streak = streak_snapshot;
@@ -668,16 +582,16 @@ impl RewardsHandler {
     }
 
     async fn do_active_session(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
+        let treasury = match self.treasury.as_ref() {
+            Some(t) => t,
+            None => return Self::unavailable(),
+        };
+        let token_id = treasury.rewards_asset_id;
         let date = Self::utc_date();
-        let key = Self::day_compound_key(&date, did);
 
-        // CAS-reserve today's slot (see `do_welcome` for the race rationale).
-        match self
-            .sessions
-            .compare_and_swap(&key, None::<&[u8]>, Some(SLOT_PENDING))
         {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => {
+            let bc = self.blockchain.read().await;
+            if bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::ActiveSession) {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
@@ -685,31 +599,40 @@ impl RewardsHandler {
                     "next_eligible_at": Self::next_utc_midnight_secs(),
                 }));
             }
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("session reservation failed: {}", e),
-                );
-            }
         }
 
-        let tx_hash = match self.mint_to_user(key_id, REWARD_ACTIVE_SESSION).await {
+        let amount = {
+            let bc = self.blockchain.read().await;
+            bc.reward_expected_amount(&token_id, RewardEventKind::ActiveSession, 1)
+                .unwrap_or(REWARD_ACTIVE_SESSION)
+        };
+
+        let tx_hash = match settlement::submit_reward_claim(
+            &self.blockchain,
+            treasury,
+            did,
+            key_id,
+            RewardEventKind::ActiveSession,
+            amount,
+            None,
+        )
+        .await
+        {
             Ok(h) => h,
             Err(e) => {
-                let _ = self.sessions.remove(&key);
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
-                    format!("mint failed: {}", e),
+                    format!("reward claim submit failed: {}", e),
                 );
             }
         };
-        let _ = self.sessions.insert(&key, &[1u8]);
 
         let now = Self::now_secs();
-        let event = RewardEvent { seq: 0, // filled by record_event below
+        let event = RewardEvent {
+            seq: 0,
             at: now,
             event: "active_session".into(),
-            amount: REWARD_ACTIVE_SESSION,
+            amount,
             tx_hash: tx_hash.clone(),
             meta_streak_day: None,
             meta_peer_did: None,
@@ -720,8 +643,8 @@ impl RewardsHandler {
 
         Self::ok_json(json!({
             "awarded": true,
-            "amount": REWARD_ACTIVE_SESSION.to_string(),
-            "amount_display": (REWARD_ACTIVE_SESSION / ATOM_18).to_string(),
+            "amount": amount.to_string(),
+            "amount_display": (amount / ATOM_18).to_string(),
             "event": "active_session",
             "tx_hash": tx_hash,
             "next_eligible_at": Self::next_utc_midnight_secs(),
@@ -747,104 +670,67 @@ impl RewardsHandler {
             return Self::bad(format!("peer_did invalid: {}", msg));
         }
 
+        let treasury = match self.treasury.as_ref() {
+            Some(t) => t,
+            None => return Self::unavailable(),
+        };
+        let token_id = treasury.rewards_asset_id;
         let week = Self::iso_week();
-        let already_key = Self::partner_compound_key(&week, &req.did, &req.peer_did);
-        let count_key = Self::partners_count_key(&week, &req.did);
 
-        // Atomically reserve the (week, did, peer) slot. Same-peer twice in
-        // the same week gets rejected here. Concurrent requests for two
-        // different peers will both pass this gate — the count CAS below
-        // handles the weekly cap.
-        match self
-            .partners
-            .compare_and_swap(&already_key, None::<&[u8]>, Some(SLOT_PENDING))
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => {
+        let (partners_this_week, weekly_cap, amount) = {
+            let bc = self.blockchain.read().await;
+            if bc.reward_partner_claimed(&token_id, &week, &req.did, &req.peer_did) {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
                     "reason": "partner_already_counted_this_week",
-                    "partners_this_week": self.count_partners_this_week(&req.did),
+                    "partners_this_week": bc.reward_partners_this_week(&token_id, &week, &req.did),
                 }));
             }
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("partner reservation failed: {}", e),
-                );
-            }
-        }
-
-        // Spin-CAS the weekly count to enforce the cap atomically.
-        // `update_and_fetch` would also work but conflates "no change"
-        // with "delete" via its `Option` return.
-        let new_count = loop {
-            let current_iv = match self.partners_count.get(&count_key) {
-                Ok(v) => v,
-                Err(e) => {
-                    let _ = self.partners.remove(&already_key);
-                    return ZhtpResponse::error(
-                        ZhtpStatus::InternalServerError,
-                        format!("partner count read failed: {}", e),
-                    );
-                }
-            };
-            let current = current_iv
-                .as_ref()
-                .and_then(|v| <[u8; 4]>::try_from(v.as_ref()).ok())
-                .map(u32::from_le_bytes)
-                .unwrap_or(0);
-            if current >= WEEKLY_PARTNER_CAP {
-                let _ = self.partners.remove(&already_key);
+            let policy_cap = bc.reward_weekly_partner_cap(&token_id);
+            let weekly_cap = if policy_cap > 0 { policy_cap } else { WEEKLY_PARTNER_CAP };
+            let partners_this_week =
+                bc.reward_partners_this_week(&token_id, &week, &req.did);
+            if weekly_cap > 0 && partners_this_week >= weekly_cap {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
                     "reason": "weekly_partner_cap_reached",
-                    "partners_this_week": WEEKLY_PARTNER_CAP,
+                    "partners_this_week": partners_this_week,
                 }));
             }
-            let next = current.saturating_add(1);
-            match self.partners_count.compare_and_swap(
-                &count_key,
-                current_iv.as_deref(),
-                Some(&next.to_le_bytes()),
-            ) {
-                Ok(Ok(())) => break next,
-                Ok(Err(_)) => continue, // racer mutated count; retry
-                Err(e) => {
-                    let _ = self.partners.remove(&already_key);
-                    return ZhtpResponse::error(
-                        ZhtpStatus::InternalServerError,
-                        format!("partner count CAS failed: {}", e),
-                    );
-                }
-            }
+            let amount = bc
+                .reward_expected_amount(&token_id, RewardEventKind::NewPartner, 1)
+                .unwrap_or(REWARD_NEW_PARTNER);
+            (partners_this_week, weekly_cap, amount)
         };
 
-        let tx_hash = match self.mint_to_user(key_id, REWARD_NEW_PARTNER).await {
+        let tx_hash = match settlement::submit_reward_claim(
+            &self.blockchain,
+            treasury,
+            &req.did,
+            key_id,
+            RewardEventKind::NewPartner,
+            amount,
+            Some(req.peer_did.clone()),
+        )
+        .await
+        {
             Ok(h) => h,
             Err(e) => {
-                // Roll back both the slot reservation and the count.
-                let _ = self.partners.remove(&already_key);
-                let _ = self
-                    .partners_count
-                    .insert(&count_key, &new_count.saturating_sub(1).to_le_bytes());
                 return ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
-                    format!("mint failed: {}", e),
+                    format!("reward claim submit failed: {}", e),
                 );
             }
         };
 
-        // Promote the pending reservation to a permanent marker.
-        let _ = self.partners.insert(&already_key, &[1u8]);
-
         let now = Self::now_secs();
-        let event = RewardEvent { seq: 0, // filled by record_event below
+        let event = RewardEvent {
+            seq: 0,
             at: now,
             event: "new_partner".into(),
-            amount: REWARD_NEW_PARTNER,
+            amount,
             tx_hash: tx_hash.clone(),
             meta_streak_day: None,
             meta_peer_did: Some(req.peer_did.clone()),
@@ -855,10 +741,11 @@ impl RewardsHandler {
 
         Self::ok_json(json!({
             "awarded": true,
-            "amount": REWARD_NEW_PARTNER.to_string(),
-            "amount_display": (REWARD_NEW_PARTNER / ATOM_18).to_string(),
+            "amount": amount.to_string(),
+            "amount_display": (amount / ATOM_18).to_string(),
             "event": "new_partner",
-            "partners_this_week": new_count,
+            "partners_this_week": partners_this_week.saturating_add(1),
+            "weekly_cap": weekly_cap,
             "tx_hash": tx_hash,
         }))
     }
@@ -910,39 +797,51 @@ impl RewardsHandler {
     }
 
     async fn handle_status(&self, did: &str) -> ZhtpResponse {
-        // READS don't need the treasury keystore — see `handle_balance`.
         if let Err(msg) = Self::validate_did(did) {
             return Self::bad(msg);
         }
 
+        let token_id = self.rewards_asset_id().unwrap_or_else(|| {
+            lib_blockchain::contracts::utils::generate_custom_token_id("Bubble", "BUBL")
+        });
+
         let now = Self::now_secs();
         let date = Self::utc_date();
+        let week = Self::iso_week();
         let next_midnight = Self::next_utc_midnight_secs();
-
-        let welcome_available = !matches!(self.welcomed.get(did.as_bytes()), Ok(Some(_)));
-
-        let checkin_done = matches!(
-            self.checkins.get(&Self::day_compound_key(&date, did)),
-            Ok(Some(_))
-        );
-        let streak = self.load_streak(did);
         let today_ord = Self::utc_day_ordinal();
+
+        let bc = self.blockchain.read().await;
+
+        let welcome_available = !bc.reward_welcome_claimed(&token_id, did);
+        let checkin_done =
+            bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::DailyCheckin);
+        let streak = bc.reward_streak(&token_id, did);
         let next_streak = if streak.last_day == today_ord - 1 {
             streak.current_streak.saturating_add(1)
         } else if streak.last_day == today_ord {
-            // already checked in today — show what TODAY's value was
             streak.current_streak.max(1)
         } else {
             1
         };
-        let checkin_amount = Self::checkin_amount_for_day(next_streak);
+        let checkin_amount = bc
+            .reward_checkin_amount_for_streak(&token_id, next_streak)
+            .unwrap_or_else(|| Self::checkin_amount_for_day(next_streak));
+        let welcome_amount = bc
+            .reward_expected_amount(&token_id, RewardEventKind::Welcome, 1)
+            .unwrap_or(REWARD_WELCOME);
+        let session_amount = bc
+            .reward_expected_amount(&token_id, RewardEventKind::ActiveSession, 1)
+            .unwrap_or(REWARD_ACTIVE_SESSION);
+        let partner_amount = bc
+            .reward_expected_amount(&token_id, RewardEventKind::NewPartner, 1)
+            .unwrap_or(REWARD_NEW_PARTNER);
 
-        let session_done = matches!(
-            self.sessions.get(&Self::day_compound_key(&date, did)),
-            Ok(Some(_))
-        );
-
-        let partners_this_week = self.count_partners_this_week(did);
+        let session_done =
+            bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::ActiveSession);
+        let partners_this_week = bc.reward_partners_this_week(&token_id, &week, did);
+        let policy_cap = bc.reward_weekly_partner_cap(&token_id);
+        let weekly_cap = if policy_cap > 0 { policy_cap } else { WEEKLY_PARTNER_CAP };
 
         Self::ok_json(json!({
             "did": did,
@@ -950,7 +849,7 @@ impl RewardsHandler {
             "claimable": {
                 "welcome": {
                     "available": welcome_available,
-                    "amount_display": (REWARD_WELCOME / ATOM_18).to_string(),
+                    "amount_display": (welcome_amount / ATOM_18).to_string(),
                 },
                 "daily_checkin": {
                     "available": !checkin_done,
@@ -960,14 +859,14 @@ impl RewardsHandler {
                 },
                 "active_session": {
                     "available": !session_done,
-                    "amount_display": (REWARD_ACTIVE_SESSION / ATOM_18).to_string(),
+                    "amount_display": (session_amount / ATOM_18).to_string(),
                     "next_eligible_at": if session_done { Some(next_midnight) } else { None },
                 },
                 "new_partner": {
                     "partners_this_week": partners_this_week,
-                    "weekly_cap": WEEKLY_PARTNER_CAP,
-                    "remaining": WEEKLY_PARTNER_CAP.saturating_sub(partners_this_week),
-                    "amount_display_per_partner": (REWARD_NEW_PARTNER / ATOM_18).to_string(),
+                    "weekly_cap": weekly_cap,
+                    "remaining": weekly_cap.saturating_sub(partners_this_week),
+                    "amount_display_per_partner": (partner_amount / ATOM_18).to_string(),
                 },
             },
             "current_streak": streak.current_streak,
@@ -1167,7 +1066,7 @@ impl ZhtpRequestHandler for RewardsHandler {
 /// Resolve the chain_id used to bind a TokenTransfer tx. Mirrors
 /// `runtime::token_utils::chain_id_from_env` so reward txes ride the same
 /// chain_id as every other server-built tx (testnet=0x02, mainnet=0x03).
-fn chain_id_from_env() -> u8 {
+pub(crate) fn chain_id_from_env() -> u8 {
     std::env::var("ZHTP_CHAIN_ID")
         .ok()
         .and_then(|v| v.parse::<u8>().ok())
