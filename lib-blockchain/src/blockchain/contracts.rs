@@ -1355,6 +1355,25 @@ impl Blockchain {
             .find(|a| a.asset_id == *asset_id)
     }
 
+    /// On-chain rewards module state (`asset_rewards/` sled tree).
+    pub fn get_rewards_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> Option<crate::contracts::sovereign_asset::RewardsModuleState> {
+        let store = self.get_store()?;
+        match store.get_rewards_module_state(asset_id) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!(
+                    "Failed to load rewards module state for asset {}: {}",
+                    hex::encode(asset_id),
+                    e
+                );
+                None
+            }
+        }
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],

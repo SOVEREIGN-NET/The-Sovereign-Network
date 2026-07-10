@@ -33,6 +33,21 @@ pub struct RewardsLaunchConfig {
     pub policy_hash: [u8; 32],
 }
 
+impl RewardsLaunchConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.spend_delegate_key_id == [0u8; 32] {
+            return Err("rewards spend_delegate_key_id must be non-zero".to_string());
+        }
+        if self.policy_cid == [0u8; 32] {
+            return Err("rewards policy_cid must be non-zero".to_string());
+        }
+        if self.policy_hash == [0u8; 32] {
+            return Err("rewards policy_hash must be non-zero".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceLaunchConfig {
     pub verifier: GovernanceVerifierState,
@@ -108,9 +123,7 @@ impl AssetLaunchPayloadV1 {
             return Err("elastic supply_mode requires curve module at launch".to_string());
         }
         if let Some(rewards) = &self.rewards {
-            if rewards.spend_delegate_key_id == [0u8; 32] {
-                return Err("rewards spend_delegate_key_id must be non-zero".to_string());
-            }
+            rewards.validate()?;
         }
         if let Some(gov) = &self.governance {
             validate_governance_verifier(&gov.resolved_verifier())?;
