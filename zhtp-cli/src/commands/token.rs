@@ -362,6 +362,9 @@ pub async fn handle_create(
             reason: format!("Failed to parse response: {}", e),
         })?;
 
+    let formatted = format_output(&response_json, &cli.format)?;
+    output.print(&formatted)?;
+
     if response_json
         .get("success")
         .and_then(|v| v.as_bool())
@@ -375,18 +378,19 @@ pub async fn handle_create(
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
         ))?;
+        Ok(())
     } else {
         let error = response_json
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
         output.error(&format!("Failed to create token: {}", error))?;
+        Err(CliError::ApiCallFailed {
+            endpoint: "/api/v1/token/create".to_string(),
+            status: 0,
+            reason: error.to_string(),
+        })
     }
-
-    let formatted = format_output(&response_json, &cli.format)?;
-    output.print(&formatted)?;
-
-    Ok(())
 }
 
 /// Handle token minting

@@ -365,11 +365,11 @@ async fn handle_dao_command_impl(
 ) -> CliResult<()> {
     // Launch delegates to token::handle_create (connects internally).
     if let DaoAction::Launch {
-        name,
-        symbol,
+        ref name,
+        ref symbol,
         supply,
         decimals,
-        treasury_recipient,
+        ref treasury_recipient,
     } = args.action
     {
         output.header("DAO Launch (TokenCreation)")?;

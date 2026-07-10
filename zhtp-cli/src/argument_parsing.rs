@@ -509,7 +509,7 @@ pub enum DaoAction {
         /// Token symbol (e.g. BUBL)
         #[arg(short, long)]
         symbol: String,
-        /// Initial supply in atomic units (18 decimals: 1 token = 10^18 atoms)
+        /// Initial supply in atomic units (whole_tokens * 10^--decimals)
         #[arg(short, long)]
         supply: u128,
         /// Display decimals
