@@ -59,7 +59,8 @@ pub fn action_to_operation(action: &IdentityAction) -> IdentityOperation {
     match action {
         IdentityAction::Create { .. } => IdentityOperation::Create,
         IdentityAction::CreateDid { .. } => IdentityOperation::CreateWithType,
-        IdentityAction::Init { .. } | IdentityAction::Register { .. } => IdentityOperation::Create,
+        IdentityAction::Init { .. } => IdentityOperation::Init,
+        IdentityAction::Register { .. } => IdentityOperation::Create,
         IdentityAction::Verify { .. } => IdentityOperation::Verify,
         IdentityAction::List => IdentityOperation::List,
         IdentityAction::Import { .. } => IdentityOperation::Import,
@@ -477,7 +478,7 @@ async fn init_creator_identity(
     output.success("Creator identity ready.")?;
     output.print("Next steps:")?;
     output.print(&format!("  1. Keystore: {:?}", keystore))?;
-    output.print("  2. Launch DAO token: zhtp-cli dao launch (see #2816) or zhtp-cli token create")?;
+    output.print("  2. Launch DAO token: zhtp-cli token create (dao launch coming in #2816)")?;
     output.print("  3. Operator runbook: docs/ops/dao-launch-bootstrap.md")?;
     output.print("  4. Rewards policy: schemas/zhtp/rewards-policy/examples/bubl-v1.json")?;
     Ok(())
@@ -735,6 +736,16 @@ mod tests {
     }
 
     #[test]
+    fn test_action_to_operation_init() {
+        let action = IdentityAction::Init {
+            display_name: "creator".to_string(),
+            device_id: "cli-device".to_string(),
+            keystore: None,
+        };
+        assert_eq!(action_to_operation(&action), IdentityOperation::Init);
+    }
+
+    #[test]
     fn test_action_to_operation_create_with_type() {
         let action = IdentityAction::CreateDid {
             name: "test".to_string(),
@@ -770,6 +781,10 @@ mod tests {
         assert_eq!(
             IdentityOperation::CreateWithType.description(),
             "Create identity with specific type"
+        );
+        assert_eq!(
+            IdentityOperation::Init.description(),
+            "Initialize creator identity (keystore + on-chain register)"
         );
         assert_eq!(
             IdentityOperation::Verify.description(),

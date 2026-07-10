@@ -733,8 +733,8 @@ pub enum IdentityAction {
     },
     /// Zero-to-creator wizard: generate keystore (if needed) + on-chain registration.
     ///
-    /// Preferred entry point before `dao launch`. Equivalent to `register` with
-    /// documented next steps for DAO token deployment.
+    /// Preferred entry point before `token create`. Equivalent to `register` with
+    /// documented next steps for DAO token deployment (`dao launch` coming in #2816).
     Init {
         /// Display name for the new identity
         #[arg(short, long)]
