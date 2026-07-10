@@ -5,10 +5,15 @@
 //!   cargo run -p tools --bin seed_founding_dao -- \
 //!     --keystore-dir /opt/zhtp/keystores/bubl-creator \
 //!     --token bubl \
-//!     --supply-atoms 1000000000000000000000000000
+//!     --supply-atoms 1000000000000000000000000000 \
+//!     --chain-id 2
 //!
-//! Submit the printed `signed_tx` hex via:
-//!   zhtp-cli token create  (or POST /api/v1/token/create with signed_tx body)
+//! v2 genesis (`genesis.toml`) sets `chain_id = 2`; pass `--chain-id 2` explicitly
+//! (the tool default is still `0x03` for legacy dev networks).
+//!
+//! Submit the printed `signed_tx` hex via POST /api/v1/token/create (preferred on
+//! v2 testnet). `zhtp-cli token create` hardcodes `0x03` until chain-id selection
+//! lands — do not use it for Phase 1 bootstrap.
 //!
 //! The keystore MUST be the entity that will fund `/api/v1/rewards/*` transfers
 //! (`ZHTP_REWARDS_TREASURY_KEYSTORE` on validators).
