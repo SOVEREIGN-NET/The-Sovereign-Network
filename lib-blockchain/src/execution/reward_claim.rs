@@ -103,9 +103,20 @@ pub fn apply_reward_claim(
         }
     };
 
-    if contract.creator.key_id != data.from {
+    if let Some(rewards_state) = mutator.get_rewards_module_state(&data.token_id)? {
+        if data.from != rewards_state.spend_delegate_key_id {
+            warn!(
+                "RewardClaim rejected at height {}: signer {} is not spend delegate {} for token {}",
+                block_height,
+                hex::encode(data.from),
+                hex::encode(rewards_state.spend_delegate_key_id),
+                hex::encode(data.token_id)
+            );
+            return Ok(None);
+        }
+    } else if contract.creator.key_id != data.from {
         warn!(
-            "RewardClaim rejected at height {}: signer is not token creator",
+            "RewardClaim rejected at height {}: signer is not token creator (legacy path)",
             block_height
         );
         return Ok(None);
