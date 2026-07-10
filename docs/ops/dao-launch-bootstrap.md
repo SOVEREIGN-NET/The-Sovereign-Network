@@ -32,6 +32,16 @@ v1 testnet used `chain_id = 1`; do not reuse those values on v2.
 
 ## Step 1 — Creator keystore
 
+### CLI wizard (preferred)
+
+```bash
+zhtp-cli identity init --display-name "My DAO Creator"
+```
+
+Creates `~/.zhtp/keystore/` (`user_identity.json` + `user_private_key.json`) and registers on-chain (identity + Primary/UBI/Savings wallets + SOV welcome bonus).
+
+### Manual (operators / validators)
+
 On the operator host (or validator), create a directory:
 
 ```bash
