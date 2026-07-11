@@ -2266,51 +2266,89 @@ impl Blockchain {
     /// Check whether a transaction's nonce is still valid against committed chain state.
     ///
     /// Returns `true` for transaction types that don't carry nonces (they are
-    /// validated by other means).  For `TokenTransfer`, the nonce must equal
-    /// the sender's current on-chain nonce for the target token — anything
-    /// lower has already been applied and is a replay.
+    /// validated by other means). For `TokenTransfer` and `RewardClaim`, the
+    /// nonce must equal the sender's current on-chain nonce for the target
+    /// token — anything lower is a replay, anything higher is a gap.
     pub fn is_nonce_current(&self, tx: &Transaction) -> bool {
-        if tx.transaction_type == TransactionType::TokenTransfer {
-            if let Some(transfer) = tx.token_transfer_data() {
+        let (token_id, from, nonce) = match tx.transaction_type {
+            TransactionType::TokenTransfer => {
+                let Some(transfer) = tx.token_transfer_data() else {
+                    return true;
+                };
                 let token_id = if transfer.token_id == [0u8; 32] {
                     crate::contracts::utils::generate_lib_token_id()
                 } else {
                     transfer.token_id
                 };
-                let expected = match self.token_nonce(&token_id, &transfer.from) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            tx = %tx.hash(),
-                            "is_nonce_current: nonce read failed; failing closed (rejecting tx)"
-                        );
-                        return false;
-                    }
+                (token_id, transfer.from, transfer.nonce)
+            }
+            TransactionType::RewardClaim => {
+                let Some(claim) = tx.reward_claim_data() else {
+                    return true;
                 };
-                if transfer.nonce < expected {
-                    tracing::debug!(
-                        "Stale nonce: tx {} has nonce {} but chain expects {} for sender {}",
-                        tx.hash(),
-                        transfer.nonce,
-                        expected,
-                        hex::encode(&transfer.from[..8]),
-                    );
-                    return false;
-                }
-                if transfer.nonce > expected {
-                    tracing::debug!(
-                        "Future nonce: tx {} has nonce {} but chain expects {} for sender {}",
-                        tx.hash(),
-                        transfer.nonce,
-                        expected,
-                        hex::encode(&transfer.from[..8]),
-                    );
-                    return false;
+                (claim.token_id, claim.from, claim.nonce)
+            }
+            _ => return true,
+        };
+
+        let expected = match self.token_nonce(&token_id, &from) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    tx = %tx.hash(),
+                    "is_nonce_current: nonce read failed; failing closed (rejecting tx)"
+                );
+                return false;
+            }
+        };
+        if nonce != expected {
+            tracing::debug!(
+                "Nonce mismatch: tx {} has nonce {} but chain expects {} for sender {}",
+                tx.hash(),
+                nonce,
+                expected,
+                hex::encode(&from[..8]),
+            );
+            return false;
+        }
+        true
+    }
+
+    /// Reject duplicate or conflicting `RewardClaim` txs already in the mempool.
+    fn pending_reward_claim_conflicts(&self, incoming: &crate::transaction::reward_claim::RewardClaimData) -> bool {
+        use crate::transaction::reward_claim::RewardEventKind;
+        for tx in &self.pending_transactions {
+            if tx.transaction_type != TransactionType::RewardClaim {
+                continue;
+            }
+            let Some(data) = tx.reward_claim_data() else {
+                continue;
+            };
+            if data.token_id == incoming.token_id
+                && data.from == incoming.from
+                && data.nonce == incoming.nonce
+            {
+                return true;
+            }
+            if data.token_id != incoming.token_id || data.owner_did != incoming.owner_did {
+                continue;
+            }
+            if data.event != incoming.event {
+                continue;
+            }
+            match data.event {
+                RewardEventKind::Welcome
+                | RewardEventKind::DailyCheckin
+                | RewardEventKind::ActiveSession => return true,
+                RewardEventKind::NewPartner => {
+                    if data.peer_did == incoming.peer_did {
+                        return true;
+                    }
                 }
             }
         }
-        true
+        false
     }
 
     /// Get pending transactions
@@ -2412,6 +2450,18 @@ impl Blockchain {
                 "Transaction {} rejected: stale or future nonce",
                 &tx_hash[..16]
             ));
+        }
+
+        if transaction.transaction_type == TransactionType::RewardClaim {
+            if let Some(data) = transaction.reward_claim_data() {
+                if self.pending_reward_claim_conflicts(data) {
+                    let tx_hash = hex::encode(transaction.hash().as_bytes());
+                    return Err(anyhow::anyhow!(
+                        "Transaction {} rejected: conflicting RewardClaim already pending",
+                        &tx_hash[..16]
+                    ));
+                }
+            }
         }
 
         // Atomic with the push: update admission state so subsequent admit()

@@ -3343,16 +3343,16 @@ impl BlockExecutor {
                     )
                 })?;
                 let fee_sink = *self.fee_model.protocol_params.fee_sink_address();
-                match crate::execution::reward_claim::apply_reward_claim(
+                let outcome = crate::execution::reward_claim::apply_reward_claim(
                     mutator,
                     data,
                     block_height,
                     block_timestamp,
                     &fee_sink,
-                )? {
-                    Some(outcome) => Ok(TxOutcome::TokenTransfer(outcome)),
-                    None => Ok(TxOutcome::LegacySystem),
-                }
+                )?;
+                Ok(TxOutcome::TokenTransfer(
+                    outcome.expect("apply_reward_claim returns Err on ineligibility"),
+                ))
             }
             TransactionType::TokenMint => {
                 let mint_data = tx.token_mint_data().ok_or_else(|| {
