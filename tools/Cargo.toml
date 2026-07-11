@@ -60,5 +60,9 @@ name = "seed_asset_launch"
 path = "seed_asset_launch.rs"
 
 [[bin]]
+name = "seed_bubl_rewards_upgrade"
+path = "seed_bubl_rewards_upgrade.rs"
+
+[[bin]]
 name = "replay_divergence"
 path = "replay_divergence.rs"

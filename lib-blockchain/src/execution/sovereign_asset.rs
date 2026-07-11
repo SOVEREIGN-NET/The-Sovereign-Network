@@ -1,10 +1,11 @@
 //! Sovereign Asset executor apply helpers (SA-3..SA-7).
 
 use crate::contracts::sovereign_asset::{
-    validate_governance_verifier, AssetAuthority, AssetIdSource, AssetModuleFlags,
-    CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState, GovernanceVerifierKind,
-    GovernanceVerifierState, PendingAuthorityTransfer, RewardsModuleHeader, RewardsModuleState,
-    SovereignAsset, SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
+    project_from_token_contract, validate_governance_verifier, AssetAuthority, AssetIdSource,
+    AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState,
+    GovernanceVerifierKind, GovernanceVerifierState, PendingAuthorityTransfer,
+    RewardsModuleHeader, RewardsModuleState, SovereignAsset, SupplyMode,
+    AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
 };
 use crate::execution::tx_apply::{apply_token_mint, StateMutator};
 use crate::execution::{TxApplyError, TxApplyResult};
@@ -144,15 +145,30 @@ pub fn apply_asset_launch(
     })
 }
 
+/// Resolve a sovereign asset for upgrade: sled record first, else legacy token projection.
+fn resolve_sovereign_asset_for_upgrade(
+    mutator: &StateMutator<'_>,
+    asset_id: &[u8; 32],
+) -> TxApplyResult<SovereignAsset> {
+    if let Some(asset) = mutator.get_sovereign_asset(asset_id)? {
+        return Ok(asset);
+    }
+    let token_id = TokenId::new(*asset_id);
+    let contract = mutator
+        .get_token_contract(&token_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
+    project_from_token_contract(&contract, None).ok_or_else(|| {
+        TxApplyError::InvalidType("legacy asset cannot be upgraded".to_string())
+    })
+}
+
 pub fn apply_asset_module_upgrade(
     mutator: &StateMutator<'_>,
     signer_key_id: [u8; 32],
     payload: &AssetModuleUpgradePayloadV1,
     block_height: u64,
 ) -> TxApplyResult<()> {
-    let mut asset = mutator
-        .get_sovereign_asset(&payload.asset_id)?
-        .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
+    let mut asset = resolve_sovereign_asset_for_upgrade(mutator, &payload.asset_id)?;
 
     ensure_creator_or_governance(mutator, &asset, signer_key_id)?;
 
@@ -263,7 +279,7 @@ fn enable_rewards(
     asset: &mut SovereignAsset,
     cfg: &RewardsLaunchConfig,
 ) -> TxApplyResult<()> {
-    if asset.module_flags.has_rewards() {
+    if mutator.get_rewards_module_state(&asset.asset_id)?.is_some() {
         return Err(TxApplyError::InvalidType("rewards module already enabled".into()));
     }
     asset.module_flags.0 |= AssetModuleFlags::REWARDS;
