@@ -111,38 +111,6 @@ impl crate::blockchain::Blockchain {
         self.reward_expected_amount(token_id, RewardEventKind::DailyCheckin, streak_day)
     }
 
-    // ── Legacy BUBL aliases (deprecated — use token_id methods) ─────────
-
-    pub fn bubl_reward_welcome_claimed(&self, did: &str) -> bool {
-        let token_id = crate::contracts::utils::generate_custom_token_id("Bubble", "BUBL");
-        self.reward_welcome_claimed(&token_id, did)
-    }
-
-    pub fn bubl_reward_daily_claimed(
-        &self,
-        date: &str,
-        did: &str,
-        event: RewardEventKind,
-    ) -> bool {
-        let token_id = crate::contracts::utils::generate_custom_token_id("Bubble", "BUBL");
-        self.reward_daily_claimed(&token_id, date, did, event)
-    }
-
-    pub fn bubl_reward_partner_claimed(&self, week: &str, did: &str, peer_did: &str) -> bool {
-        let token_id = crate::contracts::utils::generate_custom_token_id("Bubble", "BUBL");
-        self.reward_partner_claimed(&token_id, week, did, peer_did)
-    }
-
-    pub fn bubl_reward_partners_this_week(&self, week: &str, did: &str) -> u32 {
-        let token_id = crate::contracts::utils::generate_custom_token_id("Bubble", "BUBL");
-        self.reward_partners_this_week(&token_id, week, did)
-    }
-
-    pub fn bubl_reward_streak(&self, did: &str) -> RewardStreakRecord {
-        let token_id = crate::contracts::utils::generate_custom_token_id("Bubble", "BUBL");
-        self.reward_streak(&token_id, did)
-    }
-
     fn reward_tree_has_height<F>(&self, read: F) -> bool
     where
         F: FnOnce(

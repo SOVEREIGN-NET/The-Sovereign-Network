@@ -383,204 +383,114 @@ impl RewardsHandler {
             Ok(k) => k,
             Err(msg) => return Self::bad(msg),
         };
-        match req.event.as_str() {
-            "welcome" => self.do_welcome(&req.did, key_id).await,
-            "daily_checkin" => self.do_daily_checkin(&req.did, key_id).await,
-            "active_session" => self.do_active_session(&req.did, key_id).await,
-            other => Self::bad(format!("unknown event type: '{}'", other)),
+        let spec = match req.event.as_str() {
+            "welcome" => settlement::ClaimSpec::welcome(),
+            "daily_checkin" => settlement::ClaimSpec::daily_checkin(),
+            "active_session" => settlement::ClaimSpec::active_session(),
+            other => return Self::bad(format!("unknown event type: '{}'", other)),
+        };
+        self.execute_claim(&req.did, key_id, spec).await
+    }
+
+    fn claim_ineligible_response(
+        spec: &settlement::ClaimSpec,
+        reason: &str,
+        partners_this_week: Option<u32>,
+    ) -> ZhtpResponse {
+        let mut body = json!({
+            "awarded": false,
+            "amount": "0",
+            "reason": reason,
+        });
+        if let Some(obj) = body.as_object_mut() {
+            if matches!(
+                spec.event,
+                RewardEventKind::DailyCheckin | RewardEventKind::ActiveSession
+            ) {
+                obj.insert(
+                    "next_eligible_at".into(),
+                    json!(Self::next_utc_midnight_secs()),
+                );
+            }
+            if let (RewardEventKind::NewPartner, Some(count)) = (spec.event, partners_this_week) {
+                obj.insert("partners_this_week".into(), json!(count));
+            }
         }
+        Self::ok_json(body)
     }
 
-    async fn do_welcome(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
-        let treasury = match self.treasury.as_ref() {
-            Some(t) => t,
-            None => return Self::unavailable(),
-        };
-        let token_id = treasury.rewards_asset_id;
-
-        let plan = {
-            let bc = self.blockchain.read().await;
-            settlement::plan_reward_claim(&bc, &token_id, did, RewardEventKind::Welcome, None)
-        };
-        let plan = match plan {
-            Ok(p) => p,
-            Err(reason) if reason == "welcome_already_claimed" => {
-                return Self::ok_json(json!({
-                    "awarded": false,
-                    "amount": "0",
-                    "reason": reason,
-                }));
-            }
-            Err(reason) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    format!("rewards claim unavailable: {reason}"),
-                );
-            }
-        };
-
-        let tx_hash = match settlement::submit_reward_claim(
-            &self.blockchain,
-            treasury,
-            did,
-            key_id,
-            RewardEventKind::Welcome,
-            plan.amount,
-            None,
-        )
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("reward claim submit failed: {}", e),
-                );
-            }
-        };
-
-        Self::ok_json(json!({
+    fn claim_awarded_response(
+        spec: &settlement::ClaimSpec,
+        submitted: &settlement::SubmittedClaim,
+    ) -> ZhtpResponse {
+        let plan = &submitted.plan;
+        let mut body = json!({
             "awarded": true,
             "submitted": true,
             "amount": plan.amount.to_string(),
             "amount_display": (plan.amount / ATOM_18).to_string(),
-            "event": "welcome",
-            "tx_hash": tx_hash,
-        }))
+            "event": spec.event_label,
+            "tx_hash": submitted.tx_hash,
+        });
+        if let Some(obj) = body.as_object_mut() {
+            if let Some(day) = plan.streak_day {
+                obj.insert("streak_day".into(), json!(day));
+            }
+            if matches!(
+                spec.event,
+                RewardEventKind::DailyCheckin | RewardEventKind::ActiveSession
+            ) {
+                obj.insert(
+                    "next_eligible_at".into(),
+                    json!(Self::next_utc_midnight_secs()),
+                );
+            }
+            if let Some(count) = plan.partners_this_week {
+                obj.insert("partners_this_week".into(), json!(count.saturating_add(1)));
+            }
+            if let Some(cap) = plan.weekly_cap {
+                obj.insert("weekly_cap".into(), json!(cap));
+            }
+        }
+        Self::ok_json(body)
     }
 
-    async fn do_daily_checkin(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
+    async fn execute_claim(
+        &self,
+        did: &str,
+        key_id: [u8; 32],
+        spec: settlement::ClaimSpec,
+    ) -> ZhtpResponse {
         let treasury = match self.treasury.as_ref() {
             Some(t) => t,
             None => return Self::unavailable(),
         };
-        let token_id = treasury.rewards_asset_id;
 
-        let plan = {
-            let bc = self.blockchain.read().await;
-            settlement::plan_reward_claim(
-                &bc,
-                &token_id,
-                did,
-                RewardEventKind::DailyCheckin,
-                None,
-            )
-        };
-        let plan = match plan {
-            Ok(p) => p,
-            Err(reason) if reason == "checkin_already_claimed_today" => {
-                return Self::ok_json(json!({
-                    "awarded": false,
-                    "amount": "0",
-                    "reason": reason,
-                    "next_eligible_at": Self::next_utc_midnight_secs(),
-                }));
+        match settlement::run_claim_flow(&self.blockchain, treasury, did, key_id, &spec).await {
+            Ok(submitted) => Self::claim_awarded_response(&spec, &submitted),
+            Err(settlement::ClaimFlowError::Ineligible { reason }) => {
+                let partners_this_week = if spec.event == RewardEventKind::NewPartner {
+                    let week = Self::iso_week();
+                    let bc = self.blockchain.read().await;
+                    Some(bc.reward_partners_this_week(
+                        &treasury.rewards_asset_id,
+                        &week,
+                        did,
+                    ))
+                } else {
+                    None
+                };
+                Self::claim_ineligible_response(&spec, &reason, partners_this_week)
             }
-            Err(reason) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    format!("rewards claim unavailable: {reason}"),
-                );
-            }
-        };
-        let next_streak = plan.streak_day.unwrap_or(1);
-
-        let tx_hash = match settlement::submit_reward_claim(
-            &self.blockchain,
-            treasury,
-            did,
-            key_id,
-            RewardEventKind::DailyCheckin,
-            plan.amount,
-            None,
-        )
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("reward claim submit failed: {}", e),
-                );
-            }
-        };
-
-        Self::ok_json(json!({
-            "awarded": true,
-            "submitted": true,
-            "amount": plan.amount.to_string(),
-            "amount_display": (plan.amount / ATOM_18).to_string(),
-            "event": "daily_checkin",
-            "streak_day": next_streak,
-            "tx_hash": tx_hash,
-            "next_eligible_at": Self::next_utc_midnight_secs(),
-        }))
-    }
-
-    async fn do_active_session(&self, did: &str, key_id: [u8; 32]) -> ZhtpResponse {
-        let treasury = match self.treasury.as_ref() {
-            Some(t) => t,
-            None => return Self::unavailable(),
-        };
-        let token_id = treasury.rewards_asset_id;
-
-        let plan = {
-            let bc = self.blockchain.read().await;
-            settlement::plan_reward_claim(
-                &bc,
-                &token_id,
-                did,
-                RewardEventKind::ActiveSession,
-                None,
-            )
-        };
-        let plan = match plan {
-            Ok(p) => p,
-            Err(reason) if reason == "session_already_claimed_today" => {
-                return Self::ok_json(json!({
-                    "awarded": false,
-                    "amount": "0",
-                    "reason": reason,
-                    "next_eligible_at": Self::next_utc_midnight_secs(),
-                }));
-            }
-            Err(reason) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    format!("rewards claim unavailable: {reason}"),
-                );
-            }
-        };
-
-        let tx_hash = match settlement::submit_reward_claim(
-            &self.blockchain,
-            treasury,
-            did,
-            key_id,
-            RewardEventKind::ActiveSession,
-            plan.amount,
-            None,
-        )
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("reward claim submit failed: {}", e),
-                );
-            }
-        };
-
-        Self::ok_json(json!({
-            "awarded": true,
-            "submitted": true,
-            "amount": plan.amount.to_string(),
-            "amount_display": (plan.amount / ATOM_18).to_string(),
-            "event": "active_session",
-            "tx_hash": tx_hash,
-            "next_eligible_at": Self::next_utc_midnight_secs(),
-        }))
+            Err(settlement::ClaimFlowError::Unavailable(reason)) => ZhtpResponse::error(
+                ZhtpStatus::ServiceUnavailable,
+                format!("rewards claim unavailable: {reason}"),
+            ),
+            Err(settlement::ClaimFlowError::SubmitFailed(e)) => ZhtpResponse::error(
+                ZhtpStatus::InternalServerError,
+                format!("reward claim submit failed: {e}"),
+            ),
+        }
     }
 
     async fn handle_conversation(&self, request: ZhtpRequest) -> ZhtpResponse {
@@ -602,84 +512,12 @@ impl RewardsHandler {
             return Self::bad(format!("peer_did invalid: {}", msg));
         }
 
-        let treasury = match self.treasury.as_ref() {
-            Some(t) => t,
-            None => return Self::unavailable(),
-        };
-        let token_id = treasury.rewards_asset_id;
-        let week = Self::iso_week();
-
-        let plan = {
-            let bc = self.blockchain.read().await;
-            settlement::plan_reward_claim(
-                &bc,
-                &token_id,
-                &req.did,
-                RewardEventKind::NewPartner,
-                Some(&req.peer_did),
-            )
-        };
-        let partners_this_week = {
-            let bc = self.blockchain.read().await;
-            bc.reward_partners_this_week(&token_id, &week, &req.did)
-        };
-        let weekly_cap = {
-            let bc = self.blockchain.read().await;
-            let policy_cap = bc.reward_weekly_partner_cap(&token_id);
-            if policy_cap > 0 { policy_cap } else { WEEKLY_PARTNER_CAP }
-        };
-
-        let plan = match plan {
-            Ok(p) => p,
-            Err(reason)
-                if reason == "partner_already_counted_this_week"
-                    || reason == "weekly_partner_cap_reached" =>
-            {
-                return Self::ok_json(json!({
-                    "awarded": false,
-                    "amount": "0",
-                    "reason": reason,
-                    "partners_this_week": partners_this_week,
-                }));
-            }
-            Err(reason) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::ServiceUnavailable,
-                    format!("rewards claim unavailable: {reason}"),
-                );
-            }
-        };
-
-        let tx_hash = match settlement::submit_reward_claim(
-            &self.blockchain,
-            treasury,
+        self.execute_claim(
             &req.did,
             key_id,
-            RewardEventKind::NewPartner,
-            plan.amount,
-            Some(req.peer_did.clone()),
+            settlement::ClaimSpec::new_partner(req.peer_did),
         )
         .await
-        {
-            Ok(h) => h,
-            Err(e) => {
-                return ZhtpResponse::error(
-                    ZhtpStatus::InternalServerError,
-                    format!("reward claim submit failed: {}", e),
-                );
-            }
-        };
-
-        Self::ok_json(json!({
-            "awarded": true,
-            "submitted": true,
-            "amount": plan.amount.to_string(),
-            "amount_display": (plan.amount / ATOM_18).to_string(),
-            "event": "new_partner",
-            "partners_this_week": partners_this_week.saturating_add(1),
-            "weekly_cap": weekly_cap,
-            "tx_hash": tx_hash,
-        }))
     }
 
     async fn handle_balance(&self, did: &str) -> ZhtpResponse {
