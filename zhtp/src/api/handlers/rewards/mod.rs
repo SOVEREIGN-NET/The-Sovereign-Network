@@ -17,24 +17,8 @@
 //!
 //! ## Storage
 //!
-//! Sled DB under `node_data_dir()/rewards.sled`. Trees:
-//! - `welcomed`         — set of DIDs that have claimed the one-shot
-//!                        welcome bonus. value = unix-secs of claim.
-//! - `checkins`         — `{utc_date_str}|{did}` → 1u8. Day-keyed dedup.
-//! - `sessions`         — same shape, for active-session reward.
-//! - `streak`           — did → bincode(StreakState).
-//! - `partners`         — `{iso_week_str}|{did}|{peer_did}` → 1u8.
-//!                        Compound key gives O(1) "have we counted this
-//!                        peer this week" check.
-//! - `partners_count`   — `{iso_week_str}|{did}` → u32-le count. Lets us
-//!                        enforce the 5-per-week cap without iterating.
-//! - `history`          — `{did}|{seq_u64_be}` → bincode(RewardEvent).
-//!                        Iterating rev() yields newest first.
-//! - `history_seq`      — `next` → u64-le. Monotonic counter for the
-//!                        history tree's secondary key.
-//! - `lifetime`         — did → bincode(LifetimeStats). Totals + counts
-//!                        + longest streak so the balance endpoint
-//!                        doesn't have to re-scan history every call.
+//! Eligibility and streak state live on-chain (consensus trees). Node-local
+//! `rewards.sled` retains only `history` + `lifetime` caches until N4 (#2814).
 
 use anyhow::{anyhow, Result};
 use chrono::{Datelike, Utc};
@@ -84,12 +68,6 @@ const HISTORY_DEFAULT_LIMIT: usize = 50;
 const HISTORY_MAX_LIMIT: usize = 200;
 const MAX_DID_LEN: usize = 256;
 
-const TREE_WELCOMED: &str = "welcomed";
-const TREE_CHECKINS: &str = "checkins";
-const TREE_SESSIONS: &str = "sessions";
-const TREE_STREAK: &str = "streak";
-const TREE_PARTNERS: &str = "partners";
-const TREE_PARTNERS_COUNT: &str = "partners_count";
 const TREE_HISTORY: &str = "history";
 const TREE_HISTORY_SEQ: &str = "history_seq";
 const TREE_LIFETIME: &str = "lifetime";
@@ -154,12 +132,6 @@ pub struct RewardsHandler {
     /// None when the treasury keystore env var is unset or load failed.
     /// All POST/GET endpoints return 503 in that case.
     treasury: Option<TreasuryConfig>,
-    welcomed: sled::Tree,
-    checkins: sled::Tree,
-    sessions: sled::Tree,
-    streak: sled::Tree,
-    partners: sled::Tree,
-    partners_count: sled::Tree,
     history: sled::Tree,
     history_seq: sled::Tree,
     lifetime: sled::Tree,
@@ -178,12 +150,6 @@ impl RewardsHandler {
         let path = crate::node_data_dir().join("rewards.sled");
         let db = sled::open(&path)
             .map_err(|e| anyhow!("Failed to open rewards sled at {:?}: {}", path, e))?;
-        let welcomed = db.open_tree(TREE_WELCOMED)?;
-        let checkins = db.open_tree(TREE_CHECKINS)?;
-        let sessions = db.open_tree(TREE_SESSIONS)?;
-        let streak = db.open_tree(TREE_STREAK)?;
-        let partners = db.open_tree(TREE_PARTNERS)?;
-        let partners_count = db.open_tree(TREE_PARTNERS_COUNT)?;
         let history = db.open_tree(TREE_HISTORY)?;
         let history_seq = db.open_tree(TREE_HISTORY_SEQ)?;
         let lifetime = db.open_tree(TREE_LIFETIME)?;
@@ -212,12 +178,6 @@ impl RewardsHandler {
         Ok(Self {
             blockchain,
             treasury,
-            welcomed,
-            checkins,
-            sessions,
-            streak,
-            partners,
-            partners_count,
             history,
             history_seq,
             lifetime,
@@ -438,21 +398,25 @@ impl RewardsHandler {
         };
         let token_id = treasury.rewards_asset_id;
 
-        {
+        let plan = {
             let bc = self.blockchain.read().await;
-            if bc.reward_welcome_claimed(&token_id, did) {
+            settlement::plan_reward_claim(&bc, &token_id, did, RewardEventKind::Welcome, None)
+        };
+        let plan = match plan {
+            Ok(p) => p,
+            Err(reason) if reason == "welcome_already_claimed" => {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
-                    "reason": "welcome_already_claimed",
+                    "reason": reason,
                 }));
             }
-        }
-
-        let amount = {
-            let bc = self.blockchain.read().await;
-            bc.reward_expected_amount(&token_id, RewardEventKind::Welcome, 1)
-                .unwrap_or(REWARD_WELCOME)
+            Err(reason) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::ServiceUnavailable,
+                    format!("rewards claim unavailable: {reason}"),
+                );
+            }
         };
 
         let tx_hash = match settlement::submit_reward_claim(
@@ -461,7 +425,7 @@ impl RewardsHandler {
             did,
             key_id,
             RewardEventKind::Welcome,
-            amount,
+            plan.amount,
             None,
         )
         .await
@@ -475,22 +439,11 @@ impl RewardsHandler {
             }
         };
 
-        let now = Self::now_secs();
-        let event = RewardEvent {
-            seq: 0,
-            at: now,
-            event: "welcome".into(),
-            amount,
-            tx_hash: tx_hash.clone(),
-            meta_streak_day: None,
-            meta_peer_did: None,
-        };
-        self.record_event(did, event, |s| s.welcome_claimed = true);
-
         Self::ok_json(json!({
             "awarded": true,
-            "amount": amount.to_string(),
-            "amount_display": (amount / ATOM_18).to_string(),
+            "submitted": true,
+            "amount": plan.amount.to_string(),
+            "amount_display": (plan.amount / ATOM_18).to_string(),
             "event": "welcome",
             "tx_hash": tx_hash,
         }))
@@ -502,35 +455,35 @@ impl RewardsHandler {
             None => return Self::unavailable(),
         };
         let token_id = treasury.rewards_asset_id;
-        let date = Self::utc_date();
-        let today_ord = Self::utc_day_ordinal();
 
-        {
+        let plan = {
             let bc = self.blockchain.read().await;
-            if bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::DailyCheckin) {
+            settlement::plan_reward_claim(
+                &bc,
+                &token_id,
+                did,
+                RewardEventKind::DailyCheckin,
+                None,
+            )
+        };
+        let plan = match plan {
+            Ok(p) => p,
+            Err(reason) if reason == "checkin_already_claimed_today" => {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
-                    "reason": "checkin_already_claimed_today",
+                    "reason": reason,
                     "next_eligible_at": Self::next_utc_midnight_secs(),
                 }));
             }
-        }
-
-        let (next_streak, amount, longest_streak) = {
-            let bc = self.blockchain.read().await;
-            let streak = bc.reward_streak(&token_id, did);
-            let next_streak = if streak.last_day == today_ord - 1 {
-                streak.current_streak.saturating_add(1)
-            } else {
-                1
-            };
-            let amount = bc
-                .reward_checkin_amount_for_streak(&token_id, next_streak)
-                .unwrap_or_else(|| Self::checkin_amount_for_day(next_streak));
-            let longest = next_streak.max(streak.longest_streak);
-            (next_streak, amount, longest)
+            Err(reason) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::ServiceUnavailable,
+                    format!("rewards claim unavailable: {reason}"),
+                );
+            }
         };
+        let next_streak = plan.streak_day.unwrap_or(1);
 
         let tx_hash = match settlement::submit_reward_claim(
             &self.blockchain,
@@ -538,7 +491,7 @@ impl RewardsHandler {
             did,
             key_id,
             RewardEventKind::DailyCheckin,
-            amount,
+            plan.amount,
             None,
         )
         .await
@@ -552,28 +505,11 @@ impl RewardsHandler {
             }
         };
 
-        let now = Self::now_secs();
-        let event = RewardEvent {
-            seq: 0,
-            at: now,
-            event: "daily_checkin".into(),
-            amount,
-            tx_hash: tx_hash.clone(),
-            meta_streak_day: Some(next_streak),
-            meta_peer_did: None,
-        };
-        let streak_snapshot = next_streak;
-        let longest_snapshot = longest_streak;
-        self.record_event(did, event, move |s| {
-            s.checkin_count = s.checkin_count.saturating_add(1);
-            s.current_streak = streak_snapshot;
-            s.longest_streak = longest_snapshot;
-        });
-
         Self::ok_json(json!({
             "awarded": true,
-            "amount": amount.to_string(),
-            "amount_display": (amount / ATOM_18).to_string(),
+            "submitted": true,
+            "amount": plan.amount.to_string(),
+            "amount_display": (plan.amount / ATOM_18).to_string(),
             "event": "daily_checkin",
             "streak_day": next_streak,
             "tx_hash": tx_hash,
@@ -587,24 +523,33 @@ impl RewardsHandler {
             None => return Self::unavailable(),
         };
         let token_id = treasury.rewards_asset_id;
-        let date = Self::utc_date();
 
-        {
+        let plan = {
             let bc = self.blockchain.read().await;
-            if bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::ActiveSession) {
+            settlement::plan_reward_claim(
+                &bc,
+                &token_id,
+                did,
+                RewardEventKind::ActiveSession,
+                None,
+            )
+        };
+        let plan = match plan {
+            Ok(p) => p,
+            Err(reason) if reason == "session_already_claimed_today" => {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
-                    "reason": "session_already_claimed_today",
+                    "reason": reason,
                     "next_eligible_at": Self::next_utc_midnight_secs(),
                 }));
             }
-        }
-
-        let amount = {
-            let bc = self.blockchain.read().await;
-            bc.reward_expected_amount(&token_id, RewardEventKind::ActiveSession, 1)
-                .unwrap_or(REWARD_ACTIVE_SESSION)
+            Err(reason) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::ServiceUnavailable,
+                    format!("rewards claim unavailable: {reason}"),
+                );
+            }
         };
 
         let tx_hash = match settlement::submit_reward_claim(
@@ -613,7 +558,7 @@ impl RewardsHandler {
             did,
             key_id,
             RewardEventKind::ActiveSession,
-            amount,
+            plan.amount,
             None,
         )
         .await
@@ -627,24 +572,11 @@ impl RewardsHandler {
             }
         };
 
-        let now = Self::now_secs();
-        let event = RewardEvent {
-            seq: 0,
-            at: now,
-            event: "active_session".into(),
-            amount,
-            tx_hash: tx_hash.clone(),
-            meta_streak_day: None,
-            meta_peer_did: None,
-        };
-        self.record_event(did, event, |s| {
-            s.session_count = s.session_count.saturating_add(1);
-        });
-
         Self::ok_json(json!({
             "awarded": true,
-            "amount": amount.to_string(),
-            "amount_display": (amount / ATOM_18).to_string(),
+            "submitted": true,
+            "amount": plan.amount.to_string(),
+            "amount_display": (plan.amount / ATOM_18).to_string(),
             "event": "active_session",
             "tx_hash": tx_hash,
             "next_eligible_at": Self::next_utc_midnight_secs(),
@@ -677,32 +609,45 @@ impl RewardsHandler {
         let token_id = treasury.rewards_asset_id;
         let week = Self::iso_week();
 
-        let (partners_this_week, weekly_cap, amount) = {
+        let plan = {
             let bc = self.blockchain.read().await;
-            if bc.reward_partner_claimed(&token_id, &week, &req.did, &req.peer_did) {
-                return Self::ok_json(json!({
-                    "awarded": false,
-                    "amount": "0",
-                    "reason": "partner_already_counted_this_week",
-                    "partners_this_week": bc.reward_partners_this_week(&token_id, &week, &req.did),
-                }));
-            }
+            settlement::plan_reward_claim(
+                &bc,
+                &token_id,
+                &req.did,
+                RewardEventKind::NewPartner,
+                Some(&req.peer_did),
+            )
+        };
+        let partners_this_week = {
+            let bc = self.blockchain.read().await;
+            bc.reward_partners_this_week(&token_id, &week, &req.did)
+        };
+        let weekly_cap = {
+            let bc = self.blockchain.read().await;
             let policy_cap = bc.reward_weekly_partner_cap(&token_id);
-            let weekly_cap = if policy_cap > 0 { policy_cap } else { WEEKLY_PARTNER_CAP };
-            let partners_this_week =
-                bc.reward_partners_this_week(&token_id, &week, &req.did);
-            if weekly_cap > 0 && partners_this_week >= weekly_cap {
+            if policy_cap > 0 { policy_cap } else { WEEKLY_PARTNER_CAP }
+        };
+
+        let plan = match plan {
+            Ok(p) => p,
+            Err(reason)
+                if reason == "partner_already_counted_this_week"
+                    || reason == "weekly_partner_cap_reached" =>
+            {
                 return Self::ok_json(json!({
                     "awarded": false,
                     "amount": "0",
-                    "reason": "weekly_partner_cap_reached",
+                    "reason": reason,
                     "partners_this_week": partners_this_week,
                 }));
             }
-            let amount = bc
-                .reward_expected_amount(&token_id, RewardEventKind::NewPartner, 1)
-                .unwrap_or(REWARD_NEW_PARTNER);
-            (partners_this_week, weekly_cap, amount)
+            Err(reason) => {
+                return ZhtpResponse::error(
+                    ZhtpStatus::ServiceUnavailable,
+                    format!("rewards claim unavailable: {reason}"),
+                );
+            }
         };
 
         let tx_hash = match settlement::submit_reward_claim(
@@ -711,7 +656,7 @@ impl RewardsHandler {
             &req.did,
             key_id,
             RewardEventKind::NewPartner,
-            amount,
+            plan.amount,
             Some(req.peer_did.clone()),
         )
         .await
@@ -725,24 +670,11 @@ impl RewardsHandler {
             }
         };
 
-        let now = Self::now_secs();
-        let event = RewardEvent {
-            seq: 0,
-            at: now,
-            event: "new_partner".into(),
-            amount,
-            tx_hash: tx_hash.clone(),
-            meta_streak_day: None,
-            meta_peer_did: Some(req.peer_did.clone()),
-        };
-        self.record_event(&req.did, event, |s| {
-            s.partner_count = s.partner_count.saturating_add(1);
-        });
-
         Self::ok_json(json!({
             "awarded": true,
-            "amount": amount.to_string(),
-            "amount_display": (amount / ATOM_18).to_string(),
+            "submitted": true,
+            "amount": plan.amount.to_string(),
+            "amount_display": (plan.amount / ATOM_18).to_string(),
             "event": "new_partner",
             "partners_this_week": partners_this_week.saturating_add(1),
             "weekly_cap": weekly_cap,
@@ -826,16 +758,16 @@ impl RewardsHandler {
         };
         let checkin_amount = bc
             .reward_checkin_amount_for_streak(&token_id, next_streak)
-            .unwrap_or_else(|| Self::checkin_amount_for_day(next_streak));
+            .unwrap_or(0);
         let welcome_amount = bc
             .reward_expected_amount(&token_id, RewardEventKind::Welcome, 1)
-            .unwrap_or(REWARD_WELCOME);
+            .unwrap_or(0);
         let session_amount = bc
             .reward_expected_amount(&token_id, RewardEventKind::ActiveSession, 1)
-            .unwrap_or(REWARD_ACTIVE_SESSION);
+            .unwrap_or(0);
         let partner_amount = bc
             .reward_expected_amount(&token_id, RewardEventKind::NewPartner, 1)
-            .unwrap_or(REWARD_NEW_PARTNER);
+            .unwrap_or(0);
 
         let session_done =
             bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::ActiveSession);
