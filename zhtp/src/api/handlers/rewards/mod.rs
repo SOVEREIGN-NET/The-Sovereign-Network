@@ -15,10 +15,12 @@
 //! Without a matching delegate signer the handler installs but every endpoint
 //! returns 503.
 //!
-//! ## Storage
+//! ## Storage (N4 / Q6)
 //!
-//! Eligibility and streak state live on-chain (consensus trees). Node-local
-//! `rewards.sled` retains only `history` + `lifetime` caches until N4 (#2814).
+//! Eligibility, streak, history, and lifetime counters are read exclusively from
+//! on-chain consensus trees and committed `RewardClaim` blocks. Node-local
+//! `rewards.sled` is retired — delete any legacy file on upgrade (see
+//! `scripts/effective-reset-testnet.sh`).
 
 use anyhow::{anyhow, Result};
 use chrono::{Datelike, Utc};
@@ -30,7 +32,11 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 
-use lib_blockchain::transaction::reward_claim::RewardEventKind;
+use lib_blockchain::blockchain::rewards::RewardHistoryEntry;
+use lib_blockchain::transaction::reward_claim::{
+    checkin_amount_for_day, RewardEventKind, REWARD_CHECKIN_BASE_ATOMS,
+    REWARD_STREAK_BONUS_CAP_DAYS, REWARD_STREAK_BONUS_PER_DAY_ATOMS,
+};
 use lib_blockchain::Blockchain;
 use lib_crypto::keypair::KeyPair;
 use lib_crypto::types::keys::{PrivateKey, PublicKey};
@@ -50,30 +56,12 @@ const DEPRECATED_REWARDS_ASSET_ID_ENV: &str = "ZHTP_REWARDS_ASSET_ID";
 /// 18-decimal atom multiplier.
 const ATOM_18: u128 = 1_000_000_000_000_000_000;
 
-/// Welcome bonus — 100 BUBL, once per DID lifetime.
-const REWARD_WELCOME: u128 = 100 * ATOM_18;
-/// Base daily check-in reward — 10 BUBL plus streak bonus.
-const REWARD_CHECKIN_BASE: u128 = 10 * ATOM_18;
-/// Per-day streak bonus, capped at +10 BUBL.
-const REWARD_STREAK_BONUS_PER_DAY: u128 = 1 * ATOM_18;
-const REWARD_STREAK_BONUS_CAP_DAYS: u32 = 10;
-/// Active-session reward — 2 BUBL, once per UTC day per DID.
-const REWARD_ACTIVE_SESSION: u128 = 2 * ATOM_18;
-/// New-conversation-partner reward — 20 BUBL per distinct peer per ISO week.
-const REWARD_NEW_PARTNER: u128 = 20 * ATOM_18;
-/// Weekly cap on new-partner rewards.
+/// Weekly cap on new-partner rewards (fallback when policy omits cap).
 const WEEKLY_PARTNER_CAP: u32 = 5;
 
 const HISTORY_DEFAULT_LIMIT: usize = 50;
 const HISTORY_MAX_LIMIT: usize = 200;
 const MAX_DID_LEN: usize = 256;
-
-const TREE_HISTORY: &str = "history";
-const TREE_HISTORY_SEQ: &str = "history_seq";
-const TREE_LIFETIME: &str = "lifetime";
-
-const HISTORY_SEQ_KEY: &str = "next";
-const SEPARATOR: u8 = 0x1f; // ASCII unit-separator — unlikely in any DID string
 
 // ── Request / response shapes ────────────────────────────────────────
 
@@ -89,42 +77,6 @@ struct ConversationRequest {
     peer_did: String,
 }
 
-// ── Stored types ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct StreakState {
-    /// UTC ordinal day (days since CE) of the last check-in.
-    last_day: i32,
-    current_streak: u32,
-    longest_streak: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct LifetimeStats {
-    total_earned: u128,
-    welcome_claimed: bool,
-    checkin_count: u64,
-    session_count: u64,
-    partner_count: u64,
-    current_streak: u32,
-    longest_streak: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RewardEvent {
-    at: u64,
-    /// Monotonic per-server seq; used together with `at` as the pagination
-    /// cursor so same-second events don't collide on the page boundary.
-    #[serde(default)]
-    seq: u64,
-    event: String,
-    amount: u128,
-    tx_hash: String,
-    /// streak_day for daily_checkin; peer_did for new_partner.
-    meta_streak_day: Option<u32>,
-    meta_peer_did: Option<String>,
-}
-
 // ── Handler ──────────────────────────────────────────────────────────
 
 pub struct RewardsHandler {
@@ -132,9 +84,6 @@ pub struct RewardsHandler {
     /// None when the treasury keystore env var is unset or load failed.
     /// All POST/GET endpoints return 503 in that case.
     treasury: Option<TreasuryConfig>,
-    history: sled::Tree,
-    history_seq: sled::Tree,
-    lifetime: sled::Tree,
 }
 
 #[derive(Clone)]
@@ -147,13 +96,6 @@ struct TreasuryConfig {
 
 impl RewardsHandler {
     pub fn new(blockchain: Arc<RwLock<Blockchain>>) -> Result<Self> {
-        let path = crate::node_data_dir().join("rewards.sled");
-        let db = sled::open(&path)
-            .map_err(|e| anyhow!("Failed to open rewards sled at {:?}: {}", path, e))?;
-        let history = db.open_tree(TREE_HISTORY)?;
-        let history_seq = db.open_tree(TREE_HISTORY_SEQ)?;
-        let lifetime = db.open_tree(TREE_LIFETIME)?;
-
         // Startup-time lookup: read the BUBL token contract under a non-async
         // borrow of the blockchain (RewardsHandler::new is sync). The
         // blockchain Arc is shared; at startup no API traffic is yet
@@ -165,23 +107,14 @@ impl RewardsHandler {
         });
 
         if treasury.is_some() {
-            info!(
-                "Rewards: signer keystore loaded with positive BUBL balance — endpoints active at {:?}",
-                path
-            );
+            info!("Rewards: spend delegate loaded — /api/v1/rewards/* active (chain-native state only)");
         } else {
             info!(
-                "Rewards: ZHTP_REWARDS_TREASURY_KEYSTORE unset, invalid, or holds 0 BUBL — /api/v1/rewards/* will return 503 on this node"
+                "Rewards: delegate keystore unset or unfunded — /api/v1/rewards/* will return 503 on this node"
             );
         }
 
-        Ok(Self {
-            blockchain,
-            treasury,
-            history,
-            history_seq,
-            lifetime,
-        })
+        Ok(Self { blockchain, treasury })
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -259,110 +192,6 @@ impl RewardsHandler {
             .and_hms_opt(0, 0, 0)
             .map(|dt| dt.and_utc().timestamp() as u64)
             .unwrap_or(Self::now_secs())
-    }
-
-    fn day_compound_key(date: &str, did: &str) -> Vec<u8> {
-        let mut k = Vec::with_capacity(date.len() + 1 + did.len());
-        k.extend_from_slice(date.as_bytes());
-        k.push(SEPARATOR);
-        k.extend_from_slice(did.as_bytes());
-        k
-    }
-
-    fn partner_compound_key(week: &str, did: &str, peer_did: &str) -> Vec<u8> {
-        let mut k =
-            Vec::with_capacity(week.len() + 1 + did.len() + 1 + peer_did.len());
-        k.extend_from_slice(week.as_bytes());
-        k.push(SEPARATOR);
-        k.extend_from_slice(did.as_bytes());
-        k.push(SEPARATOR);
-        k.extend_from_slice(peer_did.as_bytes());
-        k
-    }
-
-    fn partners_count_key(week: &str, did: &str) -> Vec<u8> {
-        let mut k = Vec::with_capacity(week.len() + 1 + did.len());
-        k.extend_from_slice(week.as_bytes());
-        k.push(SEPARATOR);
-        k.extend_from_slice(did.as_bytes());
-        k
-    }
-
-    fn streak_bonus_for_day(streak_day: u32) -> u128 {
-        let bonus_days = streak_day.saturating_sub(1).min(REWARD_STREAK_BONUS_CAP_DAYS);
-        REWARD_STREAK_BONUS_PER_DAY * (bonus_days as u128)
-    }
-
-    fn checkin_amount_for_day(streak_day: u32) -> u128 {
-        REWARD_CHECKIN_BASE + Self::streak_bonus_for_day(streak_day)
-    }
-
-    // ── core operations ──────────────────────────────────────────────
-
-    /// Reserve the next history sequence number atomically.
-    fn next_history_seq(&self) -> Result<u64> {
-        let updated = self
-            .history_seq
-            .update_and_fetch(HISTORY_SEQ_KEY, |old: Option<&[u8]>| {
-                let prev = old
-                    .and_then(|b| b.try_into().ok())
-                    .map(u64::from_le_bytes)
-                    .unwrap_or(0);
-                Some(prev.saturating_add(1).to_le_bytes().to_vec())
-            })?
-            .ok_or_else(|| anyhow!("history_seq update returned None"))?;
-        let arr: [u8; 8] = updated
-            .as_ref()
-            .try_into()
-            .map_err(|_| anyhow!("history_seq value not 8 bytes"))?;
-        Ok(u64::from_le_bytes(arr))
-    }
-
-    /// Append an event to history + bump lifetime stats. Best-effort
-    /// (errors logged, not propagated to caller — the BUBL has already
-    /// been minted by this point so user-facing UX shouldn't break for a
-    /// sled hiccup).
-    fn record_event(
-        &self,
-        did: &str,
-        mut event: RewardEvent,
-        update_lifetime: impl FnOnce(&mut LifetimeStats),
-    ) {
-        let seq = match self.next_history_seq() {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("rewards: history seq alloc failed: {}", e);
-                return;
-            }
-        };
-        event.seq = seq;
-        let mut key = Vec::with_capacity(did.len() + 1 + 8);
-        key.extend_from_slice(did.as_bytes());
-        key.push(SEPARATOR);
-        key.extend_from_slice(&seq.to_be_bytes());
-        match bincode::serialize(&event) {
-            Ok(bytes) => {
-                if let Err(e) = self.history.insert(&key, bytes) {
-                    warn!("rewards: history insert failed: {}", e);
-                }
-            }
-            Err(e) => warn!("rewards: history serialize failed: {}", e),
-        }
-
-        // Update lifetime stats.
-        let mut stats = self.load_lifetime(did);
-        stats.total_earned = stats.total_earned.saturating_add(event.amount);
-        update_lifetime(&mut stats);
-        if let Ok(bytes) = bincode::serialize(&stats) {
-            let _ = self.lifetime.insert(did.as_bytes(), bytes);
-        }
-    }
-
-    fn load_lifetime(&self, did: &str) -> LifetimeStats {
-        match self.lifetime.get(did.as_bytes()) {
-            Ok(Some(bytes)) => bincode::deserialize(&bytes).unwrap_or_default(),
-            _ => LifetimeStats::default(),
-        }
     }
 
     fn rewards_asset_id(&self) -> Option<[u8; 32]> {
@@ -525,13 +354,15 @@ impl RewardsHandler {
             Ok(k) => k,
             Err(msg) => return Self::bad(msg),
         };
-        let stats = self.load_lifetime(did);
+        let bc = self.blockchain.read().await;
+        let token_id = self
+            .rewards_asset_id()
+            .unwrap_or_else(|| lib_blockchain::contracts::utils::generate_custom_token_id("Bubble", "BUBL"));
+        let stats = bc.reward_lifetime_stats(&token_id, did);
 
-        // Spendable BUBL is on-chain under the holder's key_id; legacy clients
-        // often read rewards/balance expecting wallet funds, not sled totals.
+        // Spendable BUBL is on-chain under the holder's key_id.
         let (spendable_balance, asset_id_hex) = match &self.treasury {
             Some(treasury) => {
-                let bc = self.blockchain.read().await;
                 let balance = bc
                     .token_balance(&treasury.rewards_asset_id, &key_id)
                     .unwrap_or(0);
@@ -669,37 +500,12 @@ impl RewardsHandler {
         }
         let limit = limit.min(HISTORY_MAX_LIMIT);
 
-        let mut prefix = did.as_bytes().to_vec();
-        prefix.push(SEPARATOR);
-
-        // History keys are `<did>|<seq_be8>` and seq is allocated
-        // monotonically by `next_history_seq`, so reverse range iteration
-        // already yields events newest-first by seq. The page we want is
-        // the first `limit` events strictly below the cursor's seq —
-        // bound the range with an exclusive upper key built from the
-        // cursor so sled skips the newer entries instead of us loading
-        // and discarding them.
-        let cseq = cursor.map(|c| c.1).unwrap_or(u64::MAX);
-        let mut upper = prefix.clone();
-        upper.extend_from_slice(&cseq.to_be_bytes());
-
-        let mut page: Vec<RewardEvent> = Vec::with_capacity(limit);
-        let mut has_more = false;
-        for kv in self.history.range(prefix.clone()..upper).rev() {
-            let (_k, v) = match kv {
-                Ok(kv) => kv,
-                Err(_) => continue,
-            };
-            let event = match bincode::deserialize::<RewardEvent>(&v) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            if page.len() == limit {
-                has_more = true;
-                break;
-            }
-            page.push(event);
-        }
+        let token_id = self
+            .rewards_asset_id()
+            .unwrap_or_else(|| lib_blockchain::contracts::utils::generate_custom_token_id("Bubble", "BUBL"));
+        let bc = self.blockchain.read().await;
+        let cursor_seq = cursor.map(|c| c.1);
+        let (page, has_more) = bc.reward_claim_history(&token_id, did, limit, cursor_seq);
 
         let next_cursor = if has_more {
             page.last().map(|e| format!("{}:{}", e.at, e.seq))
@@ -709,29 +515,7 @@ impl RewardsHandler {
 
         let events: Vec<serde_json::Value> = page
             .iter()
-            .map(|e| {
-                let mut meta = serde_json::Map::new();
-                if let Some(d) = e.meta_streak_day {
-                    meta.insert("streak_day".into(), json!(d));
-                }
-                if let Some(p) = &e.meta_peer_did {
-                    meta.insert("peer_did".into(), json!(p));
-                }
-                let meta_json = if meta.is_empty() {
-                    None
-                } else {
-                    Some(serde_json::Value::Object(meta))
-                };
-                json!({
-                    "at": e.at,
-                    "seq": e.seq,
-                    "event": e.event,
-                    "amount": e.amount.to_string(),
-                    "amount_display": (e.amount / ATOM_18).to_string(),
-                    "meta": meta_json,
-                    "tx_hash": e.tx_hash,
-                })
-            })
+            .map(history_entry_json)
             .collect();
 
         Self::ok_json(json!({
@@ -764,6 +548,30 @@ impl RewardsHandler {
         }
         None
     }
+}
+
+fn history_entry_json(e: &RewardHistoryEntry) -> serde_json::Value {
+    let mut meta = serde_json::Map::new();
+    if let Some(d) = e.meta_streak_day {
+        meta.insert("streak_day".into(), json!(d));
+    }
+    if let Some(p) = &e.meta_peer_did {
+        meta.insert("peer_did".into(), json!(p));
+    }
+    let meta_json = if meta.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(meta))
+    };
+    json!({
+        "at": e.at,
+        "seq": e.seq,
+        "event": e.event,
+        "amount": e.amount.to_string(),
+        "amount_display": (e.amount / ATOM_18).to_string(),
+        "meta": meta_json,
+        "tx_hash": e.tx_hash,
+    })
 }
 
 // ── Trait impl ───────────────────────────────────────────────────────
@@ -1051,27 +859,17 @@ mod tests {
 
     #[test]
     fn checkin_amount_streak_schedule() {
-        // Day 1: base only.
+        assert_eq!(checkin_amount_for_day(1), REWARD_CHECKIN_BASE_ATOMS);
         assert_eq!(
-            RewardsHandler::checkin_amount_for_day(1),
-            REWARD_CHECKIN_BASE
+            checkin_amount_for_day(2),
+            REWARD_CHECKIN_BASE_ATOMS + REWARD_STREAK_BONUS_PER_DAY_ATOMS
         );
-        // Day 2: base + 1 bonus day.
         assert_eq!(
-            RewardsHandler::checkin_amount_for_day(2),
-            REWARD_CHECKIN_BASE + REWARD_STREAK_BONUS_PER_DAY
+            checkin_amount_for_day(11),
+            REWARD_CHECKIN_BASE_ATOMS
+                + REWARD_STREAK_BONUS_PER_DAY_ATOMS * (REWARD_STREAK_BONUS_CAP_DAYS as u128)
         );
-        // Day 11: capped at +10.
-        assert_eq!(
-            RewardsHandler::checkin_amount_for_day(11),
-            REWARD_CHECKIN_BASE
-                + REWARD_STREAK_BONUS_PER_DAY * (REWARD_STREAK_BONUS_CAP_DAYS as u128)
-        );
-        // Day 99: still capped at +10.
-        assert_eq!(
-            RewardsHandler::checkin_amount_for_day(99),
-            RewardsHandler::checkin_amount_for_day(11)
-        );
+        assert_eq!(checkin_amount_for_day(99), checkin_amount_for_day(11));
     }
 
     #[test]
