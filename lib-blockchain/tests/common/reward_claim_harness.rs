@@ -1,0 +1,173 @@
+//! Shared RewardClaim integration-test harness (mempool + executor paths).
+
+use std::sync::Arc;
+
+use lib_blockchain::block::Block;
+use lib_blockchain::contracts::utils::generate_custom_token_id;
+use lib_blockchain::contracts::TokenContract;
+use lib_blockchain::storage::{
+    convert_legacy_identity, Address, BlockchainStore, TokenId,
+};
+use lib_blockchain::transaction::reward_claim::{
+    expected_amount_for_event, RewardClaimData, RewardEventKind, REWARD_CLAIM_MEMO,
+};
+use lib_blockchain::transaction::signing::sign_transaction;
+use lib_blockchain::transaction::{IdentityTransactionData, Transaction};
+use lib_blockchain::types::Hash;
+use lib_blockchain::Blockchain;
+use lib_crypto::{KeyPair, PublicKey, SignatureAlgorithm};
+
+use super::block_builders;
+
+const TEST_CREATED_AT: u64 = 1_700_000_000;
+
+/// Treasury signer + beneficiary for welcome-claim scenarios.
+pub struct RewardClaimActors {
+    pub treasury: KeyPair,
+    pub beneficiary: KeyPair,
+    pub owner_did: String,
+    pub token_id: [u8; 32],
+}
+
+impl RewardClaimActors {
+    pub fn generate() -> Self {
+        let treasury = KeyPair::generate().expect("treasury keypair");
+        let beneficiary = KeyPair::generate().expect("beneficiary keypair");
+        let owner_did = did_from_key_id(&beneficiary.public_key.key_id);
+        let token_id = generate_custom_token_id("Bubble", "BUBL");
+        Self {
+            treasury,
+            beneficiary,
+            owner_did,
+            token_id,
+        }
+    }
+}
+
+pub fn did_from_key_id(key_id: &[u8; 32]) -> String {
+    format!("did:zhtp:{}", hex::encode(key_id))
+}
+
+pub fn identity_data(did: &str, pubkey: &PublicKey) -> IdentityTransactionData {
+    IdentityTransactionData {
+        did: did.to_string(),
+        display_name: "reward_claim_test".to_string(),
+        public_key: pubkey.dilithium_pk.to_vec(),
+        ownership_proof: vec![],
+        identity_type: "human".to_string(),
+        did_document_hash: Hash::zero(),
+        created_at: TEST_CREATED_AT,
+        registration_fee: 0,
+        dao_fee: 0,
+        controlled_nodes: vec![],
+        owned_wallets: vec![],
+        kyber_public_key: Vec::new(),
+    }
+}
+
+fn bubl_token_contract(treasury: &PublicKey) -> TokenContract {
+    let token = TokenContract::new_custom(
+        "Bubble".to_string(),
+        "BUBL".to_string(),
+        0,
+        treasury.clone(),
+    );
+    assert_eq!(token.token_id, generate_custom_token_id("Bubble", "BUBL"));
+    token
+}
+
+fn register_identity_shadow(blockchain: &mut Blockchain, did: &str, pubkey: &PublicKey) {
+    blockchain.insert_identity_shadow(did.to_string(), identity_data(did, pubkey));
+    blockchain.identity_blocks.insert(did.to_string(), 0);
+}
+
+fn put_identity_direct(store: &dyn BlockchainStore, did: &str, pubkey: &PublicKey) {
+    let (consensus, metadata) = convert_legacy_identity(&identity_data(did, pubkey));
+    store
+        .put_identity_direct(&consensus.did_hash, &consensus)
+        .expect("seed identity");
+    store
+        .put_identity_metadata_direct(&consensus.did_hash, &metadata)
+        .expect("seed identity metadata");
+}
+
+fn register_actor_identities_shadow(blockchain: &mut Blockchain, actors: &RewardClaimActors) {
+    let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
+    register_identity_shadow(blockchain, &treasury_did, &actors.treasury.public_key);
+    register_identity_shadow(blockchain, &actors.owner_did, &actors.beneficiary.public_key);
+}
+
+fn register_actor_identities_store(store: &dyn BlockchainStore, actors: &RewardClaimActors) {
+    let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
+    put_identity_direct(store, &treasury_did, &actors.treasury.public_key);
+    put_identity_direct(store, &actors.owner_did, &actors.beneficiary.public_key);
+}
+
+/// In-memory blockchain with identities + BUBL contract for mempool admission tests.
+pub fn mempool_blockchain(actors: &RewardClaimActors) -> Blockchain {
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    register_actor_identities_shadow(&mut blockchain, actors);
+    let bubl = bubl_token_contract(&actors.treasury.public_key);
+    blockchain.insert_token_contract(actors.token_id, bubl);
+    blockchain.insert_token_nonce_shadow(
+        actors.token_id,
+        actors.treasury.public_key.key_id,
+        0,
+    );
+    blockchain
+}
+
+/// Persist identities, BUBL contract, treasury balance; returns the setup block at height 1.
+pub fn seed_executor_store(
+    store: &Arc<dyn BlockchainStore>,
+    genesis: &Block,
+    actors: &RewardClaimActors,
+) -> Block {
+    register_actor_identities_store(store.as_ref(), actors);
+
+    let bubl = bubl_token_contract(&actors.treasury.public_key);
+    let treasury_addr = Address::new(actors.treasury.public_key.key_id);
+    let welcome_amount = expected_amount_for_event(RewardEventKind::Welcome, 1);
+
+    store.begin_block(1).expect("begin setup block");
+    store.put_token_contract(&bubl).expect("install BUBL contract");
+    store
+        .set_token_balance(
+            &TokenId::new(actors.token_id),
+            &treasury_addr,
+            welcome_amount.saturating_mul(2),
+        )
+        .expect("fund treasury");
+    let setup_block = block_builders::block_at_height(1, genesis.header.block_hash);
+    store.append_block(&setup_block).expect("append setup block");
+    store.commit_block().expect("commit setup block");
+    setup_block
+}
+
+/// Signed welcome `RewardClaim` for `actors.beneficiary` at `nonce`.
+pub fn welcome_claim_tx(actors: &RewardClaimActors, nonce: u64) -> Transaction {
+    let data = RewardClaimData {
+        event: RewardEventKind::Welcome,
+        owner_did: actors.owner_did.clone(),
+        recipient_key_id: actors.beneficiary.public_key.key_id,
+        token_id: actors.token_id,
+        from: actors.treasury.public_key.key_id,
+        amount: expected_amount_for_event(RewardEventKind::Welcome, 1),
+        nonce,
+        peer_did: None,
+    };
+
+    let mut tx = Transaction::new_reward_claim_with_chain_id(
+        0x03,
+        data,
+        lib_crypto::Signature {
+            signature: Vec::new(),
+            public_key: actors.treasury.public_key.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+        REWARD_CLAIM_MEMO.to_vec(),
+    );
+    sign_transaction(&mut tx, &actors.treasury.private_key).expect("sign reward claim");
+    tx
+}

@@ -4,3 +4,4 @@ pub mod block_builders;
 pub mod crypto_fixtures;
 pub mod oracle_harness;
 pub mod replay_gate;
+pub mod reward_claim_harness;
