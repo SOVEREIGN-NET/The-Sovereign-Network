@@ -23,6 +23,10 @@ path = "sled_migration.rs"
 name = "testnet_reset"
 path = "testnet_reset.rs"
 
+[[bin]]
+name = "drop_pending_tx"
+path = "drop_pending_tx.rs"
+
 [dependencies]
 lib-identity = { path = "../lib-identity" }
 lib-protocols = { path = "../lib-protocols" }
@@ -58,6 +62,10 @@ path = "seed_founding_dao.rs"
 [[bin]]
 name = "seed_asset_launch"
 path = "seed_asset_launch.rs"
+
+[[bin]]
+name = "seed_bubl_rewards_upgrade"
+path = "seed_bubl_rewards_upgrade.rs"
 
 [[bin]]
 name = "replay_divergence"
