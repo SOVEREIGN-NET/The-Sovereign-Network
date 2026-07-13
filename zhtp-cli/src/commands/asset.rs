@@ -120,7 +120,7 @@ async fn fetch_token_nonce(
     holder_key_id: &[u8; 32],
 ) -> CliResult<u64> {
     let path = format!(
-        "/api/v1/token/{}/nonce/{}",
+        "/api/v1/token/nonce/{}/{}",
         hex::encode(token_id),
         hex::encode(holder_key_id)
     );
