@@ -907,6 +907,7 @@ pub fn sign_domain_registration_system_tx(
         fee_tx_hash: fee_tx_hash_hex.to_string(),
         fee_amount_atoms: 0,
         fee_payer_wallet_id: [0u8; 32],
+        asset_id: None,
     };
     let memo = payload
         .encode_memo()

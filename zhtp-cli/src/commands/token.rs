@@ -13,7 +13,7 @@ use crate::commands::rewards::{build_rewards_policy_bundle, load_policy_bytes_fr
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_blockchain::contracts::sovereign_asset::{GovernanceVerifierState, SupplyMode};
+use lib_blockchain::contracts::sovereign_asset::{DaoClass, GovernanceVerifierState, SupplyMode};
 use lib_blockchain::rewards_policy::validate_rewards_policy;
 use lib_blockchain::transaction::asset_tx::{
     AssetLaunchPayloadV1, GovernanceLaunchConfig, RewardsLaunchConfig,
@@ -678,13 +678,19 @@ pub async fn handle_dao_asset_launch(
         .map(|raw| build_governance_launch_config(raw, options.governance_threshold))
         .transpose()?;
 
+    let dao_class = options
+        .dao_class
+        .as_deref()
+        .and_then(DaoClass::from_str)
+        .unwrap_or(DaoClass::Fp);
+
     let payload = AssetLaunchPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
         decimals,
         initial_supply: supply,
         treasury_key_id: treasury_key.key_id,
-        treasury_bps: 2_000,
+        treasury_bps: dao_class.treasury_bps(),
         supply_mode,
         manifest_cid,
         manifest_hash,
@@ -692,6 +698,8 @@ pub async fn handle_dao_asset_launch(
         rewards,
         governance,
         transfer_authority: options.transfer_authority,
+        dao_class,
+        burn_bps: 0,
     };
     payload.validate_dao_launch_ui_constraints().map_err(|e| {
         CliError::ConfigError(format!("DAO launch validation failed: {e}"))
