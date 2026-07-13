@@ -983,7 +983,7 @@ mod tests {
             let tx = create_payment_transaction(
                 [i; 32],
                 [i + 1; 32],
-                1000 * (i as u64 + 1),
+                1000 * (i as u128 + 1),
                 Priority::Normal,
             )
             .unwrap();

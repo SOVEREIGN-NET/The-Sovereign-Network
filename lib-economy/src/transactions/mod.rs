@@ -63,7 +63,7 @@ mod tests {
     fn test_transaction_priority_fees() {
         let from = [1u8; 32];
         let to = [2u8; 32];
-        let amount = 10000u64;
+        let amount = 10000u128;
         let tx_size = 250u64;
 
         // Create transactions with different priorities

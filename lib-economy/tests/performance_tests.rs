@@ -20,8 +20,8 @@ mod benchmarks {
         let start = Instant::now();
         for i in 0..ITERATIONS {
             let _ = model.calculate_fee(
-                (i % 5000) as u64 + 100,    // tx_size
-                (i % 100000) as u64 + 1000, // amount
+                (i % 5000) as u64 + 100,     // tx_size
+                (i % 100000) as u128 + 1000, // amount
                 Priority::Normal,
             );
         }
@@ -72,7 +72,7 @@ mod benchmarks {
         for i in 0..ITERATIONS {
             let from = [(i % 256) as u8; 32];
             let to = [((i + 1) % 256) as u8; 32];
-            let amount = (i % 50000) as u64 + 100;
+            let amount = (i % 50000) as u128 + 100;
 
             let _ = Transaction::new_payment(from, to, amount, Priority::Normal).unwrap();
         }
@@ -166,7 +166,7 @@ mod benchmarks {
 
         let start = Instant::now();
         for i in 0..ITERATIONS {
-            let amount = (i % 1000) as u64 + 10;
+            let amount = (i % 1000) as u128 + 10;
             let _ = treasury.apply_fee_distribution(calculate_dao_fee_distribution(amount));
         }
         let duration = start.elapsed();
@@ -221,12 +221,12 @@ mod benchmarks {
         let model = EconomicModel::new();
 
         let start = Instant::now();
-        let mut total_fees = 0u64;
+        let mut total_fees = 0u128;
 
         for i in 0..LARGE_ITERATIONS {
             let (network_fee, dao_fee, _total_fee) = model.calculate_fee(
                 (i % 2000) as u64 + 100,
-                (i % 50000) as u64 + 1000,
+                (i % 50000) as u128 + 1000,
                 match i % 4 {
                     0 => Priority::Low,
                     1 => Priority::Normal,

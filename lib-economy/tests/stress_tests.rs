@@ -19,13 +19,13 @@ mod stress_tests {
 
         // Simulate 100,000 transactions
         let transaction_count = 100_000;
-        let mut total_fees = 0u64;
+        let mut total_fees = 0u128;
         let mut transactions = Vec::with_capacity(transaction_count);
 
         for i in 0..transaction_count {
             let from = [((i / 256) % 256) as u8; 32];
             let to = [((i * 7) % 256) as u8; 32];
-            let amount = ((i * 123) % 50000) as u64 + 1; // 1-50,000 tokens
+            let amount = ((i * 123) % 50000) as u128 + 1; // 1-50,000 tokens
             let priority = match i % 4 {
                 0 => Priority::Low,
                 1 => Priority::Normal,
@@ -45,7 +45,7 @@ mod stress_tests {
         }
 
         // Verify fee consistency
-        assert!(total_fees > transaction_count as u64); // Should have reasonable fees
+        assert!(total_fees > transaction_count as u128); // Should have reasonable fees
         println!(
             "Processed {} transactions with total fees: {}",
             transaction_count, total_fees
@@ -86,10 +86,10 @@ mod stress_tests {
 
         // Add fees from 1 million transactions
         let transaction_count = 1_000_000;
-        let mut total_fees_added = 0u64;
+        let mut total_fees_added = 0u128;
 
         for i in 0..transaction_count {
-            let fee = ((i % 10000) + 1) as u64; // 1-10,000 tokens per transaction
+            let fee = ((i % 10000) + 1) as u128; // 1-10,000 tokens per transaction
             treasury
                 .apply_fee_distribution(calculate_dao_fee_distribution(fee))
                 .unwrap();
@@ -101,7 +101,7 @@ mod stress_tests {
                 let ubi_per_citizen = treasury.calculate_ubi_per_citizen(citizens);
 
                 if ubi_per_citizen > 0 {
-                    let total_distributed = ubi_per_citizen * citizens;
+                    let total_distributed = ubi_per_citizen * citizens as u128;
                     let timestamp = current_timestamp() + i as u64;
                     treasury
                         .record_ubi_distribution(total_distributed, timestamp)
@@ -213,7 +213,7 @@ mod stress_tests {
                     }
                     2 => {
                         // Stake tokens (simulate by moving from available to staked)
-                        let stake_amount = (op % 1000) as u64;
+                        let stake_amount = (op % 1000) as u128;
                         if wallets[wallet_idx].can_afford(stake_amount) {
                             wallets[wallet_idx].available_balance -= stake_amount;
                             wallets[wallet_idx].staked_balance += stake_amount;
@@ -221,7 +221,7 @@ mod stress_tests {
                     }
                     3 => {
                         // Unstake tokens (simulate by moving from staked to available)
-                        let unstake_amount = (op % 500) as u64;
+                        let unstake_amount = (op % 500) as u128;
                         if wallets[wallet_idx].staked_balance >= unstake_amount {
                             wallets[wallet_idx].staked_balance -= unstake_amount;
                             wallets[wallet_idx].available_balance += unstake_amount;
@@ -229,7 +229,7 @@ mod stress_tests {
                     }
                     _ => {
                         // Update balance directly (simulating transaction processing)
-                        let amount = (op % 10000) as u64;
+                        let amount = (op % 10000) as u128;
                         wallets[wallet_idx].available_balance =
                             wallets[wallet_idx].available_balance.saturating_add(amount);
                     }
@@ -281,7 +281,7 @@ mod stress_tests {
             assert!(model.base_compute_rate > 0);
 
             // Test minting with adjusted parameters
-            let mint_amount = ((i % 10000) + 1) as u64;
+            let mint_amount = ((i % 10000) + 1) as u128;
             model
                 .mint_operational_tokens(mint_amount, "stress test")
                 .unwrap();
@@ -312,14 +312,14 @@ mod stress_tests {
                         match thread_id % 3 {
                             0 => {
                                 // Mint tokens
-                                let amount = ((thread_id * 100 + i) % 10000 + 1) as u64;
+                                let amount = ((thread_id * 100 + i) % 10000 + 1) as u128;
                                 model
                                     .mint_operational_tokens(amount, "concurrent test")
                                     .unwrap();
                             }
                             1 => {
                                 // Process DAO fees
-                                let fees = ((thread_id * 50 + i) % 5000 + 1) as u64;
+                                let fees = ((thread_id * 50 + i) % 5000 + 1) as u128;
                                 model.process_dao_fees(fees).unwrap();
                             }
                             _ => {
@@ -471,7 +471,7 @@ mod load_tests {
         for i in 0..transaction_count {
             let from = [(i % 256) as u8; 32];
             let to = [((i + 1) % 256) as u8; 32];
-            let amount = (i % 10000 + 1) as u64;
+            let amount = (i % 10000 + 1) as u128;
             let priority = Priority::Normal;
 
             let _tx = Transaction::new_payment(from, to, amount, priority).unwrap();
@@ -532,14 +532,14 @@ mod load_tests {
             match i % 10 {
                 0..=3 => {
                     // Mint tokens
-                    let amount = (i % 10000 + 1) as u64;
+                    let amount = (i % 10000 + 1) as u128;
                     model
                         .mint_operational_tokens(amount, "stability test")
                         .unwrap();
                 }
                 4..=6 => {
                     // Process fees
-                    let fees = (i % 5000 + 1) as u64;
+                    let fees = (i % 5000 + 1) as u128;
                     treasury
                         .apply_fee_distribution(calculate_dao_fee_distribution(fees))
                         .unwrap();

@@ -31,7 +31,7 @@ mod tests {
         assert_eq!(model.base_storage_rate, crate::DEFAULT_STORAGE_RATE);
         assert_eq!(model.base_compute_rate, crate::DEFAULT_COMPUTE_RATE);
         assert_eq!(model.inflation_rate, 0.0);
-        assert_eq!(model.max_supply, u64::MAX);
+        assert_eq!(model.max_supply, u128::MAX);
         assert_eq!(model.current_supply, 0);
         assert_eq!(model.burn_rate, 0.0);
 
@@ -51,8 +51,14 @@ mod tests {
         // Verify all required fields are present
         assert!(stats["base_routing_rate"].is_u64());
         assert!(stats["base_storage_rate"].is_u64());
-        assert!(stats["current_supply"].is_u64());
-        assert!(stats["treasury_balance"].is_u64());
+        // u128 amounts are emitted as decimal strings — serde_json numbers cannot
+        // hold values above u64::MAX, and max_supply defaults to u128::MAX.
+        assert_eq!(stats["current_supply"].as_str(), Some("0"));
+        assert_eq!(
+            stats["max_supply"].as_str(),
+            Some(u128::MAX.to_string().as_str())
+        );
+        assert!(stats["treasury_balance"].as_str().is_some());
         // Note: isp_bypass_total_bandwidth was removed from stats
     }
 
