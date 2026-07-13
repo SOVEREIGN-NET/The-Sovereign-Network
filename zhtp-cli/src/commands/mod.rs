@@ -11,6 +11,7 @@ pub mod component;
 pub mod config;
 pub mod curve;
 pub mod dao;
+pub mod dao_governance;
 pub mod deploy;
 pub mod diagnostics;
 pub mod domain;

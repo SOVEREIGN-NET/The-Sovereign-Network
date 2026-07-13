@@ -1374,6 +1374,25 @@ impl Blockchain {
         }
     }
 
+    /// On-chain governance module state (`asset_governance/` sled tree).
+    pub fn get_governance_module_state(
+        &self,
+        asset_id: &[u8; 32],
+    ) -> Option<crate::contracts::sovereign_asset::GovernanceModuleState> {
+        let store = self.get_store()?;
+        match store.get_governance_module_state(asset_id) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!(
+                    "Failed to load governance module state for asset {}: {}",
+                    hex::encode(asset_id),
+                    e
+                );
+                None
+            }
+        }
+    }
+
     pub fn register_web4_contract(
         &mut self,
         contract_id: [u8; 32],
