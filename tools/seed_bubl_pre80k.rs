@@ -16,8 +16,8 @@ use lib_blockchain::{
     integration::crypto_integration::{Signature, SignatureAlgorithm},
     transaction::{
         asset_tx::{
-            AssetAuthorityProof, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
-            AssetUpgradeModule, GovernanceLaunchConfig,
+            AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetModuleUpgradePayloadV1,
+            AssetRewardsDelegateRotatePayloadV1, AssetUpgradeModule, GovernanceLaunchConfig,
         },
         TokenTransferData, Transaction,
     },
@@ -85,6 +85,8 @@ enum Command {
     EnableGovernance(EnableGovernanceArgs),
     /// Transfer BUBL from creator to spend delegate (rewards liquidity).
     FundDelegate(FundDelegateArgs),
+    /// Immediate or timelocked creator→governance authority handoff (#2805 P6).
+    AuthorityTransfer(AuthorityTransferArgs),
 }
 
 #[derive(Parser)]
@@ -137,6 +139,20 @@ struct EnableGovernanceArgs {
     /// Prefer false for legacy BUBL: enable module first, then `AssetAuthorityTransfer`.
     #[arg(long, default_value_t = false)]
     transfer_authority: bool,
+}
+
+#[derive(Parser)]
+struct AuthorityTransferArgs {
+    #[command(flatten)]
+    shared: SharedArgs,
+    /// Future activation height. Omit for immediate handoff while authority is still Creator.
+    #[arg(long)]
+    effective_height: Option<u64>,
+    /// Comma-separated 32-byte hex governance signer key_ids. Defaults to creator single-signer.
+    #[arg(long)]
+    governance_signers: Option<String>,
+    #[arg(long)]
+    governance_threshold: Option<u8>,
 }
 
 fn load_keypair(keystore_dir: &std::path::Path) -> Result<KeyPair> {
@@ -193,6 +209,74 @@ fn sign_module_upgrade(
     tx.signature = keypair
         .sign(tx.signing_hash().as_bytes())
         .context("sign AssetModuleUpgrade")?;
+    Ok(tx)
+}
+
+fn parse_governance_signers(raw: &str) -> Result<Vec<[u8; 32]>> {
+    let parts: Vec<&str> = raw.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        anyhow::bail!("governance_signers must list at least one 32-byte hex key_id");
+    }
+    parts
+        .iter()
+        .map(|part| {
+            let hex_str = part.strip_prefix("0x").unwrap_or(part);
+            let bytes = hex::decode(hex_str).with_context(|| format!("invalid signer hex: {part}"))?;
+            anyhow::ensure!(bytes.len() == 32, "governance signer must be 32 bytes: {part}");
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes);
+            Ok(out)
+        })
+        .collect()
+}
+
+fn build_governance_verifier(
+    creator_key_id: [u8; 32],
+    signers_raw: Option<&str>,
+    threshold: Option<u8>,
+) -> Result<GovernanceVerifierState> {
+    let signers = match signers_raw {
+        Some(raw) => parse_governance_signers(raw)?,
+        None => vec![creator_key_id],
+    };
+    if signers.len() == 1 {
+        if threshold.is_some_and(|t| t > 1) {
+            anyhow::bail!("governance_threshold > 1 requires multiple --governance-signers");
+        }
+        Ok(GovernanceVerifierState::Single {
+            signer_key_id: signers[0],
+        })
+    } else {
+        Ok(GovernanceVerifierState::Multisig {
+            signers,
+            threshold: threshold.unwrap_or(0),
+        })
+    }
+}
+
+fn sign_authority_transfer(
+    keypair: &KeyPair,
+    payload: AssetAuthorityTransferPayloadV1,
+    chain_id: u8,
+    fee: u64,
+) -> Result<Transaction> {
+    let memo = payload
+        .encode_memo()
+        .map_err(|e| anyhow::anyhow!("encode authority transfer memo: {e}"))?;
+    let mut tx = Transaction::new_asset_authority_transfer_with_chain_id(
+        chain_id,
+        Signature {
+            signature: Vec::new(),
+            public_key: PublicKey::new(keypair.public_key.dilithium_pk),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+        memo,
+    );
+    tx.fee = fee;
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .context("sign AssetAuthorityTransfer")?;
     Ok(tx)
 }
 
@@ -370,6 +454,38 @@ fn main() -> Result<()> {
                     "asset_id": hex::encode(asset_id),
                     "transfer_authority": args.transfer_authority,
                     "initial_verifier": hex::encode(creator.public_key.key_id),
+                }),
+            )?;
+        }
+        Command::AuthorityTransfer(args) => {
+            let asset_id = parse_asset_id(&args.shared.asset_id)?;
+            let creator = load_keypair(&args.shared.keystore_dir)?;
+            let verifier = build_governance_verifier(
+                creator.public_key.key_id,
+                args.governance_signers.as_deref(),
+                args.governance_threshold,
+            )?;
+            let payload = AssetAuthorityTransferPayloadV1 {
+                asset_id,
+                new_verifier: verifier,
+                effective_height: args.effective_height,
+                authority_proof: AssetAuthorityProof::CreatorSig,
+            };
+            let tx = sign_authority_transfer(
+                &creator,
+                payload,
+                args.shared.chain_id,
+                args.shared.fee,
+            )?;
+            emit_tx(
+                "authority-transfer",
+                &tx,
+                serde_json::json!({
+                    "migration": "2805-authority-transfer",
+                    "asset_id": hex::encode(asset_id),
+                    "effective_height": args.effective_height,
+                    "immediate": args.effective_height.is_none(),
+                    "creator_key_id": hex::encode(creator.public_key.key_id),
                 }),
             )?;
         }

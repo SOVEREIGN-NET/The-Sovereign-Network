@@ -557,6 +557,7 @@ pub struct DaoLaunchParams {
     pub supply_mode: String,
     pub chain_id: u8,
     pub dao_class: Option<String>,
+    pub burn_bps: Option<u16>,
 }
 
 fn build_rewards_launch_config(
@@ -683,6 +684,7 @@ pub async fn handle_dao_asset_launch(
         .as_deref()
         .and_then(DaoClass::from_str)
         .unwrap_or(DaoClass::Fp);
+    let burn_bps = options.burn_bps.unwrap_or(0);
 
     let payload = AssetLaunchPayloadV1 {
         name: name.to_string(),
@@ -699,7 +701,7 @@ pub async fn handle_dao_asset_launch(
         governance,
         transfer_authority: options.transfer_authority,
         dao_class,
-        burn_bps: 0,
+        burn_bps,
     };
     payload.validate_dao_launch_ui_constraints().map_err(|e| {
         CliError::ConfigError(format!("DAO launch validation failed: {e}"))
