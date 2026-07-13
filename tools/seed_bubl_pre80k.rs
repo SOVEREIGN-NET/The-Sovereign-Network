@@ -133,9 +133,10 @@ struct FundDelegateArgs {
 struct EnableGovernanceArgs {
     #[command(flatten)]
     shared: SharedArgs,
-    /// Queue creator→governance handoff via module-upgrade timelock (default: true).
-    #[arg(long, default_value_t = true)]
-    queue_authority_transfer: bool,
+    /// Immediate creator→governance authority handoff at upgrade time (default: false).
+    /// Prefer false for legacy BUBL: enable module first, then `AssetAuthorityTransfer`.
+    #[arg(long, default_value_t = false)]
+    transfer_authority: bool,
 }
 
 fn load_keypair(keystore_dir: &std::path::Path) -> Result<KeyPair> {
@@ -353,7 +354,7 @@ fn main() -> Result<()> {
             let payload = AssetModuleUpgradePayloadV1 {
                 asset_id,
                 module: AssetUpgradeModule::Governance(gov),
-                transfer_authority: args.queue_authority_transfer,
+                transfer_authority: args.transfer_authority,
             };
             let tx = sign_module_upgrade(
                 &creator,
@@ -367,7 +368,7 @@ fn main() -> Result<()> {
                 serde_json::json!({
                     "migration": "2864-enable-governance",
                     "asset_id": hex::encode(asset_id),
-                    "queue_authority_transfer": args.queue_authority_transfer,
+                    "transfer_authority": args.transfer_authority,
                     "initial_verifier": hex::encode(creator.public_key.key_id),
                 }),
             )?;
