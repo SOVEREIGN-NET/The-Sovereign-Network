@@ -1844,6 +1844,18 @@ impl BlockchainStore for SledStore {
         Ok(ids)
     }
 
+    fn list_governance_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {
+        let mut ids = Vec::new();
+        for entry in self.asset_governance.iter().flatten() {
+            if entry.0.len() == 32 {
+                let mut asset_id = [0u8; 32];
+                asset_id.copy_from_slice(&entry.0);
+                ids.push(asset_id);
+            }
+        }
+        Ok(ids)
+    }
+
     fn get_rewards_policy_document(
         &self,
         policy_hash: &[u8; 32],

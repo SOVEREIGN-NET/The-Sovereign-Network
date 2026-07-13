@@ -310,6 +310,51 @@ pub fn apply_asset_rewards_policy_update(
     Ok(())
 }
 
+/// Activate queued creator→governance authority transfers whose timelock has expired.
+pub fn activate_pending_authority_transfers(
+    mutator: &StateMutator<'_>,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    let asset_ids = mutator.list_governance_module_asset_ids()?;
+    for asset_id in asset_ids {
+        let Some(mut gov_state) = mutator.get_governance_module_state(&asset_id)? else {
+            continue;
+        };
+        let Some(pending) = gov_state.pending_transfer.clone() else {
+            continue;
+        };
+        if pending.effective_height > block_height {
+            continue;
+        }
+
+        let Some(mut asset) = mutator.get_sovereign_asset(&asset_id)? else {
+            return Err(TxApplyError::InvalidType(format!(
+                "sovereign asset missing for pending authority transfer: {}",
+                hex::encode(asset_id)
+            )));
+        };
+
+        match &asset.authority {
+            AssetAuthority::Creator { .. } => {
+                asset.authority = AssetAuthority::Governance {
+                    module_ref: asset_id,
+                };
+                gov_state.verifier = Some(pending.new_verifier.clone());
+                gov_state.pending_transfer = None;
+                asset.governance = Some(governance_header_from_verifier(&pending.new_verifier));
+                asset.module_flags.0 |= AssetModuleFlags::GOVERNANCE;
+                mutator.put_governance_module_state(&asset_id, &gov_state)?;
+                mutator.put_sovereign_asset(&asset)?;
+            }
+            AssetAuthority::Governance { .. } => {
+                gov_state.pending_transfer = None;
+                mutator.put_governance_module_state(&asset_id, &gov_state)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Activate queued decrease-only policy updates whose timelock has expired.
 pub fn activate_pending_rewards_policies(
     mutator: &StateMutator<'_>,
