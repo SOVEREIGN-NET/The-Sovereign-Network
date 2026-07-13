@@ -457,6 +457,8 @@ mod tests {
                 timestamp: 0,
             },
             signature: PostQuantumSignature::default(),
+            valid_round: None,
+            build_id: String::new(),
         }
     }
 

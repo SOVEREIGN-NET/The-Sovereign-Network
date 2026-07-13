@@ -135,4 +135,10 @@ pub struct ConsensusProposal {
     /// proposals as `None`.
     #[serde(default)]
     pub valid_round: Option<u32>,
+    /// Human-bumped binary epoch. Peers reject proposals whose epoch
+    /// does not match [`CONSENSUS_BUILD_ID`](crate::build_id::CONSENSUS_BUILD_ID).
+    /// Not part of the inner proposal signature — admission-time safety
+    /// net only, not a cryptographic identity binding.
+    #[serde(default)]
+    pub build_id: String,
 }

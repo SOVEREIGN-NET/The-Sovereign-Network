@@ -80,6 +80,10 @@ pub struct VoteMessage {
     pub consensus_state: ConsensusStateView,
     pub timestamp: u64,
     pub signature: PostQuantumSignature,
+    /// Build identity of the voter's binary. Peers reject votes when
+    /// this does not match their own `CONSENSUS_BUILD_ID`.
+    #[serde(default)]
+    pub build_id: String,
 }
 
 /// Heartbeat envelope — advisory liveness telemetry. Per the original
@@ -95,6 +99,12 @@ pub struct HeartbeatMessage {
     pub network_summary: NetworkSummary,
     pub timestamp: u64,
     pub signature: PostQuantumSignature,
+    /// Binary epoch (gated at admission on proposals/votes; advisory here).
+    #[serde(default)]
+    pub build_id: String,
+    /// Git revision compiled into this binary (advisory telemetry only).
+    #[serde(default)]
+    pub build_revision: String,
 }
 
 /// Snapshot of a voter's local view of the round, included on every

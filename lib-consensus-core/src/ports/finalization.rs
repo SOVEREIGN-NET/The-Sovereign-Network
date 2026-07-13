@@ -129,6 +129,7 @@ mod tests {
             signature: PostQuantumSignature::default(),
             consensus_proof: ConsensusProof::empty(ConsensusType::ByzantineFaultTolerance, 0),
             valid_round: None,
+            build_id: String::new(),
         }
     }
 

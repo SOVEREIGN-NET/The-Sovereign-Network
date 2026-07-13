@@ -2749,6 +2749,8 @@ mod tests {
             },
             timestamp: 0,
             signature: heartbeat_sig,
+            build_id: String::new(),
+            build_revision: String::new(),
         };
         let validator_msg =
             lib_consensus::validators::ValidatorMessage::Heartbeat(heartbeat);

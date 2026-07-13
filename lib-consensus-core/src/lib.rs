@@ -31,6 +31,11 @@
 #![forbid(unsafe_code)]
 
 pub mod budget;
+pub mod build_id;
+pub use build_id::{
+    local_build_id, local_build_revision, validate_peer_build_id, BuildIdRejectReason,
+    BUILD_REVISION, CONSENSUS_BUILD_ID, LEGACY_BUILD_ID,
+};
 pub mod byzantine;
 pub mod engine;
 pub mod fsm;

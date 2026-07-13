@@ -268,7 +268,7 @@ const CONSENSUS_NONCE_PREFIX_INFO: &[u8] = b"ZHTP-CONSENSUS-NONCE-PREFIX-v1";
 const CONSENSUS_AAD_DOMAIN: &[u8] = b"ZHTP-CONSENSUS-AEAD-AAD-v1";
 
 /// Codec version for consensus messages (re-exported from lib-consensus)
-const CONSENSUS_CODEC_VERSION: u8 = 1;
+const CONSENSUS_CODEC_VERSION: u8 = 2;
 
 // ============================================================================
 // Implementation
@@ -978,7 +978,7 @@ mod tests {
 
         // This test documents that codec version is bound to AAD
         assert!(
-            CONSENSUS_CODEC_VERSION == 1,
+            CONSENSUS_CODEC_VERSION == 2,
             "Codec version must be bound to AAD for security"
         );
 

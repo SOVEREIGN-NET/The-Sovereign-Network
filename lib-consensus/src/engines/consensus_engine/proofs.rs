@@ -122,6 +122,7 @@ impl ConsensusEngine {
             signature,
             consensus_proof,
             valid_round,
+            build_id: lib_consensus_core::build_id::local_build_id().to_string(),
         };
 
         tracing::info!(

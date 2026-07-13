@@ -896,6 +896,8 @@ mod tests {
             },
             timestamp: 0,
             signature: lib_crypto::PostQuantumSignature::default(),
+            build_id: String::new(),
+            build_revision: String::new(),
         }
     }
 
@@ -1005,6 +1007,7 @@ mod tests {
                     0,
                 ),
                 valid_round: None,
+                build_id: String::new(),
             },
             quorum_proof: lib_types::consensus::BftQuorumProof {
                 height,
