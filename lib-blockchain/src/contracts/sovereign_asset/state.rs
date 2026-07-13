@@ -110,6 +110,16 @@ pub const AUTHORITY_TRANSFER_TIMELOCK_BLOCKS: u64 = 7_200;
 /// Timelock before a decrease-only rewards policy update becomes effective (DAO P7 / Q5).
 pub const REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS: u64 = AUTHORITY_TRANSFER_TIMELOCK_BLOCKS;
 
+/// Block height at which `activate_pending_authority_transfers` becomes consensus-active.
+///
+/// Before this height the pass is a no-op so replay and rolling deploy stay deterministic.
+/// Coordinate via halt → staged deploy; live chain must have no queued `pending_transfer`
+/// below this height (none expected until DAO launch governance ships).
+#[cfg(test)]
+pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 0;
+#[cfg(not(test))]
+pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 80_000;
+
 /// Default multisig threshold: floor(N/2) + 1.
 pub fn default_governance_threshold(n: usize) -> u8 {
     ((n / 2) + 1) as u8

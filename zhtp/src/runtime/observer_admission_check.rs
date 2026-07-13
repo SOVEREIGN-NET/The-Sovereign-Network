@@ -353,6 +353,9 @@ mod tests {
         fn put_cbe_economic_state( &self, state: &lib_types::BondingCurveEconomicState, ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_cbe_economic_state unused by observer tests") }
         fn get_cbe_account_state( &self, key_id: &[u8; 32], ) -> StorageResult<Option<lib_types::BondingCurveAccountState>> { unimplemented!("MockObserverStore::get_cbe_account_state unused by observer tests") }
         fn put_cbe_account_state( &self, key_id: &[u8; 32], state: &lib_types::BondingCurveAccountState, ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_cbe_account_state unused by observer tests") }
+        fn list_governance_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {
+            Ok(Vec::new())
+        }
     }
 
     fn record(

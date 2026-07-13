@@ -660,6 +660,7 @@ impl BlockExecutor {
         // Initialize block-level resource accumulator
         let mut accumulator = BlockAccumulator::new();
 
+        // Load-bearing ordering: authority transfers before rewards policies (frozen).
         activate_pending_authority_transfers(&mutator, block_height).map_err(|e| {
             BlockApplyError::ValidationFailed(format!(
                 "activate pending authority transfers failed: {e}"
