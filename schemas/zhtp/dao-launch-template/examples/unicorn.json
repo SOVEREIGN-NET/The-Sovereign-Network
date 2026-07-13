@@ -1,0 +1,11 @@
+{
+  "schema": "zhtp/dao-launch-template/v1",
+  "id": "unicorn",
+  "label": "Unicorn",
+  "description": "High-growth preset — 1B whole tokens, fixed supply, canonical 80/20 launch split.",
+  "whole_supply": 1000000000,
+  "decimals": 18,
+  "supply_mode": "fixed",
+  "treasury_bps": 2000,
+  "rewards_policy_example": "schemas/zhtp/rewards-policy/examples/bubl-v1.json"
+}

@@ -575,12 +575,18 @@ pub enum DaoAction {
         /// Token symbol (e.g. BUBL)
         #[arg(short, long)]
         symbol: String,
-        /// Initial supply in atomic units (whole_tokens * 10^--decimals)
+        /// Tokenomics template: unicorn | balanced | foundation (D4 #2825)
+        #[arg(long, value_name = "ID")]
+        template: Option<String>,
+        /// Print 80/20 split preview from template/executor formula and exit
+        #[arg(long)]
+        preview: bool,
+        /// Initial supply in atomic units (overrides template default)
         #[arg(short, long)]
-        supply: u128,
-        /// Display decimals
-        #[arg(short, long, default_value = "18")]
-        decimals: u8,
+        supply: Option<u128>,
+        /// Display decimals (default: template or 18)
+        #[arg(short, long)]
+        decimals: Option<u8>,
         /// Treasury recipient key_id (32-byte hex). Defaults to protocol DAO treasury.
         #[arg(long)]
         treasury_recipient: Option<String>,

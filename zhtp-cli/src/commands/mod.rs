@@ -17,6 +17,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod genesis;
 pub mod identity;
+pub mod launch_templates;
 pub mod interactive;
 pub mod isolation;
 pub mod man;
