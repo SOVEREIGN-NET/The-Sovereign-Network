@@ -2492,10 +2492,34 @@ impl<'a> StatefulTransactionValidator<'a> {
             tracing::debug!("[BREADCRUMB] validate_zk_proofs OK");
         }
 
+        // RewardClaim: signer is the spend delegate (system tx), but beneficiary
+        // `owner_did` must exist in durable sled — same oracle as executor apply.
+        if transaction.transaction_type == TransactionType::RewardClaim {
+            let data = transaction
+                .reward_claim_data()
+                .ok_or(ValidationError::MissingRequiredData)?;
+            let blockchain = self
+                .blockchain
+                .ok_or(ValidationError::InvalidTransaction)?;
+            let store = blockchain
+                .get_store()
+                .ok_or(ValidationError::InvalidTransaction)?;
+            if let Err(e) = crate::transaction::reward_claim::validate_owner_identity_registered(
+                store.as_ref(),
+                &data.owner_did,
+            ) {
+                tracing::warn!(
+                    "[REWARD_CLAIM] owner_did not registered in sled: {} ({e})",
+                    &data.owner_did[..data.owner_did.len().min(32)]
+                );
+                return Err(ValidationError::InvalidTransaction);
+            }
+            return Ok(());
+        }
+
         // TokenTransfer and DaoStake have no UTXO inputs — fee is deducted from the amount
         // at block processing time. Skip UTXO-based fee validation entirely.
         if transaction.transaction_type == TransactionType::TokenTransfer
-            || transaction.transaction_type == TransactionType::RewardClaim
             || transaction.transaction_type == TransactionType::DaoStake
             || transaction.transaction_type == TransactionType::DaoUnstake
         {
