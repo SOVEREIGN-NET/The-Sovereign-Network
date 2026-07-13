@@ -11,9 +11,14 @@ use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::api::handlers::token::u128_as_string;
+
+/// Stable deep-link scheme for sovereign assets (`asset_id` = launch tx hash).
+pub fn asset_share_link(asset_id: &[u8; 32]) -> String {
+    format!("zhtp://asset/{}", hex::encode(asset_id))
+}
 
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
     let json_response = serde_json::to_vec(&data)?;
@@ -41,6 +46,8 @@ struct AssetListItem {
     module_bitmask: u8,
     launched_at_height: Option<u64>,
     manifest_cid: Option<String>,
+    manifest_hash: Option<String>,
+    share_link: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +74,10 @@ struct AssetDetailResponse {
     rewards: Option<serde_json::Value>,
     governance: Option<serde_json::Value>,
     interface: serde_json::Value,
+    share_link: String,
+    manifest_resolved: bool,
+    manifest: Option<serde_json::Value>,
+    dao_registry: Option<serde_json::Value>,
 }
 
 fn id_source_label(s: AssetIdSource) -> &'static str {
@@ -81,6 +92,13 @@ fn supply_mode_label(s: SupplyMode) -> &'static str {
         SupplyMode::Fixed => "fixed",
         SupplyMode::Elastic => "elastic",
     }
+}
+
+fn interface_for_asset(asset: &SovereignAsset, manifest: Option<&serde_json::Value>) -> serde_json::Value {
+    if let Some(iface) = manifest.and_then(|m| m.get("interface")) {
+        return iface.clone();
+    }
+    asset_interface(asset)
 }
 
 fn asset_interface(asset: &SovereignAsset) -> serde_json::Value {
@@ -128,6 +146,62 @@ fn to_list_item(asset: &SovereignAsset) -> AssetListItem {
         module_bitmask: asset.module_bitmask(),
         launched_at_height: asset.launched_at_height,
         manifest_cid: asset.manifest_cid.map(hex::encode),
+        manifest_hash: asset.manifest_hash.map(hex::encode),
+        share_link: asset_share_link(&asset.asset_id),
+    }
+}
+
+fn dao_registry_linkage(
+    bc: &Blockchain,
+    asset_id: &[u8; 32],
+) -> Option<serde_json::Value> {
+    bc.get_dao_registry_entry(asset_id).map(|entry| {
+        json!({
+            "dao_id": hex::encode(entry.dao_id),
+            "class": entry.class,
+            "metadata_hash": hex::encode(entry.metadata_hash),
+            "created_at": entry.created_at,
+        })
+    })
+}
+
+async fn fetch_manifest_bytes(cid: &[u8; 32]) -> Option<Vec<u8>> {
+    if *cid == [0u8; 32] {
+        return None;
+    }
+    let key = hex::encode(cid);
+    let client = crate::runtime::shared_dht::get_dht_client().await.ok()?;
+    let mut dht = client.write().await;
+    dht.fetch_content(&key).await.ok().flatten()
+}
+
+fn manifest_hash_matches(bytes: &[u8], expected: &[u8; 32]) -> bool {
+    lib_crypto::hash_blake3(bytes) == *expected
+}
+
+async fn resolve_asset_manifest(asset: &SovereignAsset) -> (Option<serde_json::Value>, bool) {
+    let (Some(cid), Some(expected_hash)) = (asset.manifest_cid, asset.manifest_hash) else {
+        return (None, false);
+    };
+    let Some(bytes) = fetch_manifest_bytes(&cid).await else {
+        return (None, false);
+    };
+    if !manifest_hash_matches(&bytes, &expected_hash) {
+        warn!(
+            asset_id = %hex::encode(asset.asset_id),
+            "manifest bytes do not match on-chain manifest_hash"
+        );
+        return (None, false);
+    }
+    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(manifest) => (Some(manifest), true),
+        Err(e) => {
+            warn!(
+                asset_id = %hex::encode(asset.asset_id),
+                "manifest JSON invalid: {e}"
+            );
+            (None, false)
+        }
     }
 }
 
@@ -149,7 +223,13 @@ fn rewards_detail(
     }))
 }
 
-fn to_detail(asset: &SovereignAsset, rewards_state: Option<&RewardsModuleState>) -> AssetDetailResponse {
+fn to_detail(
+    asset: &SovereignAsset,
+    rewards_state: Option<&RewardsModuleState>,
+    manifest: Option<&serde_json::Value>,
+    manifest_resolved: bool,
+    dao_registry: Option<serde_json::Value>,
+) -> AssetDetailResponse {
     AssetDetailResponse {
         asset_id: hex::encode(asset.asset_id),
         id_source: id_source_label(asset.id_source).to_string(),
@@ -184,7 +264,11 @@ fn to_detail(asset: &SovereignAsset, rewards_state: Option<&RewardsModuleState>)
                 "threshold": g.threshold,
             })
         }),
-        interface: asset_interface(asset),
+        interface: interface_for_asset(asset, manifest),
+        share_link: asset_share_link(&asset.asset_id),
+        manifest_resolved,
+        manifest: manifest.cloned(),
+        dao_registry,
     }
 }
 
@@ -206,10 +290,20 @@ impl AssetsHandler {
 
     async fn handle_list(&self) -> Result<ZhtpResponse> {
         let bc = self.blockchain.read().await;
-        let assets: Vec<AssetListItem> = bc.iter_sovereign_assets().iter().map(to_list_item).collect();
+        let mut assets: Vec<AssetListItem> =
+            bc.iter_sovereign_assets().iter().map(to_list_item).collect();
+        assets.sort_by(|a, b| {
+            b.launched_at_height
+                .cmp(&a.launched_at_height)
+                .then_with(|| a.symbol.cmp(&b.symbol))
+        });
         let count = assets.len();
         info!("Served sovereign asset catalog: count={}", count);
-        create_json_response(json!({ "assets": assets, "count": count }))
+        create_json_response(json!({
+            "assets": assets,
+            "count": count,
+            "share_link_scheme": "zhtp://asset/{asset_id}",
+        }))
     }
 
     async fn handle_get(&self, asset_id_hex: &str) -> Result<ZhtpResponse> {
@@ -222,9 +316,14 @@ impl AssetsHandler {
         if asset.module_flags.has_rewards() && rewards_state.is_none() {
             anyhow::bail!("rewards module state unavailable for asset {}", asset_id_hex);
         }
+        let (manifest, manifest_resolved) = resolve_asset_manifest(&asset).await;
+        let dao_registry = dao_registry_linkage(&bc, &asset_id);
         create_json_response(serde_json::to_value(to_detail(
             &asset,
             rewards_state.as_ref(),
+            manifest.as_ref(),
+            manifest_resolved,
+            dao_registry,
         ))?)
     }
 
@@ -234,10 +333,13 @@ impl AssetsHandler {
         let asset = bc
             .get_sovereign_asset(&asset_id)
             .ok_or_else(|| anyhow::anyhow!("Asset not found"))?;
+        let (manifest, manifest_resolved) = resolve_asset_manifest(&asset).await;
         create_json_response(json!({
             "asset_id": hex::encode(asset.asset_id),
             "symbol": asset.symbol,
-            "interface": asset_interface(&asset),
+            "share_link": asset_share_link(&asset.asset_id),
+            "manifest_resolved": manifest_resolved,
+            "interface": interface_for_asset(&asset, manifest.as_ref()),
         }))
     }
 
@@ -319,5 +421,70 @@ impl ZhtpRequestHandler for AssetsHandler {
 
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         request.uri.starts_with("/api/v1/assets")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_blockchain::contracts::sovereign_asset::{AssetIdSource, AssetModuleFlags, SupplyMode};
+
+    fn sample_asset() -> SovereignAsset {
+        SovereignAsset {
+            asset_id: [0xAB; 32],
+            id_source: AssetIdSource::LaunchTx,
+            name: "Bubble".to_string(),
+            symbol: "BUBL".to_string(),
+            decimals: 18,
+            creator_key_id: [0x01; 32],
+            creator_did: None,
+            treasury_key_id: Some([0x02; 32]),
+            launched_at_height: Some(10),
+            supply_mode: SupplyMode::Fixed,
+            max_supply: 1_000,
+            total_supply: 1_000,
+            manifest_cid: Some([0x11; 32]),
+            manifest_hash: Some([0x22; 32]),
+            schema_version: 1,
+            authority: lib_blockchain::contracts::sovereign_asset::AssetAuthority::Creator {
+                key_id: [0x01; 32],
+            },
+            module_flags: AssetModuleFlags(AssetModuleFlags::REWARDS),
+            curve: None,
+            rewards: None,
+            governance: None,
+        }
+    }
+
+    #[test]
+    fn asset_share_link_is_stable_zhtp_scheme() {
+        assert_eq!(
+            asset_share_link(&[0xAB; 32]),
+            format!("zhtp://asset/{}", hex::encode([0xAB; 32]))
+        );
+    }
+
+    #[test]
+    fn interface_prefers_manifest_wallet_shortcut() {
+        let asset = sample_asset();
+        let manifest = json!({
+            "schema": "zhtp/asset-manifest/v1",
+            "interface": {
+                "version": "2.0.0",
+                "tx_kinds": ["RewardsClaim", "AssetTransfer"],
+                "wallet_tab": "rewards"
+            }
+        });
+        let iface = interface_for_asset(&asset, Some(&manifest));
+        assert_eq!(iface["version"], "2.0.0");
+        assert_eq!(iface["wallet_tab"], "rewards");
+    }
+
+    #[test]
+    fn manifest_hash_matches_raw_blake3_bytes() {
+        let bytes = br#"{"schema":"zhtp/asset-manifest/v1"}"#;
+        let hash = lib_crypto::hash_blake3(bytes);
+        assert!(manifest_hash_matches(bytes, &hash));
+        assert!(!manifest_hash_matches(b"other", &hash));
     }
 }
