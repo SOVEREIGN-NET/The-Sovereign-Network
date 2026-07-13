@@ -5,7 +5,8 @@ use crate::contracts::sovereign_asset::{
     AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState,
     GovernanceVerifierKind, GovernanceVerifierState, PendingAuthorityTransfer,
     PendingRewardsPolicyUpdate, RewardsModuleHeader, RewardsModuleState, SovereignAsset,
-    SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS, REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS,
+    SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS, GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT,
+    REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS,
 };
 use crate::execution::tx_apply::{apply_token_mint, StateMutator};
 use crate::execution::{TxApplyError, TxApplyResult};
@@ -310,6 +311,58 @@ pub fn apply_asset_rewards_policy_update(
     Ok(())
 }
 
+/// Activate queued authority transfers whose timelock has expired.
+///
+/// Creator → Governance handoffs and governance verifier rotations both queue
+/// `pending_transfer`; activation applies `new_verifier` and clears the queue.
+pub fn activate_pending_authority_transfers(
+    mutator: &StateMutator<'_>,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    if block_height < GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT {
+        return Ok(());
+    }
+
+    let asset_ids = mutator.list_governance_module_asset_ids()?;
+    for asset_id in asset_ids {
+        let Some(mut gov_state) = mutator.get_governance_module_state(&asset_id)? else {
+            continue;
+        };
+        let Some(pending) = gov_state.pending_transfer.clone() else {
+            continue;
+        };
+        if pending.effective_height > block_height {
+            continue;
+        }
+
+        let Some(mut asset) = mutator.get_sovereign_asset(&asset_id)? else {
+            tracing::warn!(
+                asset_id = %hex::encode(asset_id),
+                block_height,
+                "sovereign asset missing for pending authority transfer; skipping"
+            );
+            continue;
+        };
+
+        gov_state.verifier = Some(pending.new_verifier.clone());
+        gov_state.pending_transfer = None;
+        asset.governance = Some(governance_header_from_verifier(&pending.new_verifier));
+
+        match &asset.authority {
+            AssetAuthority::Creator { .. } => {
+                asset.authority = AssetAuthority::Governance {
+                    module_ref: asset_id,
+                };
+            }
+            AssetAuthority::Governance { .. } => {}
+        }
+
+        mutator.put_governance_module_state(&asset_id, &gov_state)?;
+        mutator.put_sovereign_asset(&asset)?;
+    }
+    Ok(())
+}
+
 /// Activate queued decrease-only policy updates whose timelock has expired.
 pub fn activate_pending_rewards_policies(
     mutator: &StateMutator<'_>,
@@ -326,14 +379,15 @@ pub fn activate_pending_rewards_policies(
         if pending.effective_height > block_height {
             continue;
         }
-        let doc = mutator
-            .get_rewards_policy_document(&pending.policy_hash)?
-            .ok_or_else(|| {
-                TxApplyError::InvalidType(format!(
-                    "pending rewards policy document missing for {}",
-                    hex::encode(asset_id)
-                ))
-            })?;
+        let Some(doc) = mutator.get_rewards_policy_document(&pending.policy_hash)? else {
+            tracing::warn!(
+                asset_id = %hex::encode(asset_id),
+                block_height,
+                policy_hash = %hex::encode(pending.policy_hash),
+                "pending rewards policy document missing; skipping activation"
+            );
+            continue;
+        };
         state.policy_cid = pending.policy_cid;
         state.policy_hash = pending.policy_hash;
         state.pending_policy = None;
@@ -571,5 +625,338 @@ fn verifier_contains(verifier: &GovernanceVerifierState, key_id: [u8; 32]) -> bo
     match verifier {
         GovernanceVerifierState::Single { signer_key_id } => *signer_key_id == key_id,
         GovernanceVerifierState::Multisig { signers, .. } => signers.iter().any(|s| *s == key_id),
+    }
+}
+
+#[cfg(test)]
+mod activate_pending_tests {
+    use super::*;
+    use crate::contracts::sovereign_asset::{
+        AssetIdSource, GovernanceVerifierKind, PendingRewardsPolicyUpdate,
+    };
+    use crate::rewards_policy::policy_hash;
+    use crate::storage::{BlockchainStore, SledStore};
+    use std::sync::Arc;
+
+    fn fresh_store() -> Arc<dyn BlockchainStore> {
+        Arc::new(SledStore::open_temporary().unwrap())
+    }
+
+    fn key(seed: u8) -> [u8; 32] {
+        [seed; 32]
+    }
+
+    fn single_verifier(seed: u8) -> GovernanceVerifierState {
+        GovernanceVerifierState::Single {
+            signer_key_id: key(seed),
+        }
+    }
+
+    fn sample_creator_asset(asset_id: [u8; 32], creator: [u8; 32]) -> SovereignAsset {
+        SovereignAsset {
+            asset_id,
+            id_source: AssetIdSource::LaunchTx,
+            name: "Test".to_string(),
+            symbol: "TST".to_string(),
+            decimals: 8,
+            creator_key_id: creator,
+            creator_did: None,
+            treasury_key_id: Some(key(0xEE)),
+            launched_at_height: Some(1),
+            supply_mode: SupplyMode::Fixed,
+            max_supply: 1_000,
+            total_supply: 1_000,
+            manifest_cid: Some([0x11; 32]),
+            manifest_hash: Some([0x22; 32]),
+            schema_version: 1,
+            authority: AssetAuthority::Creator { key_id: creator },
+            module_flags: AssetModuleFlags(AssetModuleFlags::GOVERNANCE),
+            curve: None,
+            rewards: None,
+            governance: Some(GovernanceModuleHeader {
+                verifier: GovernanceVerifierKind::Single,
+                signers: 1,
+                threshold: 1,
+            }),
+        }
+    }
+
+    struct BlockSession<'a> {
+        store: &'a dyn BlockchainStore,
+        next_height: u64,
+    }
+
+    impl<'a> BlockSession<'a> {
+        fn new(store: &'a dyn BlockchainStore) -> Self {
+            Self {
+                store,
+                next_height: 0,
+            }
+        }
+
+        fn apply<F>(&mut self, f: F)
+        where
+            F: FnOnce(&StateMutator<'_>, u64),
+        {
+            self.store.begin_block(self.next_height).unwrap();
+            f(&StateMutator::new(self.store), self.next_height);
+            self.store.commit_block().unwrap();
+            self.next_height += 1;
+        }
+    }
+
+    fn seed_pending_creator_transfer(
+        session: &mut BlockSession<'_>,
+        asset_id: [u8; 32],
+        creator: [u8; 32],
+        new_verifier: GovernanceVerifierState,
+        effective_height: u64,
+    ) {
+        session.apply(|mutator, _| {
+            mutator.put_sovereign_asset(&sample_creator_asset(asset_id, creator)).unwrap();
+            mutator
+                .put_governance_module_state(
+                    &asset_id,
+                    &GovernanceModuleState {
+                        verifier: Some(single_verifier(0xAA)),
+                        pending_transfer: Some(PendingAuthorityTransfer {
+                            new_verifier,
+                            effective_height,
+                        }),
+                    },
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn authority_activation_fires_at_effective_height_not_before() {
+        assert_eq!(GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT, 0, "unit tests expect gate at 0");
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x01);
+        let new_verifier = single_verifier(0xBB);
+        seed_pending_creator_transfer(
+            &mut session,
+            asset_id,
+            key(0xCC),
+            new_verifier.clone(),
+            2,
+        );
+
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+        let mutator = StateMutator::new(store.as_ref());
+        let asset = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert!(matches!(asset.authority, AssetAuthority::Creator { .. }));
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert!(gov.pending_transfer.is_some());
+
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+        let mutator = StateMutator::new(store.as_ref());
+        let asset = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert!(matches!(
+            asset.authority,
+            AssetAuthority::Governance { module_ref } if module_ref == asset_id
+        ));
+        assert_eq!(
+            asset.governance,
+            Some(GovernanceModuleHeader {
+                verifier: GovernanceVerifierKind::Single,
+                signers: 1,
+                threshold: 1,
+            })
+        );
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert_eq!(gov.verifier, Some(new_verifier));
+        assert!(gov.pending_transfer.is_none());
+    }
+
+    #[test]
+    fn authority_activation_is_idempotent_on_next_block() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x02);
+        let new_verifier = single_verifier(0xBB);
+        seed_pending_creator_transfer(&mut session, asset_id, key(0xCC), new_verifier.clone(), 1);
+
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+
+        let mutator = StateMutator::new(store.as_ref());
+        let asset = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert!(matches!(
+            asset.authority,
+            AssetAuthority::Governance { module_ref } if module_ref == asset_id
+        ));
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert_eq!(gov.verifier, Some(new_verifier));
+        assert!(gov.pending_transfer.is_none());
+    }
+
+    #[test]
+    fn authority_activation_skips_assets_without_pending_transfer() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x03);
+        let asset = sample_creator_asset(asset_id, key(0xCC));
+        session.apply(|mutator, _| {
+            mutator.put_sovereign_asset(&asset).unwrap();
+            mutator
+                .put_governance_module_state(
+                    &asset_id,
+                    &GovernanceModuleState {
+                        verifier: Some(single_verifier(0xAA)),
+                        pending_transfer: None,
+                    },
+                )
+                .unwrap();
+        });
+
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+
+        let mutator = StateMutator::new(store.as_ref());
+        let live = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert_eq!(live.authority, asset.authority);
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert!(gov.pending_transfer.is_none());
+        assert_eq!(gov.verifier, Some(single_verifier(0xAA)));
+    }
+
+    #[test]
+    fn governance_authority_applies_pending_verifier_rotation() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x04);
+        let new_verifier = single_verifier(0xDD);
+        session.apply(|mutator, _| {
+            let mut asset = sample_creator_asset(asset_id, key(0xCC));
+            asset.authority = AssetAuthority::Governance { module_ref: asset_id };
+            mutator.put_sovereign_asset(&asset).unwrap();
+            mutator
+                .put_governance_module_state(
+                    &asset_id,
+                    &GovernanceModuleState {
+                        verifier: Some(single_verifier(0xAA)),
+                        pending_transfer: Some(PendingAuthorityTransfer {
+                            new_verifier: new_verifier.clone(),
+                            effective_height: 1,
+                        }),
+                    },
+                )
+                .unwrap();
+        });
+
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+
+        let mutator = StateMutator::new(store.as_ref());
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert_eq!(gov.verifier, Some(new_verifier));
+        assert!(gov.pending_transfer.is_none());
+        let live = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert!(matches!(live.authority, AssetAuthority::Governance { .. }));
+        assert_eq!(
+            live.governance,
+            Some(GovernanceModuleHeader {
+                verifier: GovernanceVerifierKind::Single,
+                signers: 1,
+                threshold: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn missing_sovereign_asset_does_not_halt_activation() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x05);
+        session.apply(|mutator, _| {
+            mutator
+                .put_governance_module_state(
+                    &asset_id,
+                    &GovernanceModuleState {
+                        verifier: Some(single_verifier(0xAA)),
+                        pending_transfer: Some(PendingAuthorityTransfer {
+                            new_verifier: single_verifier(0xBB),
+                            effective_height: 1,
+                        }),
+                    },
+                )
+                .unwrap();
+        });
+
+        session.apply(|mutator, height| {
+            activate_pending_authority_transfers(mutator, height).unwrap();
+        });
+        let mutator = StateMutator::new(store.as_ref());
+        assert!(mutator.get_sovereign_asset(&asset_id).unwrap().is_none());
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert!(gov.pending_transfer.is_some(), "unchanged when asset missing");
+    }
+
+    #[test]
+    fn rewards_activation_boundary_matches_authority_transfers() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x06);
+        let policy_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../schemas/zhtp/rewards-policy/examples/bubl-v1.json"
+        );
+        let policy_bytes = std::fs::read(policy_path).expect("read bubl example");
+        let policy_hash = policy_hash(
+            &crate::rewards_policy::validate_rewards_policy(&policy_bytes).expect("valid policy"),
+        )
+        .expect("policy hash")
+        .as_array();
+
+        session.apply(|mutator, _| {
+            mutator.put_rewards_policy_document(&policy_hash, &policy_bytes).unwrap();
+            mutator
+                .put_rewards_module_state(
+                    &asset_id,
+                    &RewardsModuleState {
+                        spend_delegate_key_id: key(0x77),
+                        policy_cid: [0x33; 32],
+                        policy_hash,
+                        nonce: 0,
+                        pending_policy: Some(PendingRewardsPolicyUpdate {
+                            policy_cid: [0x44; 32],
+                            policy_hash,
+                            effective_height: 2,
+                        }),
+                    },
+                )
+                .unwrap();
+        });
+
+        session.apply(|mutator, height| {
+            activate_pending_rewards_policies(mutator, height).unwrap();
+        });
+        let mutator = StateMutator::new(store.as_ref());
+        let state = mutator.get_rewards_module_state(&asset_id).unwrap().unwrap();
+        assert_eq!(state.policy_cid, [0x33; 32]);
+        assert!(state.pending_policy.is_some());
+
+        session.apply(|mutator, height| {
+            activate_pending_rewards_policies(mutator, height).unwrap();
+        });
+        let mutator = StateMutator::new(store.as_ref());
+        let state = mutator.get_rewards_module_state(&asset_id).unwrap().unwrap();
+        assert_eq!(state.policy_cid, [0x44; 32]);
+        assert_eq!(state.policy_hash, policy_hash);
+        assert!(state.pending_policy.is_none());
+        assert_eq!(state.nonce, 1);
     }
 }

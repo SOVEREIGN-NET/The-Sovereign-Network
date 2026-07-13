@@ -57,7 +57,8 @@ use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::sovereign_asset::{
-    activate_pending_rewards_policies, apply_asset_authority_transfer, apply_asset_launch,
+    activate_pending_authority_transfers, activate_pending_rewards_policies,
+    apply_asset_authority_transfer, apply_asset_launch,
     apply_asset_manifest_update, apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate,
     apply_asset_rewards_policy_update, AssetLaunchOutcome,
 };
@@ -659,6 +660,12 @@ impl BlockExecutor {
         // Initialize block-level resource accumulator
         let mut accumulator = BlockAccumulator::new();
 
+        // Load-bearing ordering: authority transfers before rewards policies (frozen).
+        activate_pending_authority_transfers(&mutator, block_height).map_err(|e| {
+            BlockApplyError::ValidationFailed(format!(
+                "activate pending authority transfers failed: {e}"
+            ))
+        })?;
         activate_pending_rewards_policies(&mutator, block_height).map_err(|e| {
             BlockApplyError::ValidationFailed(format!(
                 "activate pending rewards policies failed: {e}"
