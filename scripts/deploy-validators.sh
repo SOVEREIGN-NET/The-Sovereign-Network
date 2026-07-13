@@ -51,7 +51,8 @@ NODES=(
 
 REMOTE_BIN=/opt/zhtp/zhtp
 CLI_BIN="./target/dev-release/zhtp-cli"
-HALT_WAIT_SECS=30
+HALT_WAIT_SECS=45
+HALT_SETTLE_SECS=35
 RESTART_WAIT_SECS=600
 BUILD_ID_POLL_SECS=120
 SERVICE=zhtp
@@ -191,8 +192,8 @@ else
     done
 
     if [[ $DRY_RUN -eq 0 ]]; then
-        log "waiting for halt broadcast to settle (10s)..."
-        sleep 10
+        log "waiting for halt broadcast to settle (${HALT_SETTLE_SECS}s — first HALTED log can take ~30s)..."
+        sleep "$HALT_SETTLE_SECS"
 
         log "verifying HALTED state in each node's journal (window: ${HALT_WAIT_SECS}s)..."
         ACTUALLY_HALTED=0
