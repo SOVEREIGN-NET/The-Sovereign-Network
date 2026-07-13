@@ -394,7 +394,7 @@ async fn handle_dao_command_impl(
         )
         .await?;
         output.print(
-            "Next: publish rewards policy (D1), fund delegate (C4), enable rewards (N3)",
+            "Next: publish rewards policy (D1), `asset rewards fund-delegate`, `node configure-rewards` (N3)",
         )?;
         return Ok(());
     }

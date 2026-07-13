@@ -127,6 +127,9 @@ pub enum ZhtpCommand {
     /// Token operations (create, mint, transfer)
     Token(TokenArgs),
 
+    /// Sovereign asset operations (rewards delegate, discovery helpers)
+    Asset(AssetArgs),
+
     /// Bonding curve operations (deploy, buy, sell, price)
     Curve(CurveArgs),
 
@@ -1856,6 +1859,62 @@ pub enum TokenAction {
     List,
 }
 
+/// Sovereign asset operation commands (DAO Launch C4 #2819)
+#[derive(Args, Debug, Clone)]
+pub struct AssetArgs {
+    #[command(subcommand)]
+    pub action: AssetAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AssetAction {
+    /// Rewards spend-delegate operations
+    Rewards(AssetRewardsArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct AssetRewardsArgs {
+    #[command(subcommand)]
+    pub action: AssetRewardsAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AssetRewardsAction {
+    /// Rotate rewards spend delegate to a new keystore (creator authority / pre-handoff)
+    RotateDelegate {
+        /// Sovereign asset id (64-char hex, launch tx hash)
+        #[arg(long)]
+        asset_id: String,
+        /// Keystore directory for the new spend delegate
+        #[arg(long)]
+        new_keystore: String,
+        /// Creator keystore directory (default: ~/.zhtp/keystore)
+        #[arg(long)]
+        keystore: Option<String>,
+        /// Chain id byte for signed tx (default: 3 / testnet dev)
+        #[arg(long, default_value = "3", env = "ZHTP_CHAIN_ID")]
+        chain_id: u8,
+    },
+    /// Fund the rewards delegate via TokenTransfer from creator (token_id = asset_id)
+    FundDelegate {
+        /// Sovereign asset id (64-char hex)
+        #[arg(long)]
+        asset_id: String,
+        /// Amount in token atoms (smallest unit)
+        #[arg(long)]
+        amount: u128,
+        /// Delegate keystore directory receiving the transfer
+        #[arg(long)]
+        delegate_keystore: String,
+        /// Creator keystore directory (default: ~/.zhtp/keystore)
+        #[arg(long)]
+        keystore: Option<String>,
+        /// Chain id byte for signed tx (default: 3 / testnet dev)
+        #[arg(long, default_value = "3", env = "ZHTP_CHAIN_ID")]
+        chain_id: u8,
+    },
+}
+
 /// Bonding curve operation commands
 #[derive(Args, Debug, Clone)]
 pub struct CurveArgs {
@@ -2101,6 +2160,9 @@ pub async fn run_cli() -> Result<()> {
             .await
             .map_err(anyhow::Error::msg),
         ZhtpCommand::Token(args) => commands::token::handle_token_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Asset(args) => commands::asset::handle_asset_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
         ZhtpCommand::Curve(args) => commands::curve::handle_curve_command(args.clone(), &cli)
