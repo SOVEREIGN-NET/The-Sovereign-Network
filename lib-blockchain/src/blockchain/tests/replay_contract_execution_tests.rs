@@ -167,6 +167,39 @@ fn contract_blocks_populated_during_replay() {
     );
 }
 
+fn asset_launch_tx(signer: &PublicKey, symbol: &str, treasury_seed: u8) -> Transaction {
+    use crate::contracts::sovereign_asset::SupplyMode;
+    use crate::transaction::asset_tx::AssetLaunchPayloadV1;
+
+    let payload = AssetLaunchPayloadV1 {
+        name: format!("{symbol} DAO"),
+        symbol: symbol.to_string(),
+        decimals: 8,
+        initial_supply: 1_000,
+        treasury_key_id: [treasury_seed; 32],
+        treasury_bps: 2_000,
+        supply_mode: SupplyMode::Fixed,
+        manifest_cid: [0x11; 32],
+        manifest_hash: [0x22; 32],
+        curve: None,
+        rewards: None,
+        governance: None,
+        transfer_authority: false,
+    };
+
+    Transaction {
+        version: 2,
+        chain_id: 0x03,
+        transaction_type: TransactionType::AssetLaunch,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: test_signature(signer),
+        memo: payload.encode_memo().expect("asset launch payload should encode"),
+        payload: crate::transaction::TransactionPayload::None,
+    }
+}
+
 fn dao_registry_tx(execution_type: &str, token_seed: u8, treasury_seed: u8) -> Transaction {
     let token_key_id = [token_seed; 32];
     let treasury_key_id = [treasury_seed; 32];
@@ -317,4 +350,50 @@ fn dao_registry_index_incremental_matches_rebuild() {
     let entries = rebuilt.list_dao_registry_entries();
     assert_eq!(entries.len(), 2);
     assert!(entries[0].created_at <= entries[1].created_at);
+}
+
+#[test]
+fn asset_launch_registry_entry_uses_launch_tx_hash_as_dao_id() {
+    let creator = test_pubkey(0x81);
+    let tx = asset_launch_tx(&creator, "P1ASSET", 0x82);
+    let asset_id = crate::transaction::hashing::hash_transaction(&tx).as_array();
+
+    let entry = Blockchain::dao_registry_entry_from_tx(&tx, 15)
+        .expect("AssetLaunch should produce registry entry");
+    assert_eq!(entry.dao_id, asset_id);
+    assert_eq!(entry.token_key_id, asset_id);
+    assert_eq!(entry.metadata_hash, [0x22; 32]);
+    assert_eq!(entry.treasury_key_id, [0x82; 32]);
+    assert_eq!(entry.owner_key_id, creator.key_id);
+    assert_eq!(entry.class, "fp");
+}
+
+#[test]
+fn asset_launch_registry_index_incremental_matches_rebuild() {
+    let tx = asset_launch_tx(&test_pubkey(0x91), "P1REPLAY", 0x92);
+    let block = Block {
+        header: BlockHeader {
+            version: 1,
+            previous_hash: Hash::default().into(),
+            data_helix_root: Hash::default().into(),
+            timestamp: 1_700_000_030,
+            height: 20,
+            verification_helix_root: [0u8; 32],
+            state_root: Hash::default().into(),
+            bft_quorum_root: [0u8; 32],
+            block_hash: Hash::default(),
+        },
+        transactions: vec![tx],
+    };
+
+    let mut incremental = Blockchain::default();
+    incremental.index_dao_registry_entry_from_tx(&block.transactions[0], block.header.height);
+
+    let mut rebuilt = Blockchain::default();
+    rebuilt.height = block.header.height;
+    rebuilt.blocks.push(block);
+    rebuilt.rebuild_dao_registry_index();
+
+    assert_eq!(incremental.dao_registry_index, rebuilt.dao_registry_index);
+    assert_eq!(rebuilt.list_dao_registry_entries().len(), 1);
 }
