@@ -2759,14 +2759,47 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
         let registry = Self::get_dao_registry(&blockchain)?;
-        let entries = registry
+        let contract_entries = registry
             .list_daos_with_ids()
             .map_err(|e| anyhow::anyhow!("Failed to list DAO registry entries: {}", e))?;
 
-        let daos: Vec<_> = entries
-            .into_iter()
-            .map(|(entry, dao_id)| dao_entry_json(entry, dao_id))
-            .collect();
+        let mut merged: std::collections::HashMap<[u8; 32], serde_json::Value> =
+            std::collections::HashMap::new();
+
+        for (entry, dao_id) in contract_entries {
+            let token_key_id = entry.token_addr.key_id;
+            let mut row = dao_entry_json(entry, dao_id);
+            if let Some(asset) = resolve_sovereign_asset_for_registry(
+                &blockchain,
+                dao_id,
+                None,
+                Some(&token_key_id),
+            ) {
+                row["asset"] = asset_summary_json(&blockchain, &asset)?;
+            }
+            merged.insert(dao_id, row);
+        }
+
+        for index_entry in blockchain.list_dao_registry_entries() {
+            let dao_id = index_entry.dao_id;
+            let mut row = index_entry_json(index_entry);
+            if let Some(asset) = resolve_sovereign_asset_for_registry(
+                &blockchain,
+                dao_id,
+                Some(index_entry),
+                None,
+            ) {
+                row["asset"] = asset_summary_json(&blockchain, &asset)?;
+            }
+            merged.entry(dao_id).or_insert(row);
+        }
+
+        let mut daos: Vec<_> = merged.into_values().collect();
+        daos.sort_by(|a, b| {
+            let ha = a.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            let hb = b.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            ha.cmp(&hb)
+        });
 
         create_json_response(json!({
             "status": "success",
@@ -2780,15 +2813,56 @@ impl DaoHandler {
         let dao_id = Self::parse_hex_32(dao_id_hex, "dao_id")?;
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
-        let registry = Self::get_dao_registry(&blockchain)?;
-        let entry = registry
-            .get_dao_by_id(dao_id)
-            .map_err(|_| anyhow::anyhow!("DAO not found"))?;
 
-        create_json_response(json!({
+        let index_entry = blockchain.get_dao_registry_entry(&dao_id).cloned();
+        let contract_entry = Self::get_dao_registry(&blockchain)?
+            .get_dao_by_id(dao_id)
+            .ok();
+
+        if index_entry.is_none() && contract_entry.is_none() {
+            return Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                "DAO not found".to_string(),
+            ));
+        }
+
+        let asset = resolve_sovereign_asset_for_registry(
+            &blockchain,
+            dao_id,
+            index_entry.as_ref(),
+            contract_entry.as_ref().map(|e| &e.token_addr.key_id),
+        );
+
+        if let Some(ref idx) = index_entry {
+            if idx.token_key_id == dao_id && asset.is_none() {
+                return Ok(create_error_response(
+                    ZhtpStatus::NotFound,
+                    "Registry entry exists but linked sovereign asset is missing".to_string(),
+                ));
+            }
+        }
+
+        let mut response = json!({
             "status": "success",
-            "dao": dao_entry_json(entry, dao_id)
-        }))
+            "dao_id": hex::encode(dao_id),
+        });
+
+        if let Some(entry) = contract_entry {
+            response["dao"] = dao_entry_json(entry, dao_id);
+        } else if let Some(ref idx) = index_entry {
+            response["dao"] = index_entry_json(idx);
+        }
+
+        if let Some(ref idx) = index_entry {
+            response["index"] = index_entry_json(idx);
+        }
+
+        if let Some(asset) = asset {
+            response["share_link"] = json!(format!("zhtp://asset/{}", hex::encode(asset.asset_id)));
+            response["asset"] = asset_detail_json(&blockchain, &asset)?;
+        }
+
+        create_json_response(response)
     }
 }
 
@@ -2802,6 +2876,102 @@ fn dao_entry_json(entry: DAOEntry, dao_id: [u8; 32]) -> serde_json::Value {
         "metadata_hash": hex::encode(entry.metadata_hash),
         "created_at": entry.created_at,
     })
+}
+
+fn index_entry_json(entry: &lib_blockchain::blockchain::DaoRegistryIndexEntry) -> serde_json::Value {
+    json!({
+        "dao_id": hex::encode(entry.dao_id),
+        "token_key_id": hex::encode(entry.token_key_id),
+        "class": entry.class,
+        "treasury_key_id": hex::encode(entry.treasury_key_id),
+        "owner_key_id": hex::encode(entry.owner_key_id),
+        "metadata_hash": hex::encode(entry.metadata_hash),
+        "created_at": entry.created_at,
+        "source": "chain_index",
+    })
+}
+
+fn resolve_sovereign_asset_for_registry(
+    blockchain: &lib_blockchain::Blockchain,
+    dao_id: [u8; 32],
+    index_entry: Option<&lib_blockchain::blockchain::DaoRegistryIndexEntry>,
+    contract_token_key_id: Option<&[u8; 32]>,
+) -> Option<lib_blockchain::contracts::sovereign_asset::SovereignAsset> {
+    if let Some(asset) = blockchain.get_sovereign_asset(&dao_id) {
+        return Some(asset);
+    }
+    if let Some(idx) = index_entry {
+        if idx.token_key_id != dao_id {
+            if let Some(asset) = blockchain.get_sovereign_asset(&idx.token_key_id) {
+                return Some(asset);
+            }
+        }
+    }
+    if let Some(token_key_id) = contract_token_key_id {
+        return blockchain.get_sovereign_asset(token_key_id);
+    }
+    None
+}
+
+fn asset_summary_json(
+    blockchain: &lib_blockchain::Blockchain,
+    asset: &lib_blockchain::contracts::sovereign_asset::SovereignAsset,
+) -> Result<serde_json::Value> {
+    let balances = asset_balance_summary(blockchain, asset)?;
+    Ok(json!({
+        "asset_id": hex::encode(asset.asset_id),
+        "name": asset.name,
+        "symbol": asset.symbol,
+        "module_bitmask": asset.module_bitmask(),
+        "manifest_cid": asset.manifest_cid.map(hex::encode),
+        "manifest_hash": asset.manifest_hash.map(hex::encode),
+        "balances": balances,
+    }))
+}
+
+fn asset_detail_json(
+    blockchain: &lib_blockchain::Blockchain,
+    asset: &lib_blockchain::contracts::sovereign_asset::SovereignAsset,
+) -> Result<serde_json::Value> {
+    let balances = asset_balance_summary(blockchain, asset)?;
+    Ok(json!({
+        "asset_id": hex::encode(asset.asset_id),
+        "name": asset.name,
+        "symbol": asset.symbol,
+        "decimals": asset.decimals,
+        "total_supply": asset.total_supply.to_string(),
+        "supply_mode": match asset.supply_mode {
+            lib_blockchain::contracts::sovereign_asset::SupplyMode::Fixed => "fixed",
+            lib_blockchain::contracts::sovereign_asset::SupplyMode::Elastic => "elastic",
+        },
+        "module_bitmask": asset.module_bitmask(),
+        "manifest_cid": asset.manifest_cid.map(hex::encode),
+        "manifest_hash": asset.manifest_hash.map(hex::encode),
+        "launched_at_height": asset.launched_at_height,
+        "balances": balances,
+    }))
+}
+
+fn asset_balance_summary(
+    blockchain: &lib_blockchain::Blockchain,
+    asset: &lib_blockchain::contracts::sovereign_asset::SovereignAsset,
+) -> Result<serde_json::Value> {
+    let creator = blockchain
+        .token_balance(&asset.asset_id, &asset.creator_key_id)
+        .map_err(|e| anyhow::anyhow!("creator balance lookup failed: {}", e))?;
+    let treasury = asset
+        .treasury_key_id
+        .map(|tid| {
+            blockchain
+                .token_balance(&asset.asset_id, &tid)
+                .map_err(|e| anyhow::anyhow!("treasury balance lookup failed: {}", e))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    Ok(json!({
+        "creator": creator.to_string(),
+        "treasury": treasury.to_string(),
+    }))
 }
 
 // =============================================================================
@@ -4029,5 +4199,25 @@ mod tests {
     #[test]
     fn approval_domain_helper_rejects_unsupported_tx_type() {
         assert!(approval_domain_for_tx_type(0).is_err());
+    }
+
+    #[test]
+    fn index_entry_json_marks_chain_index_source() {
+        use super::index_entry_json;
+        use lib_blockchain::blockchain::DaoRegistryIndexEntry;
+
+        let entry = DaoRegistryIndexEntry {
+            dao_id: [0xAA; 32],
+            token_key_id: [0xAA; 32],
+            class: "fp".to_string(),
+            metadata_hash: [0xBB; 32],
+            treasury_key_id: [0xCC; 32],
+            owner_key_id: [0xDD; 32],
+            created_at: 42,
+        };
+        let json = index_entry_json(&entry);
+        assert_eq!(json["source"], "chain_index");
+        assert_eq!(json["dao_id"], hex::encode([0xAA; 32]));
+        assert_eq!(json["class"], "fp");
     }
 }
