@@ -234,6 +234,24 @@ pub fn apply_asset_module_upgrade(
                 block_height,
             )?;
         }
+        AssetUpgradeModule::TreasuryBind { treasury_key_id } => {
+            if asset.treasury_key_id.is_some() {
+                return Err(TxApplyError::InvalidType(
+                    "treasury_key_id already set".into(),
+                ));
+            }
+            if *treasury_key_id == [0u8; 32] {
+                return Err(TxApplyError::InvalidType(
+                    "treasury_key_id must be non-zero".into(),
+                ));
+            }
+            if *treasury_key_id == asset.creator_key_id {
+                return Err(TxApplyError::InvalidType(
+                    "treasury_key_id must differ from creator".into(),
+                ));
+            }
+            asset.treasury_key_id = Some(*treasury_key_id);
+        }
     }
 
     mutator.put_sovereign_asset(&asset)?;
@@ -1061,6 +1079,41 @@ mod activate_pending_tests {
         assert!(mutator.get_sovereign_asset(&asset_id).unwrap().is_none());
         let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
         assert!(gov.pending_transfer.is_some(), "unchanged when asset missing");
+    }
+
+    #[test]
+    fn treasury_bind_sets_key_id_once() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let creator = key(0x01);
+        let treasury = key(0x02);
+        let asset_id = key(0x03);
+        let payload = AssetModuleUpgradePayloadV1 {
+            asset_id,
+            module: AssetUpgradeModule::TreasuryBind {
+                treasury_key_id: treasury,
+            },
+            transfer_authority: false,
+        };
+
+        session.apply(|mutator, _| {
+            let mut asset = sample_creator_asset(asset_id, creator);
+            asset.treasury_key_id = None;
+            mutator.put_sovereign_asset(&asset).unwrap();
+        });
+        session.apply(|mutator, height| {
+            apply_asset_module_upgrade(mutator, creator, &payload, height).expect("treasury bind");
+        });
+
+        let mutator = StateMutator::new(store.as_ref());
+        let updated = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert_eq!(updated.treasury_key_id, Some(treasury));
+
+        session.apply(|mutator, height| {
+            let err = apply_asset_module_upgrade(mutator, creator, &payload, height)
+                .expect_err("second bind rejected");
+            assert!(err.to_string().contains("already set"));
+        });
     }
 
     #[test]

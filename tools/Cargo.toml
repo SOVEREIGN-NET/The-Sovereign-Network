@@ -70,3 +70,11 @@ path = "seed_bubl_rewards_upgrade.rs"
 [[bin]]
 name = "replay_divergence"
 path = "replay_divergence.rs"
+
+[[bin]]
+name = "audit_sovereign_assets"
+path = "audit_sovereign_assets.rs"
+
+[[bin]]
+name = "seed_bubl_pre80k"
+path = "seed_bubl_pre80k.rs"

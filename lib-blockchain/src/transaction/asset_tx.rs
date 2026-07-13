@@ -365,6 +365,8 @@ pub enum AssetUpgradeModule {
     Curve(CurveLaunchConfig),
     Rewards(RewardsLaunchConfig),
     Governance(GovernanceLaunchConfig),
+    /// One-time bind for legacy assets launched without `treasury_key_id` (#2864).
+    TreasuryBind { treasury_key_id: [u8; 32] },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -682,6 +684,20 @@ mod tests {
         let memo = payload.encode_memo().expect("encode");
         assert!(memo.starts_with(ASSET_LAUNCH_MEMO_PREFIX_V2));
         let decoded = AssetLaunchPayloadV1::decode_memo(&memo).expect("decode");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn treasury_bind_upgrade_memo_round_trip() {
+        let payload = AssetModuleUpgradePayloadV1 {
+            asset_id: [0xAB; 32],
+            module: AssetUpgradeModule::TreasuryBind {
+                treasury_key_id: [0xCC; 32],
+            },
+            transfer_authority: false,
+        };
+        let memo = payload.encode_memo().expect("encode");
+        let decoded = AssetModuleUpgradePayloadV1::decode_memo(&memo).expect("decode");
         assert_eq!(decoded, payload);
     }
 }
