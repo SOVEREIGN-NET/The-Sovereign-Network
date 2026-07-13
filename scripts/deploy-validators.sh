@@ -12,24 +12,30 @@
 #   scripts/deploy-validators.sh --dry-run <binary-path>     # show plan, don't act
 #   scripts/deploy-validators.sh --skip-halt <binary-path>   # already halted, e.g. chain stuck
 #
-# What it does, in order:
-#   1. md5sum the local binary; capture consensus build_id from zhtp-cli.
-#   1b. Pre-flight: verify all running validators report the same build_id
-#       (aborts on mixed cluster — coordinated upgrade required).
-#   2. halt-consensus on all validators (council role required).
-#   3. Verify "HALTED" appears in each validator's log.
-#   4. Rsync binary to each (parallel).
-#   5. md5-verify on each. Abort if mismatch.
-#   5b. Verify embedded consensus build_id in each remote binary (strings).
-#   6. Restart all (parallel).
-#   7. Poll for "Caught up at height" on each (timeout per node).
-#   8. Post-flight: verify each node reports matching build_id via API.
-#   9. Print state table: node | height | md5 | build_id
-#  10. Exit non-zero on any failure.
+# Coordinated upgrade requirements (read before running):
 #
-# Operator never types systemctl, rsync, or md5sum manually. Mistakes
-# (forgetting to halt, missing a node, deploying wrong binary) become
-# impossible.
+# - Consensus binary-epoch enforcement requires ALL validators on the same
+#   epoch before any produces blocks. A partial rollout (g1 upgraded, g2/g3
+#   not) stalls consensus — not a network partition, but indistinguishable
+#   from one in logs until you check build epoch via API.
+# - With 3 validators, 2 must be halted before deploy to block quorum (script
+#   enforces TOTAL-1 halted). Finish rollout on all nodes before un-halting.
+# - Build zhtp AND zhtp-cli from the same commit:
+#     cargo build --profile dev-release -p zhtp -p zhtp-cli
+#
+# What it does, in order:
+#   1. md5sum local binary; read consensus epoch from zhtp-cli (no strings).
+#   1b. Pre-flight: abort if running validators report mixed epochs.
+#   2. halt-consensus on all validators (council role required).
+#   3. Verify "HALTED" in each validator's journal.
+#   4. Rsync binary to each (parallel).
+#   5. md5-verify on each.
+#   6. Restart all (parallel).
+#   7. Poll for active consensus on each.
+#   8. Post-flight: API epoch must match on every node.
+#   9. Print state table: node | height | md5 | epoch
+#
+# Operator never types systemctl, rsync, or md5sum manually.
 
 set -euo pipefail
 
@@ -88,37 +94,29 @@ run_on() {
     ssh "$alias" "${sudo} ${cmd}"
 }
 
-# Consensus build id embedded at compile time (git short hash).
-# Requires zhtp-cli built from the same tree as the deploy binary.
-local_build_id() {
-    if [[ -x "$CLI_BIN" ]]; then
-        "$CLI_BIN" version --build-id-only 2>/dev/null && return 0
-    fi
-    # Fallback: scrape from the binary being deployed.
-    strings "$BINARY" 2>/dev/null | rg -o '^[0-9a-f]{12}(-dirty)?$' | head -1
+# Consensus epoch (human-bumped CONSENSUS_BUILD_ID). Requires zhtp-cli built
+# from the same tree — no strings fallback (hex literals in binaries collide).
+local_build_epoch() {
+    [[ -x "$CLI_BIN" ]] || return 1
+    "$CLI_BIN" version --build-id-only 2>/dev/null
 }
 
-remote_build_id_api() {
-    # remote_build_id_api <ip>
+remote_build_epoch_api() {
     local ip=$1
     [[ -x "$CLI_BIN" ]] || return 1
     "$CLI_BIN" -s "$ip:9334" version --remote --build-id-only 2>/dev/null
 }
 
-remote_build_id_binary() {
-    # remote_build_id_binary <alias> <sudo>
-    local alias=$1 sudo=$2
-    ssh "$alias" "${sudo} strings $REMOTE_BIN 2>/dev/null" \
-        | rg -o '^[0-9a-f]{12}(-dirty)?$' | head -1
-}
+# ---- step 1: local md5 + epoch ---------------------------------------------
 
-# ---- step 1: local md5 + build id ------------------------------------------
+[[ -x "$CLI_BIN" ]] || fail "zhtp-cli not found at $CLI_BIN — build: cargo build --profile dev-release -p zhtp-cli"
 
 LOCAL_MD5=$(md5sum "$BINARY" | awk '{print $1}')
-LOCAL_BUILD_ID=$(local_build_id)
-[[ -z "$LOCAL_BUILD_ID" ]] && fail "could not determine local consensus build_id — build zhtp-cli first: cargo build --profile dev-release -p zhtp-cli"
+LOCAL_BUILD_ID=$(local_build_epoch || true)
+[[ -z "$LOCAL_BUILD_ID" ]] && fail "could not read consensus epoch from zhtp-cli"
+[[ "$LOCAL_BUILD_ID" == "unknown" ]] && fail "consensus epoch is 'unknown' — rebuild from a git checkout"
 log "local binary md5: $LOCAL_MD5  ($BINARY)"
-log "local consensus build_id: $LOCAL_BUILD_ID"
+log "local consensus epoch: $LOCAL_BUILD_ID"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     log "DRY RUN — printing planned actions, no changes."
@@ -135,7 +133,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
     PREFLIGHT_REACHABLE=0
     for entry in "${NODES[@]}"; do
         IFS='|' read -r alias ip sudo <<< "$entry"
-        REMOTE_ID=$(remote_build_id_api "$ip" || true)
+        REMOTE_ID=$(remote_build_epoch_api "$ip" || true)
         if [[ -n "$REMOTE_ID" ]]; then
             PREFLIGHT_REACHABLE=$((PREFLIGHT_REACHABLE+1))
             PREFLIGHT_IDS+=("$alias:$REMOTE_ID")
@@ -273,16 +271,6 @@ if [[ $DRY_RUN -eq 0 ]]; then
         fi
     done
 
-    log "verifying remote binary embeds build_id == $LOCAL_BUILD_ID..."
-    for entry in "${NODES[@]}"; do
-        IFS='|' read -r alias _ip sudo <<< "$entry"
-        REMOTE_ID=$(remote_build_id_binary "$alias" "$sudo")
-        if [[ "$REMOTE_ID" == "$LOCAL_BUILD_ID" ]]; then
-            ok "build_id match (binary): $alias"
-        else
-            fail "build_id MISMATCH on $alias: embedded $REMOTE_ID, expected $LOCAL_BUILD_ID"
-        fi
-    done
 fi
 
 # ---- step 6: restart all (parallel) ----------------------------------------
@@ -338,8 +326,8 @@ fi
 if [[ $DRY_RUN -eq 0 ]]; then
     echo
     log "final cluster state:"
-    printf '%-12s  %-10s  %-32s  %-16s\n' NODE HEIGHT MD5 BUILD_ID
-    printf '%-12s  %-10s  %-32s  %-16s\n' '----' '------' '---' '---------'
+    printf '%-12s  %-10s  %-32s  %-8s\n' NODE HEIGHT MD5 EPOCH
+    printf '%-12s  %-10s  %-32s  %-8s\n' '----' '------' '---' '-----'
     for entry in "${NODES[@]}"; do
         IFS='|' read -r alias ip sudo <<< "$entry"
         height=$(ssh "$alias" "${sudo} journalctl -u $SERVICE -n 30 --no-pager 2>/dev/null | grep -oE 'height=[0-9]+' | tail -1 | cut -d= -f2" 2>/dev/null || echo "?")
@@ -349,4 +337,4 @@ if [[ $DRY_RUN -eq 0 ]]; then
     done
 fi
 
-ok "deploy complete (build_id=$LOCAL_BUILD_ID)"
+ok "deploy complete (consensus epoch=$LOCAL_BUILD_ID)"

@@ -2822,14 +2822,14 @@ async fn test_proposal_admission_wrong_build_id_rejected() {
         b"block".to_vec(),
     );
 
-    proposal.build_id = "deadbeef0000".to_string();
+    proposal.build_id = "99".to_string();
 
     let result = engine.validate_incoming_proposal(&proposal).await;
-    assert!(result.is_err(), "mismatched build_id must be rejected");
+    assert!(result.is_err(), "mismatched epoch must be rejected");
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("build_id mismatch"),
-        "error should mention build_id, got: {}",
+        err.contains("binary epoch mismatch"),
+        "error should mention epoch mismatch, got: {}",
         err
     );
 }

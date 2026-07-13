@@ -409,6 +409,7 @@ impl ValidatorProtocol {
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(),
             build_id: lib_consensus_core::build_id::local_build_id().to_string(),
+            build_revision: lib_consensus_core::build_id::local_build_revision().to_string(),
         };
 
         message.signature = self.sign_heartbeat_message(&message)?;
@@ -1024,6 +1025,7 @@ mod tests {
             timestamp: now,
             signature: PostQuantumSignature::default(),
             build_id: String::new(),
+            build_revision: String::new(),
         };
         msg.signature = sign_heartbeat_envelope(&msg, &kp)?;
 
@@ -1203,6 +1205,7 @@ mod tests {
             timestamp: protocol.current_timestamp(),
             signature: PostQuantumSignature::default(),
             build_id: String::new(),
+            build_revision: String::new(),
         };
 
         protocol

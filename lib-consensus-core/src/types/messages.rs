@@ -99,9 +99,12 @@ pub struct HeartbeatMessage {
     pub network_summary: NetworkSummary,
     pub timestamp: u64,
     pub signature: PostQuantumSignature,
-    /// Build identity of the sender's binary (advisory telemetry).
+    /// Binary epoch (gated at admission on proposals/votes; advisory here).
     #[serde(default)]
     pub build_id: String,
+    /// Git revision compiled into this binary (advisory telemetry only).
+    #[serde(default)]
+    pub build_revision: String,
 }
 
 /// Snapshot of a voter's local view of the round, included on every

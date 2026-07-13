@@ -85,6 +85,8 @@
 //! let decoded = codec.decode_framed(&framed)?;
 //! ```
 
+mod legacy;
+
 use crate::validator_protocol::ValidatorMessage;
 use thiserror::Error;
 
@@ -97,12 +99,14 @@ use thiserror::Error;
 /// - ProposeMessage with 500 votes × (64B hash + 3KB sig) ≈ 1.5 MB
 pub const MAX_CONSENSUS_MESSAGE_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 
-/// Codec version (v1: bincode serialization, 4-byte BE length prefix)
-///
-/// Version evolution path:
-/// - v1: bincode serialization, 4-byte BE length prefix
-/// - v2+: Future extensions (compression, alternate serialization, new message types)
-pub const CONSENSUS_CODEC_VERSION: u8 = 1;
+/// Current codec version written on encode (binary epoch + revision fields).
+pub const CONSENSUS_CODEC_VERSION: u8 = 2;
+
+/// Legacy codec version (pre-binary-epoch wire). Still accepted on decode.
+pub const CONSENSUS_CODEC_VERSION_LEGACY: u8 = 1;
+
+/// Supported codec versions on decode (v1 upgraded in-place).
+pub const SUPPORTED_CODEC_VERSIONS: &[u8] = &[CONSENSUS_CODEC_VERSION_LEGACY, CONSENSUS_CODEC_VERSION];
 
 // Internal constants
 const LENGTH_PREFIX_SIZE: usize = 4;
@@ -266,6 +270,19 @@ impl BincodeConsensusCodec {
     pub fn new() -> Self {
         Self
     }
+
+    /// Decode a payload for a specific wire codec version.
+    pub fn decode_versioned(
+        &self,
+        version: u8,
+        bytes: &[u8],
+    ) -> Result<ValidatorMessage, CodecError> {
+        match version {
+            CONSENSUS_CODEC_VERSION_LEGACY => legacy::decode_v1(bytes),
+            CONSENSUS_CODEC_VERSION => self.decode(bytes),
+            other => Err(CodecError::UnsupportedVersion(other, CONSENSUS_CODEC_VERSION)),
+        }
+    }
 }
 
 impl ConsensusMessageCodec for BincodeConsensusCodec {
@@ -346,8 +363,8 @@ impl ConsensusMessageCodec for BincodeConsensusCodec {
         // Read version byte
         let version = framed[4];
 
-        // CM-9: Version validation (strict checking, no fallback)
-        if version != CONSENSUS_CODEC_VERSION {
+        // CM-9: Version validation — accept legacy v1 and current v2.
+        if !SUPPORTED_CODEC_VERSIONS.contains(&version) {
             return Err(CodecError::UnsupportedVersion(
                 version,
                 CONSENSUS_CODEC_VERSION,
@@ -367,6 +384,11 @@ impl ConsensusMessageCodec for BincodeConsensusCodec {
         let payload = framed[FRAME_HEADER_SIZE..expected_total].to_vec();
 
         Ok((version, payload))
+    }
+
+    fn decode_framed(&self, framed: &[u8]) -> Result<ValidatorMessage, CodecError> {
+        let (version, payload) = self.unframe(framed)?;
+        self.decode_versioned(version, &payload)
     }
 }
 
@@ -420,6 +442,7 @@ mod tests {
                     timestamp: 1234567890,
                     signature: PostQuantumSignature::default(),
                     build_id: String::new(),
+                    build_revision: String::new(),
                 })
             }
             _ => panic!("Invalid variant"),
@@ -796,6 +819,40 @@ mod tests {
     // ===== FULL INTEGRATION TESTS =====
 
     #[test]
+    fn test_codec_v1_frame_decodes_with_legacy_epoch() {
+        use super::legacy::{decode_v1, ValidatorMessageV1, VoteMessageV1};
+        use lib_consensus_core::build_id::LEGACY_BUILD_ID;
+
+        let v1 = ValidatorMessageV1::Vote(VoteMessageV1 {
+            message_id: Hash::default(),
+            voter: IdentityId::default(),
+            vote: create_test_vote(),
+            consensus_state: create_test_consensus_state(),
+            timestamp: 0,
+            signature: PostQuantumSignature::default(),
+        });
+        let payload = bincode::serialize(&v1).expect("v1 payload");
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        framed.push(CONSENSUS_CODEC_VERSION_LEGACY);
+        framed.extend_from_slice(&payload);
+
+        let codec = BincodeConsensusCodec::new();
+        let decoded = codec.decode_framed(&framed).expect("v1 framed decode");
+        match decoded {
+            ValidatorMessage::Vote(m) => assert_eq!(m.build_id, LEGACY_BUILD_ID),
+            other => panic!("expected vote, got {other:?}"),
+        }
+
+        // Direct legacy decode matches framed path.
+        let direct = decode_v1(&payload).expect("direct v1");
+        match direct {
+            ValidatorMessage::Vote(m) => assert_eq!(m.build_id, LEGACY_BUILD_ID),
+            other => panic!("expected vote, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_full_codec_roundtrip_all_variants() {
         let codec = BincodeConsensusCodec::new();
 
@@ -916,6 +973,7 @@ mod tests {
                     timestamp: 0,
                     signature: zero_sig,
                     build_id: String::new(),
+                    build_revision: String::new(),
                 }),
                 _ => panic!("invalid variant"),
             }
@@ -962,7 +1020,7 @@ mod tests {
             let encoded = codec.encode(&zero_message(2)).expect("encode");
             assert_eq!(
                 encoded.len(),
-                4_348,
+                4_356,
                 "HeartbeatMessage encoded length changed — wire format \
                  drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
             );

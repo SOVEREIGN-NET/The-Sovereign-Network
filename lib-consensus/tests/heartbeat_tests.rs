@@ -36,6 +36,7 @@ fn create_test_heartbeat(
         timestamp,
         signature: create_test_signature(timestamp),
         build_id: String::new(),
+        build_revision: String::new(),
     }
 }
 

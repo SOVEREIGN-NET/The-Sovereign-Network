@@ -3,14 +3,14 @@ use std::process::Command;
 fn main() {
     let hash = git_head_hash();
     let dirty = git_is_dirty();
-    let build_id = if dirty {
+    let revision = if dirty {
         format!("{hash}-dirty")
     } else {
         hash
     };
-    println!("cargo:rustc-env=CONSENSUS_BUILD_ID={build_id}");
-    println!("cargo:rerun-if-changed=../.git/HEAD");
-    println!("cargo:rerun-if-changed=../.git/index");
+    println!("cargo:rustc-env=BUILD_REVISION={revision}");
+    // Re-run on every build so dirty-tree detection stays accurate.
+    println!("cargo:rerun-if-changed=build.rs");
 }
 
 fn git_head_hash() -> String {
@@ -20,15 +20,19 @@ fn git_head_hash() -> String {
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|hash| !hash.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+        .filter(|hash| !hash.is_empty() && *hash != "unknown")
+        .unwrap_or_else(|| {
+            panic!(
+                "CONSENSUS build requires a git checkout — cannot embed BUILD_REVISION"
+            );
+        })
 }
 
 fn git_is_dirty() -> bool {
+    // diff-index compares the working tree AND index against HEAD.
     Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-        .ok()
-        .map(|output| !String::from_utf8_lossy(&output.stdout).is_empty())
-        .unwrap_or(false)
+        .args(["diff-index", "--quiet", "HEAD", "--"])
+        .status()
+        .map(|status| !status.success())
+        .unwrap_or(true)
 }

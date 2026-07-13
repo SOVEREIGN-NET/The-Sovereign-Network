@@ -591,8 +591,9 @@ impl ConsensusEngine {
                     lib_consensus_core::build_id::validate_peer_build_id(&vote_msg.build_id)
                 {
                     tracing::warn!(
-                        "Vote rejected: {reason} — peer build_id {:?}, we require {:?} \
+                        "Vote rejected: {} — peer epoch {:?}, we require {:?} \
                          (voter {} H={} R={} {:?})",
+                        reason.as_str(),
                         vote_msg.build_id,
                         lib_consensus_core::build_id::CONSENSUS_BUILD_ID,
                         vote_msg.voter,

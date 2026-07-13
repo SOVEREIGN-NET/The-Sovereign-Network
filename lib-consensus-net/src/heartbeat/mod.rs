@@ -447,6 +447,7 @@ impl HeartbeatTracker {
                 timestamp,
             },
             build_id: lib_consensus_core::build_id::local_build_id().to_string(),
+            build_revision: lib_consensus_core::build_id::local_build_revision().to_string(),
         }
     }
 
@@ -731,6 +732,7 @@ mod tests {
             timestamp: now,
             signature: create_test_signature(now),
             build_id: String::new(),
+            build_revision: String::new(),
         };
 
         let is_validator = |vid: &IdentityId| vid == &validator_id;
@@ -758,6 +760,7 @@ mod tests {
             timestamp: now,
             signature: create_test_signature(now),
             build_id: String::new(),
+            build_revision: String::new(),
         };
 
         let is_validator = |_: &IdentityId| false; // Always reject
@@ -785,6 +788,7 @@ mod tests {
             timestamp: now,
             signature: create_test_signature(now),
             build_id: String::new(),
+            build_revision: String::new(),
         };
 
         let is_validator = |vid: &IdentityId| vid == &validator_id;
@@ -815,6 +819,7 @@ mod tests {
             timestamp: now,
             signature: create_test_signature(now),
             build_id: String::new(),
+            build_revision: String::new(),
         };
 
         let is_validator = |vid: &IdentityId| vid == &validator_id;
@@ -844,6 +849,7 @@ mod tests {
             timestamp: now,
             signature: create_test_signature(now),
             build_id: String::new(),
+            build_revision: String::new(),
         };
 
         let is_validator = |_: &IdentityId| false; // Always reject

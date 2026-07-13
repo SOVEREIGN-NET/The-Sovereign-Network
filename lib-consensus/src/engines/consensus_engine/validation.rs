@@ -514,8 +514,9 @@ impl ConsensusEngine {
             lib_consensus_core::build_id::validate_peer_build_id(&proposal.build_id)
         {
             return Err(ConsensusError::ByzantineFault(format!(
-                "Proposal rejected: {reason} — peer build_id {:?}, \
-                 we require {:?} (proposer {} at H={} R={})",
+                "Proposal rejected: {} — peer epoch {:?}, we require {:?} \
+                 (proposer {} at H={} R={})",
+                reason.as_str(),
                 proposal.build_id,
                 lib_consensus_core::build_id::CONSENSUS_BUILD_ID,
                 proposal.proposer,

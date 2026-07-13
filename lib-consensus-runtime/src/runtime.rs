@@ -897,6 +897,7 @@ mod tests {
             timestamp: 0,
             signature: lib_crypto::PostQuantumSignature::default(),
             build_id: String::new(),
+            build_revision: String::new(),
         }
     }
 
