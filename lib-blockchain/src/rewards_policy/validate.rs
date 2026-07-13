@@ -292,6 +292,68 @@ pub fn legacy_bubl_policy() -> RewardsPolicyV1 {
     }
 }
 
+/// Maximum payout for a trigger at peak streak (daily check-in) or fixed amount.
+fn max_trigger_payout(trigger: &RewardsTrigger) -> u128 {
+    if !trigger.enabled {
+        return 0;
+    }
+    match trigger.kind {
+        TriggerKind::OncePerDid | TriggerKind::DistinctPeerPerIsoWeek => {
+            trigger.amount_atoms.unwrap_or(0)
+        }
+        TriggerKind::OncePerUtcDay => {
+            if let Some(fixed) = trigger.amount_atoms {
+                fixed
+            } else {
+                let base = trigger.base_amount_atoms.unwrap_or(0);
+                let bonus = trigger
+                    .streak_bonus
+                    .as_ref()
+                    .map(|sb| sb.per_day_atoms.saturating_mul(sb.cap_days as u128))
+                    .unwrap_or(0);
+                base.saturating_add(bonus)
+            }
+        }
+    }
+}
+
+fn max_payout_for_event(policy: &RewardsPolicyV1, event: RewardsPolicyEvent) -> u128 {
+    policy
+        .triggers
+        .iter()
+        .filter(|t| t.enabled && t.event == Some(event))
+        .map(max_trigger_payout)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Returns true when the new policy reduces rewards vs the current policy.
+///
+/// A decrease is any lower per-event ceiling, disabling a previously enabled
+/// event trigger, or a lower optional budget cap.
+pub fn is_rewards_policy_decrease(old: &RewardsPolicyV1, new: &RewardsPolicyV1) -> bool {
+    for event in [
+        RewardsPolicyEvent::Welcome,
+        RewardsPolicyEvent::DailyCheckin,
+        RewardsPolicyEvent::ActiveSession,
+        RewardsPolicyEvent::NewPartner,
+    ] {
+        let old_max = max_payout_for_event(old, event);
+        let new_max = max_payout_for_event(new, event);
+        if new_max < old_max {
+            return true;
+        }
+    }
+
+    let old_daily_cap = old.budget.as_ref().and_then(|b| b.max_daily_outflow_atoms);
+    let new_daily_cap = new.budget.as_ref().and_then(|b| b.max_daily_outflow_atoms);
+    match (old_daily_cap, new_daily_cap) {
+        (Some(old_cap), Some(new_cap)) if new_cap < old_cap => true,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 pub fn weekly_partner_cap(policy: &RewardsPolicyV1) -> u32 {
     policy
         .triggers
@@ -427,5 +489,21 @@ mod tests {
         let mut policy = example_bubl_policy();
         policy.schema = "zhtp/rewards-policy/v0".to_string();
         assert!(validate_rewards_policy_value(&policy).is_err());
+    }
+
+    #[test]
+    fn detects_policy_decrease_on_lower_welcome_amount() {
+        let old = example_bubl_policy();
+        let mut decreased = example_bubl_policy();
+        decreased.triggers[0].amount_atoms = Some(WELCOME / 2);
+        assert!(is_rewards_policy_decrease(&old, &decreased));
+    }
+
+    #[test]
+    fn increase_is_not_policy_decrease() {
+        let old = example_bubl_policy();
+        let mut increased = example_bubl_policy();
+        increased.triggers[0].amount_atoms = Some(WELCOME * 2);
+        assert!(!is_rewards_policy_decrease(&old, &increased));
     }
 }

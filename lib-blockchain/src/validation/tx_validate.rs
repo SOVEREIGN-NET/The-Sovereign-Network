@@ -60,6 +60,7 @@ const PHASE2_ALLOWED_TYPES: &[TransactionType] = &[
     TransactionType::AssetManifestUpdate,
     TransactionType::AssetAuthorityTransfer,
     TransactionType::AssetRewardsDelegateRotate,
+    TransactionType::AssetRewardsPolicyUpdate,
     TransactionType::RewardClaim,
     TransactionType::OracleAttestation,
     TransactionType::RegisterCredential,

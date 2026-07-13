@@ -239,6 +239,8 @@ pub enum TransactionType {
     AssetAuthorityTransfer = 65,
     /// Rotate the rewards spend delegate key.
     AssetRewardsDelegateRotate = 66,
+    /// Update the DHT-pinned rewards policy (CID + hash) for an asset.
+    AssetRewardsPolicyUpdate = 68,
     /// BUBL reward claim — chain-enforced eligibility + treasury token transfer.
     ///
     /// Signed by the BUBL `TokenCreation` creator (or authorized delegate).
@@ -446,6 +448,9 @@ impl TransactionType {
             TransactionType::AssetRewardsDelegateRotate => {
                 "Rotate Sovereign Asset rewards spend delegate"
             }
+            TransactionType::AssetRewardsPolicyUpdate => {
+                "Update Sovereign Asset rewards policy"
+            }
             TransactionType::RewardClaim => "BUBL reward claim (chain-enforced eligibility)",
         }
     }
@@ -520,6 +525,7 @@ impl TransactionType {
             TransactionType::AssetManifestUpdate => "asset_manifest_update",
             TransactionType::AssetAuthorityTransfer => "asset_authority_transfer",
             TransactionType::AssetRewardsDelegateRotate => "asset_rewards_delegate_rotate",
+            TransactionType::AssetRewardsPolicyUpdate => "asset_rewards_policy_update",
             TransactionType::RewardClaim => "reward_claim",
         }
     }
@@ -594,6 +600,7 @@ impl TransactionType {
             "asset_manifest_update" => Some(TransactionType::AssetManifestUpdate),
             "asset_authority_transfer" => Some(TransactionType::AssetAuthorityTransfer),
             "asset_rewards_delegate_rotate" => Some(TransactionType::AssetRewardsDelegateRotate),
+            "asset_rewards_policy_update" => Some(TransactionType::AssetRewardsPolicyUpdate),
             "reward_claim" => Some(TransactionType::RewardClaim),
             _ => None,
         }

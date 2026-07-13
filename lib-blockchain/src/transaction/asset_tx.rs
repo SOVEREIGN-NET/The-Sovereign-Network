@@ -14,6 +14,7 @@ pub const ASSET_MODULE_UPGRADE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_UPGRADE_V1:";
 pub const ASSET_MANIFEST_UPDATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_MANIFEST_V1:";
 pub const ASSET_AUTHORITY_TRANSFER_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_AUTH_XFER_V1:";
 pub const ASSET_REWARDS_DELEGATE_ROTATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_REWARDS_ROT_V1:";
+pub const ASSET_REWARDS_POLICY_UPDATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_REWARDS_POL_V1:";
 
 pub const MAX_ASSET_MEMO_BYTES: usize = 8192;
 pub const MAX_ASSET_NAME_BYTES: usize = 64;
@@ -326,5 +327,69 @@ impl AssetRewardsDelegateRotatePayloadV1 {
             .with_limit(MAX_ASSET_MEMO_BYTES as u64)
             .deserialize(&memo[ASSET_REWARDS_DELEGATE_ROTATE_MEMO_PREFIX.len()..])
             .map_err(|e| format!("invalid rewards delegate rotate payload: {e}"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewardsPolicyUpdateConfig {
+    pub policy_cid: [u8; 32],
+    pub policy_hash: [u8; 32],
+    /// Canonical JSON policy document (DHT pin source). Stored on-chain keyed by `policy_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_document: Option<Vec<u8>>,
+}
+
+impl RewardsPolicyUpdateConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        use crate::rewards_policy::{policy_hash, validate_rewards_policy};
+        if self.policy_cid == [0u8; 32] {
+            return Err("rewards policy_cid must be non-zero".to_string());
+        }
+        if self.policy_hash == [0u8; 32] {
+            return Err("rewards policy_hash must be non-zero".to_string());
+        }
+        let doc = self
+            .policy_document
+            .as_ref()
+            .ok_or_else(|| "rewards policy_document is required".to_string())?;
+        let policy = validate_rewards_policy(doc)
+            .map_err(|e| format!("invalid rewards policy_document: {e}"))?;
+        let hash = policy_hash(&policy).map_err(|e| format!("policy hash failed: {e}"))?;
+        if hash.as_array() != self.policy_hash {
+            return Err("policy_document does not match policy_hash".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetRewardsPolicyUpdatePayloadV1 {
+    pub asset_id: [u8; 32],
+    pub policy: RewardsPolicyUpdateConfig,
+    pub authority_proof: AssetAuthorityProof,
+}
+
+impl AssetRewardsPolicyUpdatePayloadV1 {
+    pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
+        self.policy.validate()?;
+        let encoded = bincode::DefaultOptions::new()
+            .with_limit(MAX_ASSET_MEMO_BYTES as u64)
+            .serialize(self)
+            .map_err(|e| format!("serialize rewards policy update: {e}"))?;
+        let mut memo = ASSET_REWARDS_POLICY_UPDATE_MEMO_PREFIX.to_vec();
+        memo.extend_from_slice(&encoded);
+        Ok(memo)
+    }
+
+    pub fn decode_memo(memo: &[u8]) -> Result<Self, String> {
+        if !memo.starts_with(ASSET_REWARDS_POLICY_UPDATE_MEMO_PREFIX) {
+            return Err("missing rewards policy update memo prefix".to_string());
+        }
+        let payload: Self = bincode::DefaultOptions::new()
+            .with_limit(MAX_ASSET_MEMO_BYTES as u64)
+            .deserialize(&memo[ASSET_REWARDS_POLICY_UPDATE_MEMO_PREFIX.len()..])
+            .map_err(|e| format!("invalid rewards policy update payload: {e}"))?;
+        payload.policy.validate()?;
+        Ok(payload)
     }
 }
