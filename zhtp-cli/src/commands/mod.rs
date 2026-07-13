@@ -1,5 +1,6 @@
 //! ZHTP Orchestrator CLI Commands
 
+pub mod asset;
 pub mod backup;
 pub mod blockchain;
 pub mod cbe;
@@ -37,6 +38,7 @@ pub mod version;
 pub mod wallet;
 pub mod web4_utils;
 
+pub use asset::handle_asset_command;
 pub use backup::handle_backup_command;
 pub use blockchain::handle_blockchain_command;
 pub use citizen::handle_citizen_command;
