@@ -62,9 +62,6 @@ pub fn project_from_token_contract(
         treasury_key_id: None,
         launched_at_height,
         supply_mode,
-        dao_class: DaoClass::Fp,
-        burn_bps: 0,
-        pending_burn_bps: None,
         max_supply,
         total_supply: token.total_supply,
         manifest_cid: None,
@@ -77,6 +74,9 @@ pub fn project_from_token_contract(
         curve: None,
         rewards,
         governance: None,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
+        pending_burn_bps: None,
     })
 }
 
@@ -95,9 +95,6 @@ pub fn project_from_bonding_curve_token(curve: &BondingCurveToken) -> SovereignA
         treasury_key_id: None,
         launched_at_height: Some(curve.deployed_at_block),
         supply_mode: SupplyMode::Elastic,
-        dao_class: DaoClass::Fp,
-        burn_bps: 0,
-        pending_burn_bps: None,
         max_supply: curve.total_supply,
         total_supply: curve.total_supply,
         manifest_cid: None,
@@ -113,6 +110,9 @@ pub fn project_from_bonding_curve_token(curve: &BondingCurveToken) -> SovereignA
         }),
         rewards: None,
         governance: None,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
+        pending_burn_bps: None,
     }
 }
 

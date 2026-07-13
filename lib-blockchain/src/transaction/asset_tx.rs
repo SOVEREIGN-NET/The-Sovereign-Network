@@ -11,6 +11,7 @@ use crate::contracts::sovereign_asset::{
 };
 
 pub const ASSET_LAUNCH_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_LAUNCH_V1:";
+pub const ASSET_LAUNCH_MEMO_PREFIX_V2: &[u8] = b"ZHTP_ASSET_LAUNCH_V2:";
 pub const ASSET_MODULE_UPGRADE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_UPGRADE_V1:";
 pub const ASSET_MANIFEST_UPDATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_MANIFEST_V1:";
 pub const ASSET_AUTHORITY_TRANSFER_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_AUTH_XFER_V1:";
@@ -90,6 +91,55 @@ impl GovernanceLaunchConfig {
     }
 }
 
+/// Legacy V1 wire layout — kept verbatim for historical chain replay.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct AssetLaunchPayloadV1Wire {
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub initial_supply: u128,
+    pub treasury_key_id: [u8; 32],
+    #[serde(default = "default_asset_launch_treasury_bps")]
+    pub treasury_bps: u16,
+    pub supply_mode: SupplyMode,
+    pub manifest_cid: [u8; 32],
+    pub manifest_hash: [u8; 32],
+    #[serde(default)]
+    pub curve: Option<CurveLaunchConfig>,
+    #[serde(default)]
+    pub rewards: Option<RewardsLaunchConfig>,
+    #[serde(default)]
+    pub governance: Option<GovernanceLaunchConfig>,
+    #[serde(default)]
+    pub transfer_authority: bool,
+}
+
+/// V2 wire layout — V1 fields + economic class and burn (epic Q1/Q7/Q8).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct AssetLaunchPayloadV2Wire {
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub initial_supply: u128,
+    pub treasury_key_id: [u8; 32],
+    #[serde(default = "default_asset_launch_treasury_bps")]
+    pub treasury_bps: u16,
+    pub supply_mode: SupplyMode,
+    pub manifest_cid: [u8; 32],
+    pub manifest_hash: [u8; 32],
+    #[serde(default)]
+    pub curve: Option<CurveLaunchConfig>,
+    #[serde(default)]
+    pub rewards: Option<RewardsLaunchConfig>,
+    #[serde(default)]
+    pub governance: Option<GovernanceLaunchConfig>,
+    #[serde(default)]
+    pub transfer_authority: bool,
+    pub dao_class: DaoClass,
+    pub burn_bps: u16,
+}
+
+/// Canonical launch payload (executor + API). New txes emit V2 wire format.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AssetLaunchPayloadV1 {
     pub name: String,
@@ -110,12 +160,68 @@ pub struct AssetLaunchPayloadV1 {
     pub governance: Option<GovernanceLaunchConfig>,
     #[serde(default)]
     pub transfer_authority: bool,
-    /// Economic class (FP 80/20, NP 100% treasury). Defaults to FP for legacy memos.
-    #[serde(default)]
     pub dao_class: DaoClass,
-    /// Optional per-transfer burn at launch (0..=1000 bps). Default 0.
-    #[serde(default)]
     pub burn_bps: u16,
+}
+
+fn wire_v1_to_payload(v1: AssetLaunchPayloadV1Wire) -> AssetLaunchPayloadV1 {
+    AssetLaunchPayloadV1 {
+        name: v1.name,
+        symbol: v1.symbol,
+        decimals: v1.decimals,
+        initial_supply: v1.initial_supply,
+        treasury_key_id: v1.treasury_key_id,
+        treasury_bps: v1.treasury_bps,
+        supply_mode: v1.supply_mode,
+        manifest_cid: v1.manifest_cid,
+        manifest_hash: v1.manifest_hash,
+        curve: v1.curve,
+        rewards: v1.rewards,
+        governance: v1.governance,
+        transfer_authority: v1.transfer_authority,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
+    }
+}
+
+fn payload_to_wire_v2(payload: &AssetLaunchPayloadV1) -> AssetLaunchPayloadV2Wire {
+    AssetLaunchPayloadV2Wire {
+        name: payload.name.clone(),
+        symbol: payload.symbol.clone(),
+        decimals: payload.decimals,
+        initial_supply: payload.initial_supply,
+        treasury_key_id: payload.treasury_key_id,
+        treasury_bps: payload.treasury_bps,
+        supply_mode: payload.supply_mode,
+        manifest_cid: payload.manifest_cid,
+        manifest_hash: payload.manifest_hash,
+        curve: payload.curve.clone(),
+        rewards: payload.rewards.clone(),
+        governance: payload.governance.clone(),
+        transfer_authority: payload.transfer_authority,
+        dao_class: payload.dao_class,
+        burn_bps: payload.burn_bps,
+    }
+}
+
+fn wire_v2_to_payload(v2: AssetLaunchPayloadV2Wire) -> AssetLaunchPayloadV1 {
+    AssetLaunchPayloadV1 {
+        name: v2.name,
+        symbol: v2.symbol,
+        decimals: v2.decimals,
+        initial_supply: v2.initial_supply,
+        treasury_key_id: v2.treasury_key_id,
+        treasury_bps: v2.treasury_bps,
+        supply_mode: v2.supply_mode,
+        manifest_cid: v2.manifest_cid,
+        manifest_hash: v2.manifest_hash,
+        curve: v2.curve,
+        rewards: v2.rewards,
+        governance: v2.governance,
+        transfer_authority: v2.transfer_authority,
+        dao_class: v2.dao_class,
+        burn_bps: v2.burn_bps,
+    }
 }
 
 fn default_asset_launch_treasury_bps() -> u16 {
@@ -209,11 +315,12 @@ impl AssetLaunchPayloadV1 {
 
     pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
         self.validate()?;
+        let wire = payload_to_wire_v2(self);
         let encoded = bincode::DefaultOptions::new()
             .with_limit(MAX_ASSET_MEMO_BYTES as u64)
-            .serialize(self)
+            .serialize(&wire)
             .map_err(|e| format!("serialize asset launch: {e}"))?;
-        let mut memo = ASSET_LAUNCH_MEMO_PREFIX.to_vec();
+        let mut memo = ASSET_LAUNCH_MEMO_PREFIX_V2.to_vec();
         memo.extend_from_slice(&encoded);
         if memo.len() > MAX_ASSET_MEMO_BYTES {
             return Err("asset launch memo too large".to_string());
@@ -222,13 +329,21 @@ impl AssetLaunchPayloadV1 {
     }
 
     pub fn decode_memo(memo: &[u8]) -> Result<Self, String> {
-        if !memo.starts_with(ASSET_LAUNCH_MEMO_PREFIX) {
-            return Err("missing asset launch memo prefix".to_string());
-        }
-        let payload: Self = bincode::DefaultOptions::new()
-            .with_limit(MAX_ASSET_MEMO_BYTES as u64)
-            .deserialize(&memo[ASSET_LAUNCH_MEMO_PREFIX.len()..])
-            .map_err(|e| format!("invalid asset launch payload: {e}"))?;
+        let payload = if let Some(v2_bytes) = memo.strip_prefix(ASSET_LAUNCH_MEMO_PREFIX_V2) {
+            let v2: AssetLaunchPayloadV2Wire = bincode::DefaultOptions::new()
+                .with_limit(MAX_ASSET_MEMO_BYTES as u64)
+                .deserialize(v2_bytes)
+                .map_err(|e| format!("invalid asset launch V2 payload: {e}"))?;
+            wire_v2_to_payload(v2)
+        } else if let Some(v1_bytes) = memo.strip_prefix(ASSET_LAUNCH_MEMO_PREFIX) {
+            let v1: AssetLaunchPayloadV1Wire = bincode::DefaultOptions::new()
+                .with_limit(MAX_ASSET_MEMO_BYTES as u64)
+                .deserialize(v1_bytes)
+                .map_err(|e| format!("invalid asset launch V1 payload: {e}"))?;
+            wire_v1_to_payload(v1)
+        } else {
+            return Err("missing asset launch memo prefix (V1 or V2)".to_string());
+        };
         payload.validate()?;
         Ok(payload)
     }
@@ -531,5 +646,42 @@ mod tests {
         let mut long = sample_launch();
         long.symbol = "TOOLONG".to_string();
         assert!(long.validate_dao_launch_ui_constraints().is_err());
+    }
+
+    #[test]
+    fn legacy_v1_launch_memo_decodes_with_fp_defaults() {
+        let v1 = AssetLaunchPayloadV1Wire {
+            name: "Legacy".to_string(),
+            symbol: "LEG".to_string(),
+            decimals: 8,
+            initial_supply: 1_000,
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: ASSET_LAUNCH_TREASURY_BPS,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: [0x11; 32],
+            manifest_hash: [0x22; 32],
+            curve: None,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+        };
+        let encoded = bincode::DefaultOptions::new()
+            .serialize(&v1)
+            .expect("legacy wire serialize");
+        let mut memo = ASSET_LAUNCH_MEMO_PREFIX.to_vec();
+        memo.extend_from_slice(&encoded);
+        let decoded = AssetLaunchPayloadV1::decode_memo(&memo).expect("legacy decode");
+        assert_eq!(decoded.dao_class, DaoClass::Fp);
+        assert_eq!(decoded.burn_bps, 0);
+        assert_eq!(decoded.name, "Legacy");
+    }
+
+    #[test]
+    fn v2_launch_memo_round_trip() {
+        let payload = sample_launch();
+        let memo = payload.encode_memo().expect("encode");
+        assert!(memo.starts_with(ASSET_LAUNCH_MEMO_PREFIX_V2));
+        let decoded = AssetLaunchPayloadV1::decode_memo(&memo).expect("decode");
+        assert_eq!(decoded, payload);
     }
 }

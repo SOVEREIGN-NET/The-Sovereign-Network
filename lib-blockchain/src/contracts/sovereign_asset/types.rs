@@ -140,13 +140,6 @@ pub struct SovereignAsset {
     pub treasury_key_id: Option<[u8; 32]>,
     pub launched_at_height: Option<u64>,
     pub supply_mode: SupplyMode,
-    #[serde(default)]
-    pub dao_class: DaoClass,
-    /// Per-transfer burn rate in basis points (0..=MAX_TRANSFER_BURN_BPS).
-    #[serde(default)]
-    pub burn_bps: u16,
-    #[serde(default)]
-    pub pending_burn_bps: Option<PendingBurnBpsUpdate>,
     pub max_supply: u128,
     pub total_supply: u128,
     pub manifest_cid: Option<[u8; 32]>,
@@ -157,6 +150,11 @@ pub struct SovereignAsset {
     pub curve: Option<CurveModuleHeader>,
     pub rewards: Option<RewardsModuleHeader>,
     pub governance: Option<GovernanceModuleHeader>,
+    /// Economic class (FP 80/20, NP 100% treasury). Appended for bincode compat.
+    pub dao_class: DaoClass,
+    /// Per-transfer burn rate in basis points (0..=MAX_TRANSFER_BURN_BPS).
+    pub burn_bps: u16,
+    pub pending_burn_bps: Option<PendingBurnBpsUpdate>,
 }
 
 impl SovereignAsset {

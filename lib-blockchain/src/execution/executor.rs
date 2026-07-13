@@ -3349,13 +3349,15 @@ impl BlockExecutor {
                     crate::contracts::tokens::constants::SOV_FEE_RATE_BPS
                 };
                 let signer_key_id = tx.signature.public_key.key_id;
-                if let Some(asset) = mutator.get_sovereign_asset(&transfer_data.token_id)? {
-                    require_treasury_spend_signer(
-                        mutator,
-                        &asset,
-                        transfer_data.from,
-                        signer_key_id,
-                    )?;
+                if crate::contracts::sovereign_asset::economic_rules_active(block_height) {
+                    if let Some(asset) = mutator.get_sovereign_asset(&transfer_data.token_id)? {
+                        require_treasury_spend_signer(
+                            mutator,
+                            &asset,
+                            transfer_data.from,
+                            signer_key_id,
+                        )?;
+                    }
                 }
 
                 tracing::info!(
@@ -3368,30 +3370,43 @@ impl BlockExecutor {
                     fee_bps = fee_bps,
                     "[fee-debug] BEFORE apply_token_transfer"
                 );
-                let _fee_collected = if let Some(mut asset) =
-                    mutator.get_sovereign_asset(&transfer_data.token_id)?
-                {
-                    apply_sovereign_token_transfer(
-                        mutator,
-                        &mut asset,
-                        &token,
-                        &from,
-                        &to,
-                        amount,
-                        fee_bps,
-                        &fee_destination,
-                    )?
-                } else {
-                    tx_apply::apply_token_transfer(
-                        mutator,
-                        &token,
-                        &from,
-                        &to,
-                        amount,
-                        fee_bps,
-                        &fee_destination,
-                    )?
-                };
+                let _fee_collected =
+                    if crate::contracts::sovereign_asset::economic_rules_active(block_height) {
+                        if let Some(mut asset) =
+                            mutator.get_sovereign_asset(&transfer_data.token_id)?
+                        {
+                            apply_sovereign_token_transfer(
+                                mutator,
+                                &mut asset,
+                                &token,
+                                &from,
+                                &to,
+                                amount,
+                                fee_bps,
+                                &fee_destination,
+                            )?
+                        } else {
+                            tx_apply::apply_token_transfer(
+                                mutator,
+                                &token,
+                                &from,
+                                &to,
+                                amount,
+                                fee_bps,
+                                &fee_destination,
+                            )?
+                        }
+                    } else {
+                        tx_apply::apply_token_transfer(
+                            mutator,
+                            &token,
+                            &from,
+                            &to,
+                            amount,
+                            fee_bps,
+                            &fee_destination,
+                        )?
+                    };
                 tracing::info!(
                     tx_hash = %hex::encode(&tx.hash().as_bytes()[..8]),
                     from = %hex::encode(&from.0[..8]),
@@ -3453,13 +3468,17 @@ impl BlockExecutor {
                 let signer_key_id = tx.signature.public_key.key_id;
 
                 if let Some(mut asset) = mutator.get_sovereign_asset(&mint_data.token_id)? {
-                    if asset.supply_mode == SupplyMode::Fixed {
-                        return Err(TxApplyError::InvalidType(
-                            "fixed-supply sovereign asset rejects post-launch mint".to_string(),
-                        ));
+                    if crate::contracts::sovereign_asset::economic_rules_active(block_height) {
+                        if asset.supply_mode == SupplyMode::Fixed {
+                            return Err(TxApplyError::InvalidType(
+                                "fixed-supply sovereign asset rejects post-launch mint".to_string(),
+                            ));
+                        }
+                        require_governance_mint_signer(mutator, &asset, signer_key_id)?;
+                        mint_and_allocate(mutator, &mut asset, mint_data.to, amount)?;
+                    } else {
+                        tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
                     }
-                    require_governance_mint_signer(mutator, &asset, signer_key_id)?;
-                    mint_and_allocate(mutator, &mut asset, mint_data.to, amount)?;
                     Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
                 } else {
                     tx_apply::apply_token_mint(mutator, &token, &to, amount)?;

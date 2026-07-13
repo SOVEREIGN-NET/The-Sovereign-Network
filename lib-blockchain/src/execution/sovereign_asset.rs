@@ -127,9 +127,6 @@ pub fn apply_asset_launch(
         treasury_key_id: Some(payload.treasury_key_id),
         launched_at_height: Some(block_height),
         supply_mode: payload.supply_mode,
-        dao_class: payload.dao_class,
-        burn_bps: payload.burn_bps,
-        pending_burn_bps: None,
         max_supply: payload.initial_supply,
         total_supply: 0,
         manifest_cid: Some(payload.manifest_cid),
@@ -140,6 +137,9 @@ pub fn apply_asset_launch(
         curve: curve_header,
         rewards: rewards_header,
         governance: governance_header,
+        dao_class: payload.dao_class,
+        burn_bps: payload.burn_bps,
+        pending_burn_bps: None,
     };
 
     mutator.put_sovereign_asset(&asset)?;
@@ -819,9 +819,6 @@ mod activate_pending_tests {
             treasury_key_id: Some(key(0xEE)),
             launched_at_height: Some(1),
             supply_mode: SupplyMode::Fixed,
-            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
-            burn_bps: 0,
-            pending_burn_bps: None,
             max_supply: 1_000,
             total_supply: 1_000,
             manifest_cid: Some([0x11; 32]),
@@ -836,6 +833,9 @@ mod activate_pending_tests {
                 signers: 1,
                 threshold: 1,
             }),
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
+            pending_burn_bps: None,
         }
     }
 

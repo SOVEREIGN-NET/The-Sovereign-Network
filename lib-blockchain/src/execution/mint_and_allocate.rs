@@ -109,9 +109,6 @@ mod tests {
             treasury_key_id: Some([0xAA; 32]),
             launched_at_height: Some(1),
             supply_mode: SupplyMode::Elastic,
-            dao_class: DaoClass::Fp,
-            burn_bps: 0,
-            pending_burn_bps: None,
             max_supply: u128::MAX,
             total_supply: 1_000,
             manifest_cid: Some([1; 32]),
@@ -124,6 +121,9 @@ mod tests {
             curve: None,
             rewards: None,
             governance: None,
+            dao_class: DaoClass::Fp,
+            burn_bps: 0,
+            pending_burn_bps: None,
         };
         mutator.put_sovereign_asset(&asset).unwrap();
 
