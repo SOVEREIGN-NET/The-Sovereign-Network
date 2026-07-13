@@ -20,7 +20,7 @@
 /// - Consensus admission rules change in a way that requires homogeneous binaries
 ///
 /// Do **not** bump for docs-only, CLI-only, or unrelated crate changes.
-pub const CONSENSUS_BUILD_ID: &str = "1";
+pub const CONSENSUS_BUILD_ID: &str = "2";
 
 /// Marker assigned when decoding codec v1 frames (no epoch field on wire).
 pub const LEGACY_BUILD_ID: &str = "";
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn local_build_id_is_stable_epoch() {
-        assert_eq!(local_build_id(), "1");
+        assert_eq!(local_build_id(), "2");
     }
 
     #[test]
