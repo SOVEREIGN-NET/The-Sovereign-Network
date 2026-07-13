@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use lib_blockchain::{
-    contracts::sovereign_asset::SupplyMode,
+    contracts::sovereign_asset::{DaoClass, SupplyMode},
     integration::crypto_integration::{Signature, SignatureAlgorithm},
     protocol::ProtocolParams,
     rewards_policy::{policy_hash, validate_rewards_policy},
@@ -192,6 +192,9 @@ fn build_signed_asset_launch(
         rewards,
         governance: None,
         transfer_authority: false,
+        // Seeded assets are for-profit class: treasury_bps 2_000 == FP_TREASURY_BPS.
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
     };
     let memo = payload
         .encode_memo()
@@ -278,6 +281,8 @@ fn main() -> Result<()> {
         rewards: None,
         governance: None,
         transfer_authority: false,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
     }
     .split_initial_supply();
 
