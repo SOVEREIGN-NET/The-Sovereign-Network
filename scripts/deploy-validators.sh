@@ -21,16 +21,13 @@
 #   6. Restart all (parallel).
 #   7. Poll for "Caught up at height" on each (timeout per node).
 #   8. Print state table: node | height | md5 | voting?
-#   9. Prune stale zhtp.bak.* on each validator (keep newest 3).
-#  10. Exit non-zero on any failure.
+#   9. Exit non-zero on any failure.
 #
 # Operator never types systemctl, rsync, or md5sum manually. Mistakes
 # (forgetting to halt, missing a node, deploying wrong binary) become
 # impossible.
 
 set -euo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---- node table -------------------------------------------------------------
 #
@@ -249,16 +246,6 @@ if [[ $DRY_RUN -eq 0 ]]; then
         md5=$(ssh "$alias" "${sudo} md5sum $REMOTE_BIN 2>/dev/null | awk '{print \$1}'" 2>/dev/null || echo "?")
         printf '%-12s  %-10s  %-32s\n' "$alias" "${height:-?}" "${md5:-?}"
     done
-fi
-
-# ---- step 9: prune stale remote binary backups --------------------------------
-#
-# Each deploy leaves zhtp.bak.<timestamp>-* on disk (~60MB each). Without
-# pruning, validators accumulate dozens of copies. Keep the newest 3.
-
-if [[ $DRY_RUN -eq 0 ]]; then
-    log "pruning stale remote binary backups..."
-    "$ROOT/scripts/clean-build-artifacts.sh" --remote || warn "remote backup prune failed (non-fatal)"
 fi
 
 ok "deploy complete"
