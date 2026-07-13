@@ -9,6 +9,7 @@ use crate::commands;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::Value;
+use std::path::PathBuf;
 
 /// ZHTP Orchestrator CLI
 #[derive(Parser, Debug, Clone)]
@@ -437,6 +438,56 @@ pub struct DaoArgs {
     pub action: DaoAction,
 }
 
+/// Sovereign asset governance subcommands (C5 #2820).
+#[derive(Args, Debug, Clone)]
+pub struct DaoGovernanceArgs {
+    #[command(subcommand)]
+    pub action: DaoGovernanceAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DaoGovernanceAction {
+    /// Propose a governance action (currently: rewards_policy_update)
+    Propose {
+        /// Sovereign asset id (64-char hex)
+        #[arg(long)]
+        asset_id: String,
+        /// Proposal type: rewards_policy_update
+        #[arg(long, value_name = "TYPE")]
+        proposal_type: String,
+        /// New rewards policy JSON (`zhtp/rewards-policy/v1`)
+        #[arg(long)]
+        policy_file: String,
+        /// Optional path to write proposal JSON for multisig collection
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Add a signer approval to a proposal file; optionally submit when threshold met
+    Vote {
+        /// Proposal JSON from `dao governance propose --out`
+        #[arg(long)]
+        proposal_file: PathBuf,
+        /// Signer keystore directory (default: ~/.zhtp/keystore)
+        #[arg(long)]
+        keystore: Option<String>,
+        /// Collected approvals as `<key_id_hex>:<dilithium_sig_hex>` (repeatable)
+        #[arg(long = "approval", value_name = "KEY_ID_HEX:SIG_HEX")]
+        approvals: Vec<String>,
+        /// Broadcast AssetRewardsPolicyUpdate when approvals >= threshold
+        #[arg(long)]
+        submit: bool,
+        /// Chain id byte for signed tx (default: 3)
+        #[arg(long, default_value = "3")]
+        chain_id: u8,
+    },
+    /// Show governance verifier and pending timelocks for an asset
+    Status {
+        /// Sovereign asset id (64-char hex)
+        #[arg(long)]
+        asset_id: String,
+    },
+}
+
 /// Oracle governance commands
 #[derive(Args, Debug, Clone)]
 pub struct OracleArgs {
@@ -561,6 +612,8 @@ pub enum DaoAction {
         #[arg(long)]
         dao_class: Option<String>,
     },
+    /// Sovereign asset governance: propose, vote, status (C5 #2820)
+    Governance(DaoGovernanceArgs),
     /// Get DAO information (orchestrated)
     Info,
     /// Create new proposal (orchestrated)

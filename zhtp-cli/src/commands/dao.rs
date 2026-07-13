@@ -119,6 +119,7 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
         DaoAction::RegistryList => Some(DaoOperation::RegistryList),
         DaoAction::RegistryGet { .. } => Some(DaoOperation::RegistryGet),
         DaoAction::Launch { .. }
+        | DaoAction::Governance { .. }
         | DaoAction::RegistryRegister { .. }
         | DaoAction::FactoryCreate { .. }
         | DaoAction::EntityRegistryInit { .. }
@@ -465,6 +466,14 @@ async fn handle_dao_command_impl(
     let client = connect_default(&cli.server).await?;
     match args.action {
         DaoAction::Launch { .. } => unreachable!("handled above"),
+        DaoAction::Governance(gov_args) => {
+            crate::commands::dao_governance::handle_dao_governance_command(
+                gov_args.action,
+                cli,
+                output,
+            )
+            .await
+        }
         DaoAction::Info => {
             let operation = DaoOperation::Info;
             handle_dao_operation_impl(&client, operation, None, None, None, None, cli, output).await

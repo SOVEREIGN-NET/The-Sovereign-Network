@@ -2,7 +2,8 @@
 
 use anyhow::Result;
 use lib_blockchain::contracts::sovereign_asset::{
-    AssetIdSource, RewardsModuleState, SovereignAsset, SupplyMode,
+    AssetAuthority, AssetIdSource, GovernanceModuleState, GovernanceVerifierState,
+    RewardsModuleState, SovereignAsset, SupplyMode,
 };
 use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
 use lib_blockchain::transaction::{hash_transaction, Transaction};
@@ -90,6 +91,7 @@ struct AssetDetailResponse {
     manifest_resolved: bool,
     manifest: Option<serde_json::Value>,
     dao_registry: Option<serde_json::Value>,
+    governance_status: serde_json::Value,
 }
 
 fn id_source_label(s: AssetIdSource) -> &'static str {
@@ -217,6 +219,79 @@ async fn resolve_asset_manifest(asset: &SovereignAsset) -> (Option<serde_json::V
     }
 }
 
+fn governance_status_detail(
+    asset: &SovereignAsset,
+    gov_state: Option<&GovernanceModuleState>,
+    rewards_state: Option<&RewardsModuleState>,
+    tip_height: u64,
+) -> serde_json::Value {
+    let authority = match &asset.authority {
+        AssetAuthority::Creator { key_id } => json!({
+            "kind": "creator",
+            "key_id": hex::encode(key_id),
+        }),
+        AssetAuthority::Governance { module_ref } => json!({
+            "kind": "governance",
+            "module_ref": hex::encode(module_ref),
+        }),
+    };
+
+    let verifier = gov_state.and_then(|g| g.verifier.as_ref()).map(|v| match v {
+        GovernanceVerifierState::Single { signer_key_id } => json!({
+            "kind": "single",
+            "signers": [hex::encode(signer_key_id)],
+            "threshold": 1,
+        }),
+        GovernanceVerifierState::Multisig { signers, threshold } => json!({
+            "kind": "multisig",
+            "signers": signers.iter().map(hex::encode).collect::<Vec<_>>(),
+            "threshold": threshold,
+        }),
+    });
+
+    let pending_authority_transfer = gov_state
+        .and_then(|g| g.pending_transfer.as_ref())
+        .map(|p| {
+            let blocks_remaining = p.effective_height.saturating_sub(tip_height);
+            json!({
+                "new_verifier": match &p.new_verifier {
+                    GovernanceVerifierState::Single { signer_key_id } => json!({
+                        "kind": "single",
+                        "signers": [hex::encode(signer_key_id)],
+                        "threshold": 1,
+                    }),
+                    GovernanceVerifierState::Multisig { signers, threshold } => json!({
+                        "kind": "multisig",
+                        "signers": signers.iter().map(hex::encode).collect::<Vec<_>>(),
+                        "threshold": threshold,
+                    }),
+                },
+                "effective_height": p.effective_height,
+                "blocks_remaining": blocks_remaining,
+            })
+        });
+
+    let pending_rewards_policy = rewards_state
+        .and_then(|r| r.pending_policy.as_ref())
+        .map(|p| {
+            let blocks_remaining = p.effective_height.saturating_sub(tip_height);
+            json!({
+                "policy_cid": hex::encode(p.policy_cid),
+                "policy_hash": hex::encode(p.policy_hash),
+                "effective_height": p.effective_height,
+                "blocks_remaining": blocks_remaining,
+            })
+        });
+
+    json!({
+        "authority": authority,
+        "verifier": verifier,
+        "pending_authority_transfer": pending_authority_transfer,
+        "pending_rewards_policy": pending_rewards_policy,
+        "chain_tip_height": tip_height,
+    })
+}
+
 fn rewards_detail(
     asset: &SovereignAsset,
     state: Option<&RewardsModuleState>,
@@ -238,6 +313,8 @@ fn rewards_detail(
 fn to_detail(
     asset: &SovereignAsset,
     rewards_state: Option<&RewardsModuleState>,
+    gov_state: Option<&GovernanceModuleState>,
+    tip_height: u64,
     manifest: Option<&serde_json::Value>,
     manifest_resolved: bool,
     dao_registry: Option<serde_json::Value>,
@@ -281,6 +358,12 @@ fn to_detail(
         manifest_resolved,
         manifest: manifest.cloned(),
         dao_registry,
+        governance_status: governance_status_detail(
+            asset,
+            gov_state,
+            rewards_state,
+            tip_height,
+        ),
     }
 }
 
@@ -408,11 +491,15 @@ impl AssetsHandler {
         if asset.module_flags.has_rewards() && rewards_state.is_none() {
             anyhow::bail!("rewards module state unavailable for asset {}", asset_id_hex);
         }
+        let gov_state = bc.get_governance_module_state(&asset_id);
+        let tip_height = bc.height;
         let (manifest, manifest_resolved) = resolve_asset_manifest(&asset).await;
         let dao_registry = dao_registry_linkage(&bc, &asset_id);
         create_json_response(serde_json::to_value(to_detail(
             &asset,
             rewards_state.as_ref(),
+            gov_state.as_ref(),
+            tip_height,
             manifest.as_ref(),
             manifest_resolved,
             dao_registry,
