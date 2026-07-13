@@ -533,6 +533,33 @@ pub enum DaoAction {
         /// Treasury recipient key_id (32-byte hex). Defaults to protocol DAO treasury.
         #[arg(long)]
         treasury_recipient: Option<String>,
+        /// Custom asset manifest JSON (`zhtp/asset-manifest/v1`)
+        #[arg(long)]
+        manifest_file: Option<String>,
+        /// Rewards policy JSON (`zhtp/rewards-policy/v1`)
+        #[arg(long)]
+        rewards_policy_file: Option<String>,
+        /// Rewards spend-delegate keystore directory
+        #[arg(long)]
+        rewards_delegate_keystore: Option<String>,
+        /// Governance multisig signer key_ids (comma-separated 32-byte hex)
+        #[arg(long)]
+        governance_signers: Option<String>,
+        /// Governance multisig threshold (default: floor(N/2)+1)
+        #[arg(long)]
+        governance_threshold: Option<u8>,
+        /// Transfer creator authority to governance at launch (requires --governance-signers)
+        #[arg(long)]
+        transfer_authority: bool,
+        /// Supply mode (fixed only; elastic requires curve module, not yet supported)
+        #[arg(long, default_value = "fixed")]
+        supply_mode: String,
+        /// Chain id byte for signed tx (default: 3; explicit flag only — not read from env)
+        #[arg(long, default_value = "3")]
+        chain_id: u8,
+        /// DAO class hint for post-launch registry (np|fp)
+        #[arg(long)]
+        dao_class: Option<String>,
     },
     /// Get DAO information (orchestrated)
     Info,
@@ -767,7 +794,7 @@ pub enum IdentityAction {
     /// Zero-to-creator wizard: generate keystore (if needed) + on-chain registration.
     ///
     /// Preferred entry point before `token create`. Equivalent to `register` with
-    /// documented next steps for DAO token deployment (`dao launch` coming in #2816).
+    /// documented next steps for DAO token deployment (`zhtp-cli dao launch`).
     Init {
         /// Display name for the new identity
         #[arg(short, long)]

@@ -8,11 +8,16 @@
 //! - List all tokens
 
 use crate::argument_parsing::{format_output, TokenAction, TokenArgs, ZhtpCli};
+use crate::commands::node::normalize_keystore_path;
+use crate::commands::rewards::{build_rewards_policy_bundle, load_policy_bytes_from_file};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_blockchain::contracts::sovereign_asset::SupplyMode;
-use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
+use lib_blockchain::contracts::sovereign_asset::{GovernanceVerifierState, SupplyMode};
+use lib_blockchain::rewards_policy::validate_rewards_policy;
+use lib_blockchain::transaction::asset_tx::{
+    AssetLaunchPayloadV1, GovernanceLaunchConfig, RewardsLaunchConfig,
+};
 use lib_blockchain::transaction::{
     TokenCreationPayloadV1, TokenMintData, TokenTransferData, DEFAULT_TOKEN_CREATION_FEE,
 };
@@ -23,7 +28,7 @@ use lib_blockchain::{
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // PURE LOGIC - Path builders and validation
@@ -400,6 +405,69 @@ pub async fn handle_create(
     }
 }
 
+fn read_manifest_file(path: &Path) -> CliResult<Vec<u8>> {
+    std::fs::read(path).map_err(|e| {
+        CliError::ConfigError(format!("read manifest {}: {e}", path.display()))
+    })
+}
+
+fn validate_manifest_launch_fields(
+    value: &serde_json::Value,
+    name: &str,
+    symbol: &str,
+    decimals: u8,
+) -> CliResult<()> {
+    if let Some(manifest_name) = value.get("name").and_then(|v| v.as_str()) {
+        if manifest_name != name {
+            return Err(CliError::ConfigError(format!(
+                "manifest name '{manifest_name}' does not match --name '{name}'"
+            )));
+        }
+    }
+    if let Some(manifest_symbol) = value.get("symbol").and_then(|v| v.as_str()) {
+        if manifest_symbol != symbol {
+            return Err(CliError::ConfigError(format!(
+                "manifest symbol '{manifest_symbol}' does not match --symbol '{symbol}'"
+            )));
+        }
+    }
+    if let Some(v) = value.get("decimals") {
+        let manifest_decimals = v.as_u64().ok_or_else(|| {
+            CliError::ConfigError("manifest decimals must be a number".to_string())
+        })?;
+        if manifest_decimals != decimals as u64 {
+            return Err(CliError::ConfigError(format!(
+                "manifest decimals {manifest_decimals} does not match --decimals {decimals}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn manifest_cid_hash_from_bytes(
+    bytes: &[u8],
+    launch: Option<(&str, &str, u8)>,
+) -> CliResult<([u8; 32], [u8; 32])> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|e| CliError::ConfigError(format!("invalid manifest JSON: {e}")))?;
+    let schema = value
+        .get("schema")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if schema != "zhtp/asset-manifest/v1" {
+        return Err(CliError::ConfigError(format!(
+            "manifest schema must be zhtp/asset-manifest/v1, got '{schema}'"
+        )));
+    }
+    if let Some((name, symbol, decimals)) = launch {
+        validate_manifest_launch_fields(&value, name, symbol, decimals)?;
+    }
+    let hash = lib_crypto::hash_blake3(bytes);
+    let mut cid = [0u8; 32];
+    cid[..16].copy_from_slice(&hash[..16]);
+    Ok((cid, hash))
+}
+
 fn build_dao_launch_manifest(name: &str, symbol: &str, decimals: u8) -> ([u8; 32], [u8; 32]) {
     let manifest = json!({
         "schema": "zhtp/asset-manifest/v1",
@@ -408,17 +476,151 @@ fn build_dao_launch_manifest(name: &str, symbol: &str, decimals: u8) -> ([u8; 32
         "decimals": decimals,
         "interface": {
             "version": "1.0.0",
-            "tx_kinds": ["TokenTransfer", "AssetTransfer"]
+            "tx_kinds": ["TokenTransfer", "AssetTransfer", "RewardsClaim"]
         }
     });
     let bytes = serde_json::to_vec(&manifest).expect("manifest json");
-    let hash = lib_crypto::hash_blake3(&bytes);
-    let mut cid = [0u8; 32];
-    cid[..16].copy_from_slice(&hash[..16]);
-    (cid, hash)
+    manifest_cid_hash_from_bytes(&bytes, None).expect("generated manifest")
 }
 
-/// Submit a signed `AssetLaunch` for the DAO Create New path (M1).
+pub fn parse_supply_mode(value: &str) -> CliResult<SupplyMode> {
+    match value.to_ascii_lowercase().as_str() {
+        "fixed" => Ok(SupplyMode::Fixed),
+        "elastic" => Err(CliError::ConfigError(
+            "elastic supply_mode is not supported in dao launch (fixed only)".to_string(),
+        )),
+        other => Err(CliError::ConfigError(format!(
+            "supply_mode must be 'fixed', got '{other}'"
+        ))),
+    }
+}
+
+pub fn validate_rewards_launch_flags(
+    rewards_policy_file: &Option<String>,
+    rewards_delegate_keystore: &Option<String>,
+) -> CliResult<()> {
+    match (rewards_policy_file, rewards_delegate_keystore) {
+        (Some(_), Some(_)) | (None, None) => Ok(()),
+        _ => Err(CliError::ConfigError(
+            "rewards launch requires both --rewards-policy-file and --rewards-delegate-keystore"
+                .to_string(),
+        )),
+    }
+}
+
+pub fn validate_transfer_authority_flag(
+    transfer_authority: bool,
+    governance_signers: &Option<String>,
+) -> CliResult<()> {
+    if transfer_authority && governance_signers.is_none() {
+        return Err(CliError::ConfigError(
+            "--transfer-authority requires --governance-signers".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn parse_governance_signers(raw: &str) -> CliResult<Vec<[u8; 32]>> {
+    let parts: Vec<&str> = raw.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return Err(CliError::ConfigError(
+            "governance_signers must list at least one 32-byte hex key_id".to_string(),
+        ));
+    }
+    parts
+        .iter()
+        .map(|part| {
+            let hex_str = part.strip_prefix("0x").unwrap_or(part);
+            let bytes = hex::decode(hex_str)
+                .map_err(|_| CliError::ConfigError(format!("invalid signer hex: {part}")))?;
+            if bytes.len() != 32 {
+                return Err(CliError::ConfigError(format!(
+                    "governance signer must be 32 bytes: {part}"
+                )));
+            }
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes);
+            Ok(out)
+        })
+        .collect()
+}
+
+/// Phase 3 `dao launch` options (C1 #2816).
+#[derive(Debug, Clone, Default)]
+pub struct DaoLaunchParams {
+    pub manifest_file: Option<String>,
+    pub rewards_policy_file: Option<String>,
+    pub rewards_delegate_keystore: Option<String>,
+    pub governance_signers: Option<String>,
+    pub governance_threshold: Option<u8>,
+    pub transfer_authority: bool,
+    pub supply_mode: String,
+    pub chain_id: u8,
+    pub dao_class: Option<String>,
+}
+
+fn build_rewards_launch_config(
+    policy_file: &str,
+    delegate_keystore: &str,
+) -> CliResult<RewardsLaunchConfig> {
+    let policy_bytes = load_policy_bytes_from_file(Path::new(policy_file))?;
+    let policy = validate_rewards_policy(&policy_bytes)
+        .map_err(|e| CliError::ConfigError(format!("rewards policy: {e}")))?;
+    let bundle = build_rewards_policy_bundle(&policy)
+        .map_err(|e| CliError::ConfigError(format!("rewards policy: {e}")))?;
+
+    let delegate_dir = normalize_keystore_path(delegate_keystore)
+        .ok_or_else(|| CliError::ConfigError("invalid rewards_delegate_keystore path".into()))?;
+    if !delegate_dir.is_dir() {
+        return Err(CliError::ConfigError(format!(
+            "rewards_delegate_keystore is not a directory: {}",
+            delegate_dir.display()
+        )));
+    }
+    let delegate = load_identity_from_keystore(&delegate_dir)?;
+    if delegate.keypair.public_key.key_id == [0u8; 32] {
+        return Err(CliError::ConfigError(
+            "rewards delegate key_id must be non-zero".to_string(),
+        ));
+    }
+
+    Ok(RewardsLaunchConfig {
+        spend_delegate_key_id: delegate.keypair.public_key.key_id,
+        policy_cid: bundle.policy_cid,
+        policy_hash: bundle.policy_hash,
+        policy_document: Some(bundle.document_bytes),
+    })
+}
+
+pub fn build_governance_launch_config(
+    signers_raw: &str,
+    threshold: Option<u8>,
+) -> CliResult<GovernanceLaunchConfig> {
+    let signers = parse_governance_signers(signers_raw)?;
+    if signers.len() == 1 {
+        if threshold.is_some_and(|t| t > 1) {
+            return Err(CliError::ConfigError(
+                "--governance-threshold > 1 requires multiple --governance-signers".to_string(),
+            ));
+        }
+        Ok(GovernanceLaunchConfig {
+            verifier: GovernanceVerifierState::Single {
+                signer_key_id: signers[0],
+            },
+            threshold,
+        })
+    } else {
+        Ok(GovernanceLaunchConfig {
+            verifier: GovernanceVerifierState::Multisig {
+                signers,
+                threshold: threshold.unwrap_or(0),
+            },
+            threshold,
+        })
+    }
+}
+
+/// Submit a signed `AssetLaunch` for the DAO Create New path (M1 / Phase 3).
 pub async fn handle_dao_asset_launch(
     cli: &ZhtpCli,
     output: &dyn Output,
@@ -427,6 +629,7 @@ pub async fn handle_dao_asset_launch(
     supply: u128,
     decimals: u8,
     treasury_recipient: &str,
+    options: &DaoLaunchParams,
 ) -> CliResult<()> {
     validate_decimals(decimals)?;
     output.info(&format!("Launching sovereign asset: {} ({})", name, symbol))?;
@@ -441,7 +644,40 @@ pub async fn handle_dao_asset_launch(
         ));
     }
 
-    let (manifest_cid, manifest_hash) = build_dao_launch_manifest(name, symbol, decimals);
+    let supply_mode = parse_supply_mode(&options.supply_mode)?;
+
+    let (manifest_cid, manifest_hash) = if let Some(path) = &options.manifest_file {
+        let bytes = read_manifest_file(Path::new(path))?;
+        output.warning(
+            "Custom manifest is committed by hash/CID only — pin or publish the file separately; \
+             AssetLaunch does not carry manifest bytes on chain",
+        )?;
+        manifest_cid_hash_from_bytes(&bytes, Some((name, symbol, decimals)))?
+    } else {
+        build_dao_launch_manifest(name, symbol, decimals)
+    };
+
+    validate_rewards_launch_flags(
+        &options.rewards_policy_file,
+        &options.rewards_delegate_keystore,
+    )?;
+    let rewards = match (
+        &options.rewards_policy_file,
+        &options.rewards_delegate_keystore,
+    ) {
+        (Some(policy), Some(delegate)) => Some(build_rewards_launch_config(policy, delegate)?),
+        (None, None) => None,
+        _ => unreachable!("validated above"),
+    };
+
+    validate_transfer_authority_flag(options.transfer_authority, &options.governance_signers)?;
+
+    let governance = options
+        .governance_signers
+        .as_deref()
+        .map(|raw| build_governance_launch_config(raw, options.governance_threshold))
+        .transpose()?;
+
     let payload = AssetLaunchPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
@@ -449,13 +685,13 @@ pub async fn handle_dao_asset_launch(
         initial_supply: supply,
         treasury_key_id: treasury_key.key_id,
         treasury_bps: 2_000,
-        supply_mode: SupplyMode::Fixed,
+        supply_mode,
         manifest_cid,
         manifest_hash,
         curve: None,
-        rewards: None,
-        governance: None,
-        transfer_authority: false,
+        rewards,
+        governance,
+        transfer_authority: options.transfer_authority,
     };
     payload.validate_dao_launch_ui_constraints().map_err(|e| {
         CliError::ConfigError(format!("DAO launch validation failed: {e}"))
@@ -465,7 +701,7 @@ pub async fn handle_dao_asset_launch(
         .map_err(|e| CliError::ConfigError(format!("Failed to encode asset launch payload: {e}")))?;
 
     let mut tx = Transaction::new_asset_launch_with_chain_id(
-        0x03,
+        options.chain_id,
         lib_crypto::Signature::default(),
         memo,
     );
@@ -973,6 +1209,132 @@ mod tests {
         assert_eq!(mint_data.token_id, token_id);
         assert_eq!(mint_data.to, to);
         assert_eq!(mint_data.amount, amount as u128);
+    }
+
+    // =========================================================================
+    // dao launch helper tests (C1 #2816 Phase 3)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_supply_mode_fixed_only() {
+        assert_eq!(parse_supply_mode("fixed").unwrap(), SupplyMode::Fixed);
+        assert_eq!(parse_supply_mode("FIXED").unwrap(), SupplyMode::Fixed);
+        assert!(parse_supply_mode("elastic").is_err());
+        assert!(parse_supply_mode("infinite").is_err());
+    }
+
+    #[test]
+    fn test_parse_governance_signers_single_and_multisig() {
+        let one = "aa".repeat(32);
+        let two = "bb".repeat(32);
+        let single = parse_governance_signers(&one).unwrap();
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0], [0xaa; 32]);
+
+        let multi = parse_governance_signers(&format!("0x{one}, {two}")).unwrap();
+        assert_eq!(multi.len(), 2);
+        assert_eq!(multi[0], [0xaa; 32]);
+        assert_eq!(multi[1], [0xbb; 32]);
+    }
+
+    #[test]
+    fn test_parse_governance_signers_rejects_empty_and_bad_hex() {
+        assert!(parse_governance_signers("").is_err());
+        assert!(parse_governance_signers("not-hex").is_err());
+        assert!(parse_governance_signers("aa").is_err());
+    }
+
+    #[test]
+    fn test_manifest_cid_hash_from_bytes_valid_schema() {
+        let manifest = json!({
+            "schema": "zhtp/asset-manifest/v1",
+            "name": "Test",
+            "symbol": "TST",
+            "decimals": 18
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let (cid, hash) = manifest_cid_hash_from_bytes(&bytes, None).unwrap();
+        assert_eq!(cid[..16], hash[..16]);
+        assert_eq!(hash, lib_crypto::hash_blake3(&bytes));
+    }
+
+    #[test]
+    fn test_manifest_cid_hash_from_bytes_rejects_wrong_schema() {
+        let manifest = json!({"schema": "other/v1"});
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert!(manifest_cid_hash_from_bytes(&bytes, None).is_err());
+    }
+
+    #[test]
+    fn test_manifest_cross_validation_rejects_mismatch() {
+        let manifest = json!({
+            "schema": "zhtp/asset-manifest/v1",
+            "name": "Other",
+            "symbol": "TST",
+            "decimals": 18
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert!(manifest_cid_hash_from_bytes(&bytes, Some(("Test", "TST", 18))).is_err());
+    }
+
+    #[test]
+    fn test_build_dao_launch_manifest_matches_schema() {
+        let (cid, hash) = build_dao_launch_manifest("Bubble", "BUBL", 18);
+        assert_ne!(cid, [0u8; 32]);
+        assert_ne!(hash, [0u8; 32]);
+        let manifest = json!({
+            "schema": "zhtp/asset-manifest/v1",
+            "name": "Bubble",
+            "symbol": "BUBL",
+            "decimals": 18,
+            "interface": {
+                "version": "1.0.0",
+                "tx_kinds": ["TokenTransfer", "AssetTransfer", "RewardsClaim"]
+            }
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert_eq!(hash, lib_crypto::hash_blake3(&bytes));
+    }
+
+    #[test]
+    fn test_build_governance_launch_config_default_threshold() {
+        let k1 = "aa".repeat(32);
+        let k2 = "bb".repeat(32);
+        let k3 = "cc".repeat(32);
+        let raw = format!("{k1},{k2},{k3}");
+        let cfg = build_governance_launch_config(&raw, None).unwrap();
+        match cfg.resolved_verifier() {
+            GovernanceVerifierState::Multisig { signers, threshold } => {
+                assert_eq!(signers.len(), 3);
+                assert_eq!(threshold, 2);
+            }
+            other => panic!("expected multisig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_governance_rejects_threshold_with_single_signer() {
+        let one = "aa".repeat(32);
+        assert!(build_governance_launch_config(&one, Some(2)).is_err());
+        assert!(build_governance_launch_config(&one, Some(1)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rewards_launch_flags_one_of_two() {
+        assert!(validate_rewards_launch_flags(&Some("p.json".into()), &None).is_err());
+        assert!(validate_rewards_launch_flags(&None, &Some("ks".into())).is_err());
+        assert!(validate_rewards_launch_flags(&None, &None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_transfer_authority_requires_governance() {
+        assert!(validate_transfer_authority_flag(true, &None).is_err());
+        assert!(validate_transfer_authority_flag(false, &None).is_ok());
+        assert!(validate_transfer_authority_flag(
+            true,
+            &Some("aa".repeat(32))
+        )
+        .is_ok());
     }
 
     #[test]

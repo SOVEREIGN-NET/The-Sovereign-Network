@@ -364,25 +364,69 @@ async fn handle_dao_command_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    // Launch delegates to token::handle_create (connects internally).
+    // Launch delegates to token::handle_dao_asset_launch (connects internally).
     if let DaoAction::Launch {
         ref name,
         ref symbol,
         supply,
         decimals,
         ref treasury_recipient,
+        ref manifest_file,
+        ref rewards_policy_file,
+        ref rewards_delegate_keystore,
+        ref governance_signers,
+        governance_threshold,
+        transfer_authority,
+        ref supply_mode,
+        chain_id,
+        ref dao_class,
     } = args.action
     {
         output.header("DAO Launch (AssetLaunch)")?;
         let treasury = treasury_recipient
             .clone()
             .unwrap_or_else(default_protocol_treasury_key_id_hex);
+        let class_hint = dao_class
+            .as_deref()
+            .map(parse_dao_class)
+            .transpose()?;
         output.info(&format!(
             "Launching {} ({}) — 80% creator / 20% treasury ({})",
             name,
             symbol,
             &treasury[..16.min(treasury.len())]
         ))?;
+        if let Some(class) = class_hint {
+            output.info(&format!(
+                "DAO class hint: {} (use with `dao registry-register` after launch)",
+                class.as_str()
+            ))?;
+        }
+        if manifest_file.is_some() {
+            output.info("Using custom manifest file")?;
+        }
+        if rewards_policy_file.is_some() || rewards_delegate_keystore.is_some() {
+            output.info("Rewards policy + delegate keystore wired into launch payload")?;
+        }
+        if governance_signers.is_some() {
+            output.info("Governance multisig wired into launch payload")?;
+        }
+        if transfer_authority {
+            output.info("Transfer authority to governance at launch: enabled")?;
+        }
+        output.info(&format!("Supply mode: {supply_mode}, chain_id: {chain_id}"))?;
+
+        let launch_options = token::DaoLaunchParams {
+            manifest_file: manifest_file.clone(),
+            rewards_policy_file: rewards_policy_file.clone(),
+            rewards_delegate_keystore: rewards_delegate_keystore.clone(),
+            governance_signers: governance_signers.clone(),
+            governance_threshold,
+            transfer_authority,
+            supply_mode: supply_mode.clone(),
+            chain_id,
+            dao_class: dao_class.clone(),
+        };
         token::handle_dao_asset_launch(
             cli,
             output,
@@ -391,11 +435,30 @@ async fn handle_dao_command_impl(
             supply,
             decimals,
             &treasury,
+            &launch_options,
         )
         .await?;
-        output.print(
-            "Next: `reward configure --template`, `asset rewards fund-delegate`, `node configure-rewards` (N3)",
-        )?;
+
+        let mut next: Vec<&str> = Vec::new();
+        if rewards_policy_file.is_none() {
+            next.push("`reward configure --template --asset-id <hex> --out ./policy.json`");
+            next.push(
+                "post-launch rewards enablement via AssetModuleUpgrade is not exposed in the CLI yet — \
+                 include `--rewards-policy-file` + `--rewards-delegate-keystore` at launch",
+            );
+        } else {
+            next.push("`asset rewards fund-delegate --asset-id <hex> --amount <atoms>`");
+            next.push("`node configure-rewards` (N3)");
+        }
+        if governance_signers.is_none() {
+            next.push("`dao governance propose` for post-launch policy updates (C5)");
+        }
+        if dao_class.is_some() {
+            next.push(
+                "`dao registry-register --token-id <asset_id> --class <np|fp> --metadata-hash <hex>`",
+            );
+        }
+        output.print(&format!("Next: {}", next.join("; ")))?;
         return Ok(());
     }
 
