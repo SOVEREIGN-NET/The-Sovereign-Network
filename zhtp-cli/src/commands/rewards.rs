@@ -10,14 +10,18 @@
 //! BUBL/mobile rewards CLI — wired to `/api/v1/rewards/*` on live nodes.
 //! Legacy PoUW orchestrator subcommands (metrics/routing/storage/config) remain placeholders.
 
-use crate::argument_parsing::{RewardAction, RewardArgs, RewardClaimEvent, ZhtpCli};
+use crate::argument_parsing::{format_output, RewardAction, RewardArgs, RewardClaimEvent, ZhtpCli};
 use crate::commands::web4_utils::connect_default;
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_network::client::ZhtpClient;
+use lib_blockchain::rewards_policy::{
+    canonical_policy_bytes, policy_hash, validate_rewards_policy, RewardsPolicyError, RewardsPolicyV1,
+};
 use lib_economy::rewards::{RewardRound, RewardStatistics, UsefulWorkType, ValidatorReward};
+use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use zhtp::rewards::budget_tracker::{BudgetTracker, RewardSource};
 
 // ============================================================================
@@ -36,6 +40,7 @@ pub enum RewardOperation {
     Routing,
     Storage,
     Config,
+    Configure,
 }
 
 impl RewardOperation {
@@ -51,6 +56,7 @@ impl RewardOperation {
             RewardOperation::Routing => "Show routing reward details (legacy placeholder)",
             RewardOperation::Storage => "Show storage reward details (legacy placeholder)",
             RewardOperation::Config => "Show reward configuration (legacy placeholder)",
+            RewardOperation::Configure => "Validate or generate rewards policy JSON (zhtp/rewards-policy/v1)",
         }
     }
 
@@ -66,6 +72,7 @@ impl RewardOperation {
             RewardOperation::Routing => "🔄",
             RewardOperation::Storage => "💾",
             RewardOperation::Config => "⚙️",
+            RewardOperation::Configure => "📋",
         }
     }
 }
@@ -82,7 +89,81 @@ pub fn action_to_operation(action: &RewardAction) -> RewardOperation {
         RewardAction::Routing => RewardOperation::Routing,
         RewardAction::Storage => RewardOperation::Storage,
         RewardAction::Config => RewardOperation::Config,
+        RewardAction::Configure { .. } => RewardOperation::Configure,
     }
+}
+
+/// Normalize asset id to lowercase 64-char hex (no 0x prefix).
+pub fn normalize_asset_id_hex(asset_id: &str) -> Result<String, String> {
+    let trimmed = asset_id.strip_prefix("0x").unwrap_or(asset_id);
+    if trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "asset_id must be 64 hex chars, got {} chars",
+            trimmed.len()
+        ));
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+/// BLAKE3 CID input for DHT pin (`zhtp/rewards-policy/cid/v1` + document bytes).
+pub fn rewards_policy_cid(document_bytes: &[u8]) -> [u8; 32] {
+    let mut cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
+    cid_input.extend_from_slice(document_bytes);
+    lib_crypto::hash_blake3(&cid_input)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewardsPolicyBundle {
+    pub policy: RewardsPolicyV1,
+    pub document_bytes: Vec<u8>,
+    pub policy_hash: [u8; 32],
+    pub policy_cid: [u8; 32],
+}
+
+pub fn build_rewards_policy_bundle(policy: &RewardsPolicyV1) -> Result<RewardsPolicyBundle, RewardsPolicyError> {
+    let document_bytes = canonical_policy_bytes(policy)?;
+    let hash = policy_hash(policy)?.as_array();
+    let policy_cid = rewards_policy_cid(&document_bytes);
+    Ok(RewardsPolicyBundle {
+        policy: policy.clone(),
+        document_bytes,
+        policy_hash: hash,
+        policy_cid,
+    })
+}
+
+pub fn load_policy_bytes_from_file(path: &Path) -> CliResult<Vec<u8>> {
+    std::fs::read(path).map_err(|e| CliError::ConfigError(format!("read {}: {e}", path.display())))
+}
+
+pub fn apply_asset_id_to_policy(mut policy: RewardsPolicyV1, asset_id: &str) -> CliResult<RewardsPolicyV1> {
+    policy.asset_id = normalize_asset_id_hex(asset_id)
+        .map_err(|e| CliError::ConfigError(e))?;
+    Ok(policy)
+}
+
+pub fn bubl_policy_template_bytes() -> CliResult<Vec<u8>> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../schemas/zhtp/rewards-policy/examples/bubl-v1.json");
+    load_policy_bytes_from_file(&path)
+}
+
+pub fn configure_response_json(bundle: &RewardsPolicyBundle, out_path: Option<&Path>) -> Value {
+    json!({
+        "schema": bundle.policy.schema,
+        "asset_id": bundle.policy.asset_id,
+        "policy_hash": hex::encode(bundle.policy_hash),
+        "policy_cid": hex::encode(bundle.policy_cid),
+        "trigger_count": bundle.policy.triggers.len(),
+        "enabled_triggers": bundle.policy.triggers.iter().filter(|t| t.enabled).count(),
+        "budget": bundle.policy.budget,
+        "output_file": out_path.map(|p| p.display().to_string()),
+        "dht_pin_hint": "Pin document_bytes at policy_cid before AssetLaunch / policy update",
+    })
+}
+
+fn map_policy_error(err: RewardsPolicyError) -> CliError {
+    CliError::ConfigError(format!("rewards policy validation failed: {err}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +420,7 @@ pub fn get_operation_header(operation: RewardOperation) -> String {
         RewardOperation::Routing => format!("{} Routing Reward Details (legacy)", operation.emoji()),
         RewardOperation::Storage => format!("{} Storage Reward Details (legacy)", operation.emoji()),
         RewardOperation::Config => format!("{} Reward System Configuration (legacy)", operation.emoji()),
+        RewardOperation::Configure => format!("{} Rewards Policy Configure", operation.emoji()),
     }
 }
 
@@ -385,7 +467,57 @@ pub async fn handle_reward_command_impl(
         RewardAction::Routing => handle_routing_impl(output).await,
         RewardAction::Storage => handle_storage_impl(output).await,
         RewardAction::Config => handle_config_impl(output).await,
+        RewardAction::Configure {
+            file,
+            template,
+            asset_id,
+            out,
+        } => handle_configure_impl(file.as_deref(), template, asset_id.as_deref(), out.as_deref(), cli, output).await,
     }
+}
+
+async fn handle_configure_impl(
+    file: Option<&str>,
+    template: bool,
+    asset_id: Option<&str>,
+    out: Option<&str>,
+    cli: &ZhtpCli,
+    output: &dyn Output,
+) -> CliResult<()> {
+    if !template && file.is_none() {
+        return Err(CliError::ConfigError(
+            "configure requires --file <path> or --template".to_string(),
+        ));
+    }
+    if template && asset_id.is_none() {
+        return Err(CliError::ConfigError(
+            "--template requires --asset-id (64-char hex launch tx hash)".to_string(),
+        ));
+    }
+
+    let raw_bytes = if template {
+        bubl_policy_template_bytes()?
+    } else {
+        load_policy_bytes_from_file(Path::new(file.expect("file checked above")))?
+    };
+
+    let mut policy = validate_rewards_policy(&raw_bytes).map_err(map_policy_error)?;
+    if let Some(id) = asset_id {
+        policy = apply_asset_id_to_policy(policy, id)?;
+    }
+
+    let bundle = build_rewards_policy_bundle(&policy).map_err(map_policy_error)?;
+    let out_path = out.map(Path::new);
+    if let Some(path) = out_path {
+        std::fs::write(path, &bundle.document_bytes).map_err(|e| {
+            CliError::ConfigError(format!("write {}: {e}", path.display()))
+        })?;
+        output.success(&format!("Wrote canonical policy to {}", path.display()))?;
+    }
+
+    let response = configure_response_json(&bundle, out_path);
+    output.print(&format_output(&response, &cli.format)?)?;
+    Ok(())
 }
 
 fn encode_did_for_path(did: &str) -> String {
@@ -754,5 +886,42 @@ mod tests {
         let header = get_operation_header(RewardOperation::Claim);
         assert!(header.contains("Claim"));
         assert!(header.contains("💰"));
+    }
+
+    #[test]
+    fn test_normalize_asset_id_hex() {
+        let id = "ab".repeat(32);
+        assert_eq!(normalize_asset_id_hex(&id).unwrap(), id);
+        assert!(normalize_asset_id_hex("0xabcd").is_err());
+    }
+
+    #[test]
+    fn test_bubl_template_validates_and_hashes() {
+        let bytes = bubl_policy_template_bytes().expect("template");
+        let mut policy = validate_rewards_policy(&bytes).expect("valid");
+        policy.asset_id = "cd".repeat(32);
+        let bundle = build_rewards_policy_bundle(&policy).expect("bundle");
+        assert_eq!(bundle.policy_hash.len(), 32);
+        assert_eq!(bundle.policy_cid.len(), 32);
+        assert!(!bundle.document_bytes.is_empty());
+    }
+
+    #[test]
+    fn test_configure_rejects_invalid_policy() {
+        let err = validate_rewards_policy(br#"{"schema":"wrong"}"#).unwrap_err();
+        assert!(err.to_string().contains("schema") || err.to_string().contains("JSON"));
+    }
+
+    #[test]
+    fn test_action_to_operation_configure() {
+        assert_eq!(
+            action_to_operation(&RewardAction::Configure {
+                file: None,
+                template: true,
+                asset_id: Some("aa".repeat(32)),
+                out: None,
+            }),
+            RewardOperation::Configure
+        );
     }
 }

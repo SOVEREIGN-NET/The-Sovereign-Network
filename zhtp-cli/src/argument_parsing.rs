@@ -1255,6 +1255,21 @@ pub enum RewardAction {
     Storage,
     /// [legacy] Reward configuration (placeholder)
     Config,
+    /// Validate or generate rewards policy JSON (C6 #2821)
+    Configure {
+        /// Policy JSON input file (omit with --template)
+        #[arg(long, conflicts_with = "template")]
+        file: Option<String>,
+        /// Emit canonical BUBL scaffold (requires --asset-id)
+        #[arg(long)]
+        template: bool,
+        /// Sovereign asset id (64-char hex) to bind into policy
+        #[arg(long)]
+        asset_id: Option<String>,
+        /// Write validated canonical JSON to this path
+        #[arg(long)]
+        out: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
