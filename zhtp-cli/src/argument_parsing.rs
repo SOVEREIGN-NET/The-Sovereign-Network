@@ -551,11 +551,11 @@ pub enum DaoAction {
         /// Transfer creator authority to governance at launch (requires --governance-signers)
         #[arg(long)]
         transfer_authority: bool,
-        /// Supply mode: fixed | elastic
+        /// Supply mode (fixed only; elastic requires curve module, not yet supported)
         #[arg(long, default_value = "fixed")]
         supply_mode: String,
-        /// Chain id byte for signed tx (default: 3)
-        #[arg(long, default_value = "3", env = "ZHTP_CHAIN_ID")]
+        /// Chain id byte for signed tx (default: 3; explicit flag only — not read from env)
+        #[arg(long, default_value = "3")]
         chain_id: u8,
         /// DAO class hint for post-launch registry (np|fp)
         #[arg(long)]

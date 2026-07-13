@@ -442,9 +442,10 @@ async fn handle_dao_command_impl(
         let mut next: Vec<&str> = Vec::new();
         if rewards_policy_file.is_none() {
             next.push("`reward configure --template --asset-id <hex> --out ./policy.json`");
-        }
-        if rewards_policy_file.is_none() || rewards_delegate_keystore.is_none() {
-            next.push("relaunch with `--rewards-policy-file` + `--rewards-delegate-keystore`");
+            next.push(
+                "post-launch rewards enablement via AssetModuleUpgrade is not exposed in the CLI yet — \
+                 include `--rewards-policy-file` + `--rewards-delegate-keystore` at launch",
+            );
         } else {
             next.push("`asset rewards fund-delegate --asset-id <hex> --amount <atoms>`");
             next.push("`node configure-rewards` (N3)");
