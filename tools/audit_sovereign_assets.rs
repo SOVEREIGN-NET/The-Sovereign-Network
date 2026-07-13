@@ -10,6 +10,35 @@ use lib_blockchain::contracts::sovereign_asset::{
 use std::path::PathBuf;
 
 const TREE_ASSETS: &str = "assets";
+const TREE_TOKEN_NONCES: &str = "token_nonces";
+
+fn print_token_nonce(path: &str, token_hex: &str, holder_hex: &str) -> Result<()> {
+    let token = parse_hex_32(token_hex, "token_id")?;
+    let holder = parse_hex_32(holder_hex, "holder_key_id")?;
+    let db = sled::open(path).with_context(|| format!("failed to open sled at {path}"))?;
+    let tree = db
+        .open_tree(TREE_TOKEN_NONCES)
+        .context("failed to open token_nonces tree")?;
+    let mut key = [0u8; 65];
+    key[0] = 0x01;
+    key[1..33].copy_from_slice(&token);
+    key[33..65].copy_from_slice(&holder);
+    let nonce = match tree.get(&key)? {
+        Some(bytes) if bytes.len() == 8 => u64::from_be_bytes(bytes.as_ref().try_into().unwrap()),
+        Some(bytes) => anyhow::bail!("invalid nonce length {}", bytes.len()),
+        None => 0,
+    };
+    println!("{{\"token_id\":\"{token_hex}\",\"holder\":\"{holder_hex}\",\"nonce\":{nonce}}}");
+    Ok(())
+}
+
+fn parse_hex_32(hex_str: &str, label: &str) -> Result<[u8; 32]> {
+    let bytes = hex::decode(hex_str.trim()).with_context(|| format!("{label} hex"))?;
+    anyhow::ensure!(bytes.len() == 32, "{label} must be 32 bytes");
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WireFormat {
@@ -26,9 +55,18 @@ fn detect_wire_format(bytes: &[u8]) -> WireFormat {
 }
 
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
+    let argv: Vec<String> = std::env::args().collect();
+    let path = argv
+        .get(1)
+        .cloned()
         .unwrap_or_else(|| "/opt/zhtp/.zhtp/data/testnet/sled".to_string());
+    if argv.get(2).map(String::as_str) == Some("--token-nonce") {
+        let token_hex = argv
+            .get(3)
+            .context("usage: audit_sovereign_assets <sled> --token-nonce <token_id> <holder_key_id>")?;
+        let holder_hex = argv.get(4).context("missing holder_key_id")?;
+        return print_token_nonce(&path, token_hex, holder_hex);
+    }
 
     println!("Opening sled (read-only audit): {}", path);
     let db = sled::open(PathBuf::from(&path))

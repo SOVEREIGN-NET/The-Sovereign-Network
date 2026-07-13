@@ -19,7 +19,7 @@ use lib_blockchain::{
             AssetAuthorityProof, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
             AssetUpgradeModule, GovernanceLaunchConfig,
         },
-        Transaction,
+        TokenTransferData, Transaction,
     },
 };
 use lib_blockchain::contracts::sovereign_asset::GovernanceVerifierState;
@@ -83,6 +83,8 @@ enum Command {
     RotateDelegate(RotateDelegateArgs),
     /// Enable governance module with creator as initial single signer.
     EnableGovernance(EnableGovernanceArgs),
+    /// Transfer BUBL from creator to spend delegate (rewards liquidity).
+    FundDelegate(FundDelegateArgs),
 }
 
 #[derive(Parser)]
@@ -111,6 +113,20 @@ struct RotateDelegateArgs {
     shared: SharedArgs,
     #[arg(long)]
     new_delegate_dir: PathBuf,
+}
+
+#[derive(Parser)]
+struct FundDelegateArgs {
+    #[command(flatten)]
+    shared: SharedArgs,
+    #[arg(long)]
+    delegate_dir: PathBuf,
+    /// Transfer amount in token atoms (18-decimal BUBL).
+    #[arg(long)]
+    amount: u128,
+    /// Token transfer nonce for creator (query via GET /api/v1/token/nonce/{token}/{holder}).
+    #[arg(long, default_value_t = 0)]
+    nonce: u64,
 }
 
 #[derive(Parser)]
@@ -278,6 +294,50 @@ fn main() -> Result<()> {
                     "migration": "2864-rotate-delegate",
                     "asset_id": hex::encode(asset_id),
                     "new_delegate_key_id": hex::encode(delegate.public_key.key_id),
+                }),
+            )?;
+        }
+        Command::FundDelegate(args) => {
+            let asset_id = parse_asset_id(&args.shared.asset_id)?;
+            let creator = load_keypair(&args.shared.keystore_dir)?;
+            let delegate = load_keypair(&args.delegate_dir)?;
+            if creator.public_key.key_id == delegate.public_key.key_id {
+                anyhow::bail!("delegate must differ from creator");
+            }
+            if args.amount == 0 {
+                anyhow::bail!("--amount must be non-zero");
+            }
+            let transfer_data = TokenTransferData {
+                token_id: asset_id,
+                from: creator.public_key.key_id,
+                to: delegate.public_key.key_id,
+                amount: args.amount,
+                nonce: args.nonce,
+            };
+            let mut tx = Transaction::new_token_transfer_with_chain_id(
+                args.shared.chain_id,
+                transfer_data,
+                Signature {
+                    signature: Vec::new(),
+                    public_key: PublicKey::new(creator.public_key.dilithium_pk),
+                    algorithm: SignatureAlgorithm::DEFAULT,
+                    timestamp: 0,
+                },
+                b"token:transfer:v1".to_vec(),
+            );
+            tx.fee = args.shared.fee;
+            tx.signature = creator
+                .sign(tx.signing_hash().as_bytes())
+                .context("sign fund-delegate transfer")?;
+            emit_tx(
+                "fund-delegate",
+                &tx,
+                serde_json::json!({
+                    "migration": "2864-fund-delegate",
+                    "asset_id": hex::encode(asset_id),
+                    "amount": args.amount.to_string(),
+                    "nonce": args.nonce,
+                    "delegate_key_id": hex::encode(delegate.public_key.key_id),
                 }),
             )?;
         }
