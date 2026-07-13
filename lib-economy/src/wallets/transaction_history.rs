@@ -739,23 +739,36 @@ impl TransactionHistoryManager {
 
         // Process all transactions
         for tx in &self.transactions {
-            // Category counts and volumes
+            // Category analytics are timestamp-independent.
             *transaction_counts.entry(tx.category.clone()).or_insert(0) += 1;
             *volume_by_category
                 .entry(tx.category.clone())
                 .or_insert(0u128) += tx.amount;
             *fees_by_category.entry(tx.category.clone()).or_insert(0u128) += tx.fees;
-
+            // Failure analytics are also timestamp-independent.
+            if let TransactionStatus::Failed { reason } = &tx.status {
+                *failure_analysis.entry(reason.clone()).or_insert(0) += 1;
+            }
+            // Only time-series analytics require a valid timestamp.
+            let timestamp = match i64::try_from(tx.timestamp) {
+                Ok(timestamp) => timestamp,
+                Err(_) => {
+                    info!(
+                        "Skipping time-series analytics for out-of-range transaction timestamp: {}",
+                        tx.timestamp
+                    );
+                    continue;
+                }
+            };
+            let Some(dt) = chrono::DateTime::from_timestamp(timestamp, 0) else {
+                info!(
+                    "Skipping time-series analytics for invalid transaction timestamp: {}",
+                    tx.timestamp
+                );
+                continue;
+            };
             // Monthly trends
-            let month_key = format!(
-                "{}-{:02}",
-                chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
-                    .unwrap()
-                    .year(),
-                chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
-                    .unwrap()
-                    .month()
-            );
+            let month_key = format!("{}-{:02}", dt.year(), dt.month());
 
             let monthly_data =
                 monthly_trends
@@ -778,9 +791,7 @@ impl TransactionHistoryManager {
                 .or_insert(0) += 1;
 
             // Daily patterns
-            let hour = chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
-                .unwrap()
-                .hour() as u8;
+            let hour = dt.hour() as u8;
             let daily_data = daily_patterns.entry(hour).or_insert(DailyActivityData {
                 hour,
                 transaction_count: 0,
@@ -790,11 +801,6 @@ impl TransactionHistoryManager {
 
             daily_data.transaction_count += 1;
             daily_data.total_volume += tx.amount;
-
-            // Failure analysis
-            if let TransactionStatus::Failed { reason } = &tx.status {
-                *failure_analysis.entry(reason.clone()).or_insert(0) += 1;
-            }
         }
 
         // Calculate averages
@@ -1028,6 +1034,110 @@ mod tests {
                 .volume_by_category
                 .get(&TransactionCategory::Payment),
             Some(&3000)
+        );
+    }
+
+    /// Regression test for issue #1544: invalid timestamps must not panic.
+    /// u64::MAX is an out-of-range timestamp that must be skipped gracefully.
+    #[tokio::test]
+    async fn test_invalid_timestamp_no_panic() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+
+        let mut tx =
+            create_payment_transaction([1u8; 32], [2u8; 32], 500, Priority::Normal).unwrap();
+        tx.timestamp = u64::MAX;
+        manager.add_transaction(tx).await.unwrap();
+
+        // Must not panic — this is the primary assertion.
+        let analytics = manager.generate_analytics().await.unwrap();
+
+        // Category totals must still include the transaction.
+        assert_eq!(
+            analytics
+                .transaction_counts
+                .get(&TransactionCategory::Payment),
+            Some(&1)
+        );
+        assert_eq!(
+            analytics
+                .volume_by_category
+                .get(&TransactionCategory::Payment),
+            Some(&500)
+        );
+
+        // Time-series buckets must be empty (invalid timestamp excluded).
+        assert!(
+            analytics.monthly_trends.is_empty(),
+            "invalid timestamp should not create monthly buckets"
+        );
+        assert!(
+            analytics.daily_patterns.is_empty(),
+            "invalid timestamp should not create hourly buckets"
+        );
+    }
+
+    /// Invalid failed transaction still contributes to failure analysis.
+    #[tokio::test]
+    async fn test_invalid_timestamp_failed_transaction_counted() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+
+        let mut tx =
+            create_payment_transaction([1u8; 32], [2u8; 32], 200, Priority::Normal).unwrap();
+        tx.timestamp = u64::MAX;
+        manager.add_transaction(tx).await.unwrap();
+
+        // Manually set status to Failed on the stored record.
+        manager.transactions[0].status = TransactionStatus::Failed {
+            reason: "insufficient_balance".into(),
+        };
+
+        let analytics = manager.generate_analytics().await.unwrap();
+
+        // Category count must include the transaction.
+        assert_eq!(
+            analytics
+                .transaction_counts
+                .get(&TransactionCategory::Payment),
+            Some(&1)
+        );
+
+        // Failure analysis must include it.
+        assert_eq!(
+            analytics
+                .performance_metrics
+                .failure_analysis
+                .get("insufficient_balance"),
+            Some(&1),
+            "failed transaction with invalid timestamp must still appear in failure_analysis"
+        );
+
+        // No time-series data.
+        assert!(analytics.monthly_trends.is_empty());
+        assert!(analytics.daily_patterns.is_empty());
+    }
+
+    /// Normal (valid) timestamp populates monthly and hourly analytics.
+    #[tokio::test]
+    async fn test_valid_timestamp_populates_time_series() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+
+        let tx = create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+        manager.add_transaction(tx).await.unwrap();
+
+        let analytics = manager.generate_analytics().await.unwrap();
+
+        // A valid timestamp must produce at least one monthly bucket.
+        assert!(
+            !analytics.monthly_trends.is_empty(),
+            "valid timestamp must populate monthly trends"
+        );
+        // And at least one hourly bucket.
+        assert!(
+            !analytics.daily_patterns.is_empty(),
+            "valid timestamp must populate daily patterns"
         );
     }
 }
