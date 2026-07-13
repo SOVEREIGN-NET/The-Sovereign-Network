@@ -2,6 +2,7 @@
 name = "lib-consensus-core"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 authors = ["Sovereign Network Team"]
 license = "MIT OR Apache-2.0"
 description = "Pure BFT consensus FSM. No IO. No domain leak."

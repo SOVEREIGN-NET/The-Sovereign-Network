@@ -2400,6 +2400,7 @@ fn stage_stub_proposal(
             timestamp: 0,
         },
         valid_round: None,
+        build_id: lib_consensus_core::build_id::local_build_id().to_string(),
     });
 }
 
@@ -2462,6 +2463,7 @@ fn make_signed_proposal(
             timestamp: 0,
         },
         valid_round: None,
+        build_id: lib_consensus_core::build_id::local_build_id().to_string(),
     }
 }
 
@@ -2798,6 +2800,37 @@ async fn test_future_round_precommit_does_not_advance_local_round() {
         engine.count_precommits_for(5, 3, &proposal_id),
         1,
         "future-round precommit should still be stored"
+    );
+}
+
+#[tokio::test]
+async fn test_proposal_admission_wrong_build_id_rejected() {
+    let (engine, validators) = setup_bft_engine(1, 0).await;
+    let expected = engine.compute_proposer_for_round(1, 0).unwrap();
+    let (proposer_id, proposer_kp) = validators
+        .iter()
+        .find(|(id, _)| *id == expected)
+        .expect("proposer must exist");
+
+    let mut proposal = make_signed_proposal(
+        &engine,
+        proposer_id,
+        proposer_kp,
+        1,
+        0,
+        Hash([0u8; 32]),
+        b"block".to_vec(),
+    );
+
+    proposal.build_id = "deadbeef0000".to_string();
+
+    let result = engine.validate_incoming_proposal(&proposal).await;
+    assert!(result.is_err(), "mismatched build_id must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("build_id mismatch"),
+        "error should mention build_id, got: {}",
+        err
     );
 }
 
@@ -3386,6 +3419,7 @@ async fn test_ce_s2_locked_peer_unlocks_on_advertised_valid_round() {
             timestamp: 0,
         },
         valid_round: Some(5),
+        build_id: lib_consensus_core::build_id::local_build_id().to_string(),
     };
 
     let allowed = engine.prevote_permitted_by_lock(Some(&proposal), &new_id);

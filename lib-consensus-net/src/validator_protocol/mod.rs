@@ -360,6 +360,7 @@ impl ValidatorProtocol {
             consensus_state,
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(),
+            build_id: lib_consensus_core::build_id::local_build_id().to_string(),
         };
 
         message.signature = self.sign_vote_message(&message)?;
@@ -407,6 +408,7 @@ impl ValidatorProtocol {
             network_summary,
             timestamp: self.current_timestamp(),
             signature: PostQuantumSignature::default(),
+            build_id: lib_consensus_core::build_id::local_build_id().to_string(),
         };
 
         message.signature = self.sign_heartbeat_message(&message)?;
@@ -976,6 +978,8 @@ mod tests {
                     zk_did_proof: None,
                     timestamp: now,
                 },
+                valid_round: None,
+                build_id: String::new(),
             },
             justification: None,
             timestamp: now,
@@ -1019,6 +1023,7 @@ mod tests {
             },
             timestamp: now,
             signature: PostQuantumSignature::default(),
+            build_id: String::new(),
         };
         msg.signature = sign_heartbeat_envelope(&msg, &kp)?;
 
@@ -1058,6 +1063,7 @@ mod tests {
             },
             timestamp: now,
             signature: PostQuantumSignature::default(),
+            build_id: String::new(),
         };
         msg.signature = sign_vote_envelope(&msg, &kp)?;
 
@@ -1120,6 +1126,8 @@ mod tests {
                     zk_did_proof: None,
                     timestamp: now,
                 },
+                valid_round: None,
+                build_id: String::new(),
             },
             justification: None,
             timestamp: now,
@@ -1194,6 +1202,7 @@ mod tests {
             },
             timestamp: protocol.current_timestamp(),
             signature: PostQuantumSignature::default(),
+            build_id: String::new(),
         };
 
         protocol
@@ -1232,6 +1241,8 @@ mod tests {
                     zk_did_proof: None,
                     timestamp: now,
                 },
+                valid_round: None,
+                build_id: String::new(),
             },
             justification: None,
             timestamp: now,
@@ -1286,6 +1297,7 @@ mod tests {
             consensus_state: state_view,
             timestamp: now,
             signature: PostQuantumSignature::default(),
+            build_id: String::new(),
         };
         msg.signature = protocol.sign_vote_message(&msg)?;
 
@@ -1329,6 +1341,8 @@ mod tests {
                     zk_did_proof: None,
                     timestamp: now,
                 },
+                valid_round: None,
+                build_id: String::new(),
             },
             justification: None,
             timestamp: now,

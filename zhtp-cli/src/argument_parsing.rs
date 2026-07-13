@@ -1086,6 +1086,12 @@ pub struct VersionArgs {
     /// Show full build information
     #[arg(short, long)]
     pub full: bool,
+    /// Print only the consensus build id (for deploy scripts)
+    #[arg(long)]
+    pub build_id_only: bool,
+    /// Query the remote node at `-s` / `ZHTP_SERVER` for its consensus build id
+    #[arg(long)]
+    pub remote: bool,
 }
 
 /// Shell completion command
@@ -2202,9 +2208,11 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Monitor(args) => commands::monitor::handle_monitor_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
-        ZhtpCommand::Version(args) => commands::version::handle_version_command(args.clone())
-            .await
-            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Version(args) => {
+            commands::version::handle_version_command(args.clone(), &cli.server)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
         ZhtpCommand::Completion(args) => {
             commands::completion::handle_completion_command(args.clone())
                 .await

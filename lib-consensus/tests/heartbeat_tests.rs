@@ -35,6 +35,7 @@ fn create_test_heartbeat(
         network_summary: create_test_network_summary(4),
         timestamp,
         signature: create_test_signature(timestamp),
+        build_id: String::new(),
     }
 }
 

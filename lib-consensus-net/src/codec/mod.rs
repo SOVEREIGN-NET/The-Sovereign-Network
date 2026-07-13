@@ -405,6 +405,7 @@ mod tests {
                     consensus_state: create_test_consensus_state(),
                     timestamp: 1234567890,
                     signature: PostQuantumSignature::default(),
+                    build_id: String::new(),
                 })
             }
             2 => {
@@ -418,6 +419,7 @@ mod tests {
                     network_summary: create_test_network_summary(),
                     timestamp: 1234567890,
                     signature: PostQuantumSignature::default(),
+                    build_id: String::new(),
                 })
             }
             _ => panic!("Invalid variant"),
@@ -441,6 +443,8 @@ mod tests {
             timestamp: 1234567890,
             signature: PostQuantumSignature::default(),
             consensus_proof: create_test_consensus_proof(),
+            valid_round: None,
+            build_id: String::new(),
         }
     }
 
@@ -861,6 +865,8 @@ mod tests {
                 timestamp: 0,
                 signature: zero_sig.clone(),
                 consensus_proof: zero_proof,
+                valid_round: None,
+                build_id: String::new(),
             };
             let zero_vote = ConsensusVote {
                 id: zero_hash.clone(),
@@ -879,7 +885,7 @@ mod tests {
                     proposal: zero_proposal,
                     justification: None,
                     timestamp: 0,
-                    signature: zero_sig,
+                    signature: zero_sig.clone(),
                 }),
                 1 => ValidatorMessage::Vote(VoteMessage {
                     message_id: zero_hash.clone(),
@@ -893,7 +899,8 @@ mod tests {
                         vote_counts: std::collections::BTreeMap::new(),
                     },
                     timestamp: 0,
-                    signature: zero_sig,
+                    signature: zero_sig.clone(),
+                    build_id: String::new(),
                 }),
                 2 => ValidatorMessage::Heartbeat(HeartbeatMessage {
                     message_id: zero_hash.clone(),
@@ -908,6 +915,7 @@ mod tests {
                     },
                     timestamp: 0,
                     signature: zero_sig,
+                    build_id: String::new(),
                 }),
                 _ => panic!("invalid variant"),
             }
@@ -930,7 +938,7 @@ mod tests {
             // bump CONSENSUS_PROTOCOL_VERSION.
             assert_eq!(
                 encoded.len(),
-                8_677,
+                8_686,
                 "ProposeMessage encoded length changed — wire format \
                  drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
             );
@@ -942,7 +950,7 @@ mod tests {
             let encoded = codec.encode(&zero_message(1)).expect("encode");
             assert_eq!(
                 encoded.len(),
-                8_684,
+                8_692,
                 "VoteMessage encoded length changed — wire format \
                  drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
             );
@@ -954,7 +962,7 @@ mod tests {
             let encoded = codec.encode(&zero_message(2)).expect("encode");
             assert_eq!(
                 encoded.len(),
-                4_340,
+                4_348,
                 "HeartbeatMessage encoded length changed — wire format \
                  drifted. Bump CONSENSUS_PROTOCOL_VERSION (CONS-203)."
             );

@@ -587,6 +587,22 @@ impl ConsensusEngine {
                 self.on_proposal(propose_msg.proposal).await?;
             }
             ValidatorMessage::Vote(vote_msg) => {
+                if let Err(reason) =
+                    lib_consensus_core::build_id::validate_peer_build_id(&vote_msg.build_id)
+                {
+                    tracing::warn!(
+                        "Vote rejected: {reason} — peer build_id {:?}, we require {:?} \
+                         (voter {} H={} R={} {:?})",
+                        vote_msg.build_id,
+                        lib_consensus_core::build_id::CONSENSUS_BUILD_ID,
+                        vote_msg.voter,
+                        vote_msg.vote.height,
+                        vote_msg.vote.round,
+                        vote_msg.vote.vote_type,
+                    );
+                    return Ok(());
+                }
+
                 let vote = vote_msg.vote;
                 // Compute payload hash for replay detection
                 let payload_bytes =

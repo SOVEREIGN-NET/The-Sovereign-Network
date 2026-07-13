@@ -9531,6 +9531,7 @@ dependencies = [
  "hex",
  "lib-blockchain",
  "lib-client",
+ "lib-consensus-core",
  "lib-crypto",
  "lib-economy",
  "lib-governance",

@@ -135,4 +135,11 @@ pub struct ConsensusProposal {
     /// proposals as `None`.
     #[serde(default)]
     pub valid_round: Option<u32>,
+    /// Git short hash identifying the validator binary that produced
+    /// this proposal. Peers reject proposals whose `build_id` does not
+    /// match their own `CONSENSUS_BUILD_ID`, preventing mixed-binary
+    /// clusters from silently diverging. Not part of the inner proposal
+    /// signature — admission-time metadata only.
+    #[serde(default)]
+    pub build_id: String,
 }

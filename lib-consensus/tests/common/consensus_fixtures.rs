@@ -143,6 +143,7 @@ pub fn test_proposal(
                 .with_stake_proof(&stake_proof)
         },
         valid_round: None,
+        build_id: lib_consensus_core::build_id::local_build_id().to_string(),
     }
 }
 

@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 // Removed unused Deserialize and serde_json::json
 
 // ZHTP protocol imports
+use lib_consensus_core::CONSENSUS_BUILD_ID;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
@@ -159,6 +160,9 @@ struct VersionResponse {
     server_version: String,
     protocol_version: String,
     api_version: String,
+    /// Git short hash identifying this validator binary. Peers reject
+    /// consensus messages when this does not match their own build.
+    consensus_build_id: String,
     build_info: BuildInfo,
 }
 
@@ -287,8 +291,9 @@ impl ProtocolHandler {
             server_version: server_info.version.clone(),
             protocol_version: server_info.protocol_version.clone(),
             api_version: "1.0".to_string(),
+            consensus_build_id: CONSENSUS_BUILD_ID.to_string(),
             build_info: BuildInfo {
-                commit: "dev-build".to_string(),
+                commit: CONSENSUS_BUILD_ID.to_string(),
                 build_date: "2025-09-18".to_string(),
                 rust_version: "1.70+".to_string(),
             },

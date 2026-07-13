@@ -13,15 +13,19 @@
 #   scripts/deploy-validators.sh --skip-halt <binary-path>   # already halted, e.g. chain stuck
 #
 # What it does, in order:
-#   1. md5sum the local binary.
+#   1. md5sum the local binary; capture consensus build_id from zhtp-cli.
+#   1b. Pre-flight: verify all running validators report the same build_id
+#       (aborts on mixed cluster — coordinated upgrade required).
 #   2. halt-consensus on all validators (council role required).
 #   3. Verify "HALTED" appears in each validator's log.
 #   4. Rsync binary to each (parallel).
 #   5. md5-verify on each. Abort if mismatch.
+#   5b. Verify embedded consensus build_id in each remote binary (strings).
 #   6. Restart all (parallel).
 #   7. Poll for "Caught up at height" on each (timeout per node).
-#   8. Print state table: node | height | md5 | voting?
-#   9. Exit non-zero on any failure.
+#   8. Post-flight: verify each node reports matching build_id via API.
+#   9. Print state table: node | height | md5 | build_id
+#  10. Exit non-zero on any failure.
 #
 # Operator never types systemctl, rsync, or md5sum manually. Mistakes
 # (forgetting to halt, missing a node, deploying wrong binary) become
@@ -40,8 +44,10 @@ NODES=(
 )
 
 REMOTE_BIN=/opt/zhtp/zhtp
+CLI_BIN="./target/dev-release/zhtp-cli"
 HALT_WAIT_SECS=30
 RESTART_WAIT_SECS=600
+BUILD_ID_POLL_SECS=120
 SERVICE=zhtp
 
 # ---- arg parse --------------------------------------------------------------
@@ -82,13 +88,77 @@ run_on() {
     ssh "$alias" "${sudo} ${cmd}"
 }
 
-# ---- step 1: local md5 -----------------------------------------------------
+# Consensus build id embedded at compile time (git short hash).
+# Requires zhtp-cli built from the same tree as the deploy binary.
+local_build_id() {
+    if [[ -x "$CLI_BIN" ]]; then
+        "$CLI_BIN" version --build-id-only 2>/dev/null && return 0
+    fi
+    # Fallback: scrape from the binary being deployed.
+    strings "$BINARY" 2>/dev/null | rg -o '^[0-9a-f]{12}(-dirty)?$' | head -1
+}
+
+remote_build_id_api() {
+    # remote_build_id_api <ip>
+    local ip=$1
+    [[ -x "$CLI_BIN" ]] || return 1
+    "$CLI_BIN" -s "$ip:9334" version --remote --build-id-only 2>/dev/null
+}
+
+remote_build_id_binary() {
+    # remote_build_id_binary <alias> <sudo>
+    local alias=$1 sudo=$2
+    ssh "$alias" "${sudo} strings $REMOTE_BIN 2>/dev/null" \
+        | rg -o '^[0-9a-f]{12}(-dirty)?$' | head -1
+}
+
+# ---- step 1: local md5 + build id ------------------------------------------
 
 LOCAL_MD5=$(md5sum "$BINARY" | awk '{print $1}')
+LOCAL_BUILD_ID=$(local_build_id)
+[[ -z "$LOCAL_BUILD_ID" ]] && fail "could not determine local consensus build_id — build zhtp-cli first: cargo build --profile dev-release -p zhtp-cli"
 log "local binary md5: $LOCAL_MD5  ($BINARY)"
+log "local consensus build_id: $LOCAL_BUILD_ID"
 
 if [[ $DRY_RUN -eq 1 ]]; then
     log "DRY RUN — printing planned actions, no changes."
+fi
+
+# ---- step 1b: pre-flight build_id homogeneity ------------------------------
+#
+# Mixed build_ids on a live cluster will stall consensus once any node
+# upgrades. Abort before halt if the running validators disagree.
+
+if [[ $DRY_RUN -eq 0 ]]; then
+    log "pre-flight: checking running validators report a homogeneous build_id..."
+    PREFLIGHT_IDS=()
+    PREFLIGHT_REACHABLE=0
+    for entry in "${NODES[@]}"; do
+        IFS='|' read -r alias ip sudo <<< "$entry"
+        REMOTE_ID=$(remote_build_id_api "$ip" || true)
+        if [[ -n "$REMOTE_ID" ]]; then
+            PREFLIGHT_REACHABLE=$((PREFLIGHT_REACHABLE+1))
+            PREFLIGHT_IDS+=("$alias:$REMOTE_ID")
+            log "  $alias build_id=$REMOTE_ID"
+        else
+            warn "  $alias: no build_id via API (pre-upgrade node or unreachable)"
+        fi
+    done
+
+    if [[ $PREFLIGHT_REACHABLE -gt 0 ]]; then
+        UNIQUE_PREFLIGHT=$(printf '%s\n' "${PREFLIGHT_IDS[@]}" | cut -d: -f2 | sort -u | wc -l)
+        if [[ "$UNIQUE_PREFLIGHT" -gt 1 ]]; then
+            fail "mixed build_id cluster detected — halt manually and redeploy all validators together"
+        fi
+        BASELINE_ID=$(printf '%s\n' "${PREFLIGHT_IDS[@]}" | head -1 | cut -d: -f2)
+        if [[ -n "$BASELINE_ID" && "$BASELINE_ID" == "$LOCAL_BUILD_ID" ]]; then
+            ok "cluster already on target build_id $LOCAL_BUILD_ID — nothing to deploy"
+            exit 0
+        fi
+        ok "pre-flight: homogeneous cluster (build_id=${BASELINE_ID:-unknown}), proceeding with upgrade to $LOCAL_BUILD_ID"
+    else
+        warn "pre-flight: no API build_id from any node — proceeding (first deploy or nodes down)"
+    fi
 fi
 
 # ---- step 2: halt all validators -------------------------------------------
@@ -202,6 +272,17 @@ if [[ $DRY_RUN -eq 0 ]]; then
             fail "md5 MISMATCH on $alias: got $REMOTE_MD5, expected $LOCAL_MD5"
         fi
     done
+
+    log "verifying remote binary embeds build_id == $LOCAL_BUILD_ID..."
+    for entry in "${NODES[@]}"; do
+        IFS='|' read -r alias _ip sudo <<< "$entry"
+        REMOTE_ID=$(remote_build_id_binary "$alias" "$sudo")
+        if [[ "$REMOTE_ID" == "$LOCAL_BUILD_ID" ]]; then
+            ok "build_id match (binary): $alias"
+        else
+            fail "build_id MISMATCH on $alias: embedded $REMOTE_ID, expected $LOCAL_BUILD_ID"
+        fi
+    done
 fi
 
 # ---- step 6: restart all (parallel) ----------------------------------------
@@ -231,6 +312,25 @@ if [[ $DRY_RUN -eq 0 ]]; then
             warn "TIMEOUT: $alias did not reach active consensus in ${RESTART_WAIT_SECS}s — check manually"
         fi
     done
+
+    log "post-flight: verifying API build_id on all validators (timeout: ${BUILD_ID_POLL_SECS}s)..."
+    for entry in "${NODES[@]}"; do
+        IFS='|' read -r alias ip _sudo <<< "$entry"
+        REMOTE_ID=""
+        deadline=$(( $(date +%s) + BUILD_ID_POLL_SECS ))
+        while [[ $(date +%s) -lt $deadline ]]; do
+            REMOTE_ID=$("$CLI_BIN" -s "$ip:9334" version --remote --build-id-only 2>/dev/null || true)
+            if [[ "$REMOTE_ID" == "$LOCAL_BUILD_ID" ]]; then
+                break
+            fi
+            sleep 5
+        done
+        if [[ "$REMOTE_ID" == "$LOCAL_BUILD_ID" ]]; then
+            ok "build_id match (API): $alias"
+        else
+            fail "build_id API mismatch on $alias: got '${REMOTE_ID:-?}', expected $LOCAL_BUILD_ID"
+        fi
+    done
 fi
 
 # ---- step 8: state table ---------------------------------------------------
@@ -238,14 +338,15 @@ fi
 if [[ $DRY_RUN -eq 0 ]]; then
     echo
     log "final cluster state:"
-    printf '%-12s  %-10s  %-32s\n' NODE HEIGHT MD5
-    printf '%-12s  %-10s  %-32s\n' '----' '------' '---'
+    printf '%-12s  %-10s  %-32s  %-16s\n' NODE HEIGHT MD5 BUILD_ID
+    printf '%-12s  %-10s  %-32s  %-16s\n' '----' '------' '---' '---------'
     for entry in "${NODES[@]}"; do
-        IFS='|' read -r alias _ip sudo <<< "$entry"
+        IFS='|' read -r alias ip sudo <<< "$entry"
         height=$(ssh "$alias" "${sudo} journalctl -u $SERVICE -n 30 --no-pager 2>/dev/null | grep -oE 'height=[0-9]+' | tail -1 | cut -d= -f2" 2>/dev/null || echo "?")
         md5=$(ssh "$alias" "${sudo} md5sum $REMOTE_BIN 2>/dev/null | awk '{print \$1}'" 2>/dev/null || echo "?")
-        printf '%-12s  %-10s  %-32s\n' "$alias" "${height:-?}" "${md5:-?}"
+        build_id=$("$CLI_BIN" -s "$ip:9334" version --remote --build-id-only 2>/dev/null || echo "?")
+        printf '%-12s  %-10s  %-32s  %-16s\n' "$alias" "${height:-?}" "${md5:-?}" "${build_id:-?}"
     done
 fi
 
-ok "deploy complete"
+ok "deploy complete (build_id=$LOCAL_BUILD_ID)"

@@ -107,6 +107,7 @@ fn wrap_vote(vote: ConsensusVote, keypair: Option<&KeyPair>) -> ValidatorMessage
         consensus_state,
         timestamp: now_secs(),
         signature: PostQuantumSignature::default(),
+        build_id: lib_consensus_core::build_id::local_build_id().to_string(),
     };
     if let Some(kp) = keypair {
         match sign_vote_envelope(&msg, kp) {
@@ -3295,6 +3296,7 @@ mod state_machine_tests {
                 timestamp: 0,
             },
             valid_round: None,
+            build_id: String::new(),
         };
         let result = cb.commit_finalized_block(&proposal).await;
         assert!(result.is_err(), "commit callback must propagate errors");

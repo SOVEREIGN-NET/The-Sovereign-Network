@@ -509,6 +509,21 @@ impl ConsensusEngine {
             )));
         }
 
+        // ── 0b. Build identity ───────────────────────────────────────────
+        if let Err(reason) =
+            lib_consensus_core::build_id::validate_peer_build_id(&proposal.build_id)
+        {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: {reason} — peer build_id {:?}, \
+                 we require {:?} (proposer {} at H={} R={})",
+                proposal.build_id,
+                lib_consensus_core::build_id::CONSENSUS_BUILD_ID,
+                proposal.proposer,
+                proposal.height,
+                proposal.round,
+            )));
+        }
+
         // ── 1. Expected proposer for (height, round) ────────────────────
         let expected_proposer = self.compute_proposer_for_round(proposal.height, proposal.round);
         if expected_proposer.as_ref() != Some(&proposal.proposer) {
