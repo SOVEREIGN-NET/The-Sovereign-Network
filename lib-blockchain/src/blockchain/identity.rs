@@ -158,6 +158,20 @@ impl Blockchain {
     /// the sled-only (post-restart) case. A transient sled error is logged, not
     /// treated as "absent". Detecting a shadow-only phantom (present in-mem,
     /// absent in sled) is the divergence detector's job, not this gate's.
+    /// Whether `did` is registered in durable sled (consensus oracle).
+    ///
+    /// Unlike [`Self::identity_exists`], does not treat in-memory shadow entries
+    /// as registered. Use for admission gates that must match executor apply.
+    pub fn owner_identity_registered_in_store(&self, did: &str) -> Result<bool, String> {
+        let store = self
+            .get_store()
+            .ok_or_else(|| "blockchain store unavailable".to_string())?;
+        crate::transaction::reward_claim::owner_identity_registered_on_store(
+            store.as_ref(),
+            did,
+        )
+    }
+
     pub fn identity_exists(&self, did: &str) -> bool {
         if self.identity_registry.contains_key(did) {
             return true;

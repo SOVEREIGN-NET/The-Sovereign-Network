@@ -99,8 +99,10 @@ pub fn plan_reward_claim(
     did: &str,
     spec: &ClaimSpec,
 ) -> Result<RewardClaimPlan, String> {
-    if !bc.identity_exists(did) {
-        return Err("owner_did_not_registered".into());
+    match bc.owner_identity_registered_in_store(did) {
+        Ok(true) => {}
+        Ok(false) => return Err("owner_did_not_registered".into()),
+        Err(_) => return Err("owner_did_not_registered".into()),
     }
     let ts = claim_unix_ts();
     let date = utc_date_from_ts(ts);

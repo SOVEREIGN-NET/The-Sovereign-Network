@@ -6,7 +6,7 @@ use lib_blockchain::block::Block;
 use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::storage::{
-    convert_legacy_identity, Address, BlockchainStore, TokenId,
+    convert_legacy_identity, Address, BlockchainStore, SledStore, TokenId,
 };
 use lib_blockchain::transaction::reward_claim::{
     expected_amount_for_event, RewardClaimData, RewardEventKind, REWARD_CLAIM_MEMO,
@@ -16,6 +16,7 @@ use lib_blockchain::transaction::{IdentityTransactionData, Transaction};
 use lib_blockchain::types::Hash;
 use lib_blockchain::Blockchain;
 use lib_crypto::{KeyPair, PublicKey, SignatureAlgorithm};
+use tempfile::tempdir;
 
 use super::block_builders;
 
@@ -103,12 +104,17 @@ fn register_actor_identities_store(store: &dyn BlockchainStore, actors: &RewardC
     put_identity_direct(store, &actors.owner_did, &actors.beneficiary.public_key);
 }
 
-/// In-memory blockchain with treasury identity + BUBL contract, but beneficiary
-/// `owner_did` deliberately absent from the registry (halt regression harness).
-pub fn mempool_blockchain_unregistered_beneficiary(actors: &RewardClaimActors) -> Blockchain {
-    let mut blockchain = Blockchain::new().expect("blockchain construct");
-    let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
-    register_identity_shadow(&mut blockchain, &treasury_did, &actors.treasury.public_key);
+fn attach_ephemeral_store(blockchain: &mut Blockchain) -> Arc<dyn BlockchainStore> {
+    // Leak tempdir for test lifetime — store path must remain valid.
+    let dir = Box::leak(Box::new(tempdir().expect("tempdir for mempool sled")));
+    let store: Arc<dyn BlockchainStore> = Arc::new(
+        SledStore::open(dir.path().join("mempool_store")).expect("ephemeral sled store"),
+    );
+    blockchain.set_store(store.clone());
+    store
+}
+
+fn install_bubl_mempool_fixtures(blockchain: &mut Blockchain, actors: &RewardClaimActors) {
     let bubl = bubl_token_contract(&actors.treasury.public_key);
     blockchain.insert_token_contract(actors.token_id, bubl);
     blockchain.insert_token_nonce_shadow(
@@ -116,20 +122,43 @@ pub fn mempool_blockchain_unregistered_beneficiary(actors: &RewardClaimActors) -
         actors.treasury.public_key.key_id,
         0,
     );
+}
+
+/// In-memory blockchain with treasury identity + BUBL contract, but beneficiary
+/// `owner_did` deliberately absent from the registry (halt regression harness).
+pub fn mempool_blockchain_unregistered_beneficiary(actors: &RewardClaimActors) -> Blockchain {
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let store = attach_ephemeral_store(&mut blockchain);
+    let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
+    put_identity_direct(store.as_ref(), &treasury_did, &actors.treasury.public_key);
+    register_identity_shadow(&mut blockchain, &treasury_did, &actors.treasury.public_key);
+    install_bubl_mempool_fixtures(&mut blockchain, actors);
+    blockchain
+}
+
+/// Beneficiary exists in shadow only (phantom) — `identity_exists` true, sled false.
+pub fn mempool_blockchain_shadow_phantom_beneficiary(actors: &RewardClaimActors) -> Blockchain {
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let store = attach_ephemeral_store(&mut blockchain);
+    let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
+    put_identity_direct(store.as_ref(), &treasury_did, &actors.treasury.public_key);
+    register_identity_shadow(&mut blockchain, &treasury_did, &actors.treasury.public_key);
+    register_identity_shadow(
+        &mut blockchain,
+        &actors.owner_did,
+        &actors.beneficiary.public_key,
+    );
+    install_bubl_mempool_fixtures(&mut blockchain, actors);
     blockchain
 }
 
 /// In-memory blockchain with identities + BUBL contract for mempool admission tests.
 pub fn mempool_blockchain(actors: &RewardClaimActors) -> Blockchain {
     let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let store = attach_ephemeral_store(&mut blockchain);
+    register_actor_identities_store(store.as_ref(), actors);
     register_actor_identities_shadow(&mut blockchain, actors);
-    let bubl = bubl_token_contract(&actors.treasury.public_key);
-    blockchain.insert_token_contract(actors.token_id, bubl);
-    blockchain.insert_token_nonce_shadow(
-        actors.token_id,
-        actors.treasury.public_key.key_id,
-        0,
-    );
+    install_bubl_mempool_fixtures(&mut blockchain, actors);
     blockchain
 }
 

@@ -14,9 +14,48 @@ mod common;
 
 use common::block_builders;
 use common::reward_claim_harness::{
-    mempool_blockchain, mempool_blockchain_unregistered_beneficiary, seed_executor_store,
-    welcome_claim_tx, RewardClaimActors,
+    mempool_blockchain, mempool_blockchain_shadow_phantom_beneficiary,
+    mempool_blockchain_unregistered_beneficiary, seed_executor_store, welcome_claim_tx,
+    RewardClaimActors,
 };
+
+#[test]
+fn registered_owner_did_accepted_into_mempool() {
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain(&actors);
+
+    blockchain
+        .add_pending_transaction(welcome_claim_tx(&actors, 0))
+        .expect("registered owner_did claim should enter mempool");
+    assert_eq!(blockchain.get_pending_transactions().len(), 1);
+}
+
+#[test]
+fn shadow_only_owner_did_rejected_from_mempool() {
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain_shadow_phantom_beneficiary(&actors);
+
+    assert!(
+        blockchain.identity_exists(&actors.owner_did),
+        "phantom DID must be visible to identity_exists (shadow)"
+    );
+    assert!(
+        !blockchain
+            .owner_identity_registered_in_store(&actors.owner_did)
+            .expect("store attached"),
+        "phantom DID must be absent from sled"
+    );
+
+    let err = blockchain
+        .add_pending_transaction(welcome_claim_tx(&actors, 0))
+        .expect_err("shadow-only owner_did must not pass sled gate");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("verification failed"),
+        "expected mempool rejection, got: {msg}"
+    );
+    assert!(blockchain.get_pending_transactions().is_empty());
+}
 
 #[test]
 fn unregistered_owner_did_rejected_from_mempool() {

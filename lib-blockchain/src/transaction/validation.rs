@@ -2493,19 +2493,26 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
 
         // RewardClaim: signer is the spend delegate (system tx), but beneficiary
-        // `owner_did` must be registered — same rule as executor apply.
+        // `owner_did` must exist in durable sled — same oracle as executor apply.
         if transaction.transaction_type == TransactionType::RewardClaim {
             let data = transaction
                 .reward_claim_data()
                 .ok_or(ValidationError::MissingRequiredData)?;
-            if let Some(blockchain) = self.blockchain {
-                if !blockchain.identity_exists(&data.owner_did) {
-                    tracing::warn!(
-                        "[REWARD_CLAIM] owner_did not registered: {}",
-                        &data.owner_did[..data.owner_did.len().min(32)]
-                    );
-                    return Err(ValidationError::InvalidTransaction);
-                }
+            let blockchain = self
+                .blockchain
+                .ok_or(ValidationError::InvalidTransaction)?;
+            let store = blockchain
+                .get_store()
+                .ok_or(ValidationError::InvalidTransaction)?;
+            if let Err(e) = crate::transaction::reward_claim::validate_owner_identity_registered(
+                store.as_ref(),
+                &data.owner_did,
+            ) {
+                tracing::warn!(
+                    "[REWARD_CLAIM] owner_did not registered in sled: {} ({e})",
+                    &data.owner_did[..data.owner_did.len().min(32)]
+                );
+                return Err(ValidationError::InvalidTransaction);
             }
             return Ok(());
         }
