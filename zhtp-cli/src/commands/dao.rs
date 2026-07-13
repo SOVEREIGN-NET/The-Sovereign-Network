@@ -369,6 +369,8 @@ async fn handle_dao_command_impl(
     if let DaoAction::Launch {
         ref name,
         ref symbol,
+        ref template,
+        preview,
         supply,
         decimals,
         ref treasury_recipient,
@@ -383,6 +385,75 @@ async fn handle_dao_command_impl(
         ref dao_class,
     } = args.action
     {
+        if preview && template.is_none() && supply.is_none() {
+            return Err(CliError::ConfigError(
+                "--preview requires --template or --supply".to_string(),
+            ));
+        }
+
+        let (resolved_supply, resolved_decimals, resolved_supply_mode, template_meta) =
+            match crate::commands::launch_templates::resolve_launch_params(
+                template.as_deref(),
+                supply,
+                decimals,
+            )? {
+                Some((tmpl, resolved)) => {
+                    if supply_mode.to_ascii_lowercase() != "fixed" {
+                        output.warning(
+                            "--supply-mode is ignored when --template is set (templates are fixed-only)",
+                        )?;
+                    }
+                    (
+                        resolved.supply_atoms,
+                        resolved.decimals,
+                        resolved.supply_mode,
+                        Some(tmpl),
+                    )
+                }
+                None => {
+                    let supply_atoms = supply.expect("clap requires --supply without --template");
+                    let dec = decimals.unwrap_or(18);
+                    (supply_atoms, dec, supply_mode.clone(), None)
+                }
+            };
+
+        if preview {
+            let split = crate::commands::launch_templates::preview_launch(
+                name,
+                symbol,
+                resolved_supply,
+                resolved_decimals,
+                template_meta.as_ref(),
+            )?;
+            output.header("DAO Launch Preview")?;
+            if let Some(tmpl) = &template_meta {
+                output.info(&format!(
+                    "Template: {} ({}) — {}",
+                    tmpl.label, tmpl.id, tmpl.description
+                ))?;
+            }
+            output.print(&format_output(
+                &serde_json::to_value(&split).map_err(|e| {
+                    CliError::ConfigError(format!("serialize preview: {e}"))
+                })?,
+                &cli.format,
+            )?)?;
+            return Ok(());
+        }
+
+        if let Some(tmpl) = &template_meta {
+            output.info(&format!(
+                "Template: {} ({}) — {}",
+                tmpl.label, tmpl.id, tmpl.description
+            ))?;
+            if let Some(example) = &tmpl.rewards_policy_example {
+                output.info(&format!(
+                    "Rewards policy example: {} (use with --rewards-policy-file after configure)",
+                    example
+                ))?;
+            }
+        }
+
         output.header("DAO Launch (AssetLaunch)")?;
         let treasury = treasury_recipient
             .clone()
@@ -397,6 +468,19 @@ async fn handle_dao_command_impl(
             symbol,
             &treasury[..16.min(treasury.len())]
         ))?;
+        if let Some(tmpl) = &template_meta {
+            let split = crate::commands::launch_templates::preview_launch(
+                name,
+                symbol,
+                resolved_supply,
+                resolved_decimals,
+                Some(tmpl),
+            )?;
+            output.info(&format!(
+                "Split preview: {} creator / {} treasury atoms",
+                split.creator_allocation_atoms, split.treasury_allocation_atoms
+            ))?;
+        }
         if let Some(class) = class_hint {
             output.info(&format!(
                 "DAO class hint: {} (use with `dao registry-register` after launch)",
@@ -415,7 +499,9 @@ async fn handle_dao_command_impl(
         if transfer_authority {
             output.info("Transfer authority to governance at launch: enabled")?;
         }
-        output.info(&format!("Supply mode: {supply_mode}, chain_id: {chain_id}"))?;
+        output.info(&format!(
+            "Supply mode: {resolved_supply_mode}, chain_id: {chain_id}"
+        ))?;
 
         let launch_options = token::DaoLaunchParams {
             manifest_file: manifest_file.clone(),
@@ -424,7 +510,7 @@ async fn handle_dao_command_impl(
             governance_signers: governance_signers.clone(),
             governance_threshold,
             transfer_authority,
-            supply_mode: supply_mode.clone(),
+            supply_mode: resolved_supply_mode,
             chain_id,
             dao_class: dao_class.clone(),
         };
@@ -433,8 +519,8 @@ async fn handle_dao_command_impl(
             output,
             &name,
             &symbol,
-            supply,
-            decimals,
+            resolved_supply,
+            resolved_decimals,
             &treasury,
             &launch_options,
         )
