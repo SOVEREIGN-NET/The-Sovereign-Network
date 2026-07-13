@@ -860,6 +860,7 @@ impl Web4Handler {
                     // so client/server skeletons stay byte-identical.
                     fee_amount_atoms: 0,
                     fee_payer_wallet_id: [0u8; 32],
+                    asset_id: None,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
@@ -1196,6 +1197,7 @@ impl Web4Handler {
                     fee_tx_hash: fee_tx_hash_hex.clone(),
                     fee_amount_atoms: registration_fee_atoms,
                     fee_payer_wallet_id: owner_wallet_id_bytes,
+                    asset_id: None,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)

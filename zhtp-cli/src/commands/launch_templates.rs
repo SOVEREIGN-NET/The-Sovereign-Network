@@ -5,7 +5,7 @@
 //! Split preview uses `AssetLaunchPayloadV1::split_initial_supply` — same path as the executor.
 
 use crate::error::{CliError, CliResult};
-use lib_blockchain::contracts::sovereign_asset::SupplyMode;
+use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode};
 use lib_blockchain::transaction::asset_tx::{AssetLaunchPayloadV1, ASSET_LAUNCH_TREASURY_BPS};
 use serde::Deserialize;
 
@@ -168,6 +168,8 @@ pub fn preview_launch(
         rewards: None,
         governance: None,
         transfer_authority: false,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
     };
     payload
         .validate_dao_launch_ui_constraints()
