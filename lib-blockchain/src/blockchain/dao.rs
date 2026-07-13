@@ -287,6 +287,9 @@ impl Blockchain {
         tx: &Transaction,
         block_height: u64,
     ) -> Option<DaoRegistryIndexEntry> {
+        if tx.transaction_type == TransactionType::AssetLaunch {
+            return Self::dao_registry_entry_from_asset_launch(tx, block_height);
+        }
         if tx.transaction_type != TransactionType::DaoExecution {
             return None;
         }
@@ -332,6 +335,30 @@ impl Blockchain {
             class: class_str,
             metadata_hash,
             treasury_key_id,
+            owner_key_id: tx.signature.public_key.key_id,
+            created_at: block_height,
+        })
+    }
+
+    /// Derive a registry entry from an `AssetLaunch` tx (P1 #2800).
+    ///
+    /// `dao_id` and `token_key_id` both equal the launch tx hash (`asset_id`).
+    /// Default class is `fp` until P8 adds optional `dao_class` on the payload.
+    fn dao_registry_entry_from_asset_launch(
+        tx: &Transaction,
+        block_height: u64,
+    ) -> Option<DaoRegistryIndexEntry> {
+        let payload = crate::transaction::asset_tx::AssetLaunchPayloadV1::decode_memo(&tx.memo).ok()?;
+        if payload.manifest_cid == [0u8; 32] || payload.manifest_hash == [0u8; 32] {
+            return None;
+        }
+        let asset_id = crate::transaction::hashing::hash_transaction(tx).as_array();
+        Some(DaoRegistryIndexEntry {
+            dao_id: asset_id,
+            token_key_id: asset_id,
+            class: crate::types::dao::DAOType::FP.as_str().to_string(),
+            metadata_hash: payload.manifest_hash,
+            treasury_key_id: payload.treasury_key_id,
             owner_key_id: tx.signature.public_key.key_id,
             created_at: block_height,
         })
