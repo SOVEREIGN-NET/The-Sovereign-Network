@@ -103,6 +103,22 @@ fn register_actor_identities_store(store: &dyn BlockchainStore, actors: &RewardC
     put_identity_direct(store, &actors.owner_did, &actors.beneficiary.public_key);
 }
 
+/// In-memory blockchain with treasury identity + BUBL contract, but beneficiary
+/// `owner_did` deliberately absent from the registry (halt regression harness).
+pub fn mempool_blockchain_unregistered_beneficiary(actors: &RewardClaimActors) -> Blockchain {
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
+    register_identity_shadow(&mut blockchain, &treasury_did, &actors.treasury.public_key);
+    let bubl = bubl_token_contract(&actors.treasury.public_key);
+    blockchain.insert_token_contract(actors.token_id, bubl);
+    blockchain.insert_token_nonce_shadow(
+        actors.token_id,
+        actors.treasury.public_key.key_id,
+        0,
+    );
+    blockchain
+}
+
 /// In-memory blockchain with identities + BUBL contract for mempool admission tests.
 pub fn mempool_blockchain(actors: &RewardClaimActors) -> Blockchain {
     let mut blockchain = Blockchain::new().expect("blockchain construct");

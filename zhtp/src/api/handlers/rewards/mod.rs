@@ -297,6 +297,15 @@ impl RewardsHandler {
 
         match settlement::run_claim_flow(&self.blockchain, treasury, did, key_id, &spec).await {
             Ok(submitted) => Self::claim_awarded_response(&spec, &submitted),
+            Err(settlement::ClaimFlowError::Ineligible { reason })
+            | Err(settlement::ClaimFlowError::Unavailable(reason))
+                if reason == "owner_did_not_registered" =>
+            {
+                ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "identity must be registered on-chain before claiming rewards".to_string(),
+                )
+            }
             Err(settlement::ClaimFlowError::Ineligible { reason }) => {
                 let partners_this_week = if spec.event == RewardEventKind::NewPartner {
                     let week = Self::iso_week();

@@ -13,7 +13,29 @@ use tempfile::tempdir;
 mod common;
 
 use common::block_builders;
-use common::reward_claim_harness::{mempool_blockchain, seed_executor_store, welcome_claim_tx, RewardClaimActors};
+use common::reward_claim_harness::{
+    mempool_blockchain, mempool_blockchain_unregistered_beneficiary, seed_executor_store,
+    welcome_claim_tx, RewardClaimActors,
+};
+
+#[test]
+fn unregistered_owner_did_rejected_from_mempool() {
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain_unregistered_beneficiary(&actors);
+
+    let err = blockchain
+        .add_pending_transaction(welcome_claim_tx(&actors, 0))
+        .expect_err("RewardClaim for unregistered owner_did must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("verification failed"),
+        "expected mempool validation rejection, got: {msg}"
+    );
+    assert!(
+        blockchain.get_pending_transactions().is_empty(),
+        "unregistered owner_did claim must not enter mempool"
+    );
+}
 
 #[test]
 fn duplicate_welcome_claim_rejected_from_mempool() {

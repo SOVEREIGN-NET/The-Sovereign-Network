@@ -83,9 +83,8 @@ pub fn apply_reward_claim(
         return reject_claim("recipient_key_id does not match owner_did");
     }
 
-    let did_hash = crate::types::hash::blake3_hash(data.owner_did.as_bytes());
-    let did_hash_arr = did_hash.as_array();
-    if mutator.get_identity(&did_hash_arr)?.is_none() {
+    let did_hash = crate::storage::did_to_hash(&data.owner_did);
+    if mutator.get_identity(&did_hash)?.is_none() {
         warn!(
             "RewardClaim rejected at height {}: DID {} not registered",
             block_height,

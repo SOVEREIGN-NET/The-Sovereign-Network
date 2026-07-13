@@ -116,6 +116,32 @@ pub fn reward_event_to_policy_event(event: RewardEventKind) -> crate::rewards_po
     }
 }
 
+/// Whether `owner_did` is registered in durable identity storage.
+///
+/// Shared by mempool admission, stateful validation, and the executor so a
+/// `RewardClaim` cannot be finalized unless the beneficiary identity exists.
+pub fn owner_identity_registered_on_store(
+    store: &dyn crate::storage::BlockchainStore,
+    owner_did: &str,
+) -> Result<bool, String> {
+    let did_hash = crate::storage::did_to_hash(owner_did);
+    store
+        .get_identity(&did_hash)
+        .map(|opt| opt.is_some())
+        .map_err(|e| format!("identity lookup failed: {e}"))
+}
+
+/// Reject when the beneficiary DID is absent from chain state.
+pub fn validate_owner_identity_registered(
+    store: &dyn crate::storage::BlockchainStore,
+    owner_did: &str,
+) -> Result<(), String> {
+    if !owner_identity_registered_on_store(store, owner_did)? {
+        return Err("owner DID not registered".to_string());
+    }
+    Ok(())
+}
+
 /// Parse `did:zhtp:{64-hex}` → 32-byte key_id.
 pub fn key_id_from_did(did: &str) -> Option<[u8; 32]> {
     const MAX_DID_LEN: usize = 256;
@@ -222,5 +248,18 @@ mod tests {
     fn key_id_from_did_valid() {
         let did = "did:zhtp:e0b9757663f55797ff06cdce1d0dc18329455b9a18d8e0b5bc05a8f10c969bf4";
         assert!(key_id_from_did(did).is_some());
+    }
+
+    #[test]
+    fn validate_owner_identity_registered_rejects_unknown_did() {
+        use crate::storage::{BlockchainStore, SledStore};
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let store = SledStore::open(dir.path().join("identity_gate")).expect("sled");
+        let store: &dyn BlockchainStore = &store;
+        let did = "did:zhtp:adf4cea328c55797ff06cdce1d0dc18329455b9a18d8e0b5bc05a8f10c969bf4";
+        let err = validate_owner_identity_registered(store, did).unwrap_err();
+        assert_eq!(err, "owner DID not registered");
     }
 }

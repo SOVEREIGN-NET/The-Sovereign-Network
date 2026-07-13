@@ -1602,6 +1602,11 @@ impl BlockExecutor {
                 let claim = tx.reward_claim_data().ok_or_else(|| {
                     TxApplyError::InvalidType("RewardClaim requires reward_claim_data".into())
                 })?;
+                crate::transaction::reward_claim::validate_owner_identity_registered(
+                    self.store.as_ref(),
+                    &claim.owner_did,
+                )
+                .map_err(TxApplyError::InvalidType)?;
                 let token = TokenId::new(claim.token_id);
                 let from = Address::new(claim.from);
                 let expected_nonce = view.get_token_nonce(&token, &from)?;
