@@ -2437,6 +2437,15 @@ impl Blockchain {
             ));
         }
 
+        let tx_hash = transaction.hash();
+        if self.pending_transactions.iter().any(|pending| pending.hash() == tx_hash) {
+            let tx_hash_hex = hex::encode(tx_hash.as_bytes());
+            return Err(anyhow::anyhow!(
+                "Transaction {} rejected: duplicate already pending",
+                &tx_hash_hex[..16]
+            ));
+        }
+
         if !self.verify_transaction(&transaction)? {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
@@ -2756,6 +2765,15 @@ impl Blockchain {
         originator: SystemOriginator,
     ) -> Result<()> {
         Self::validate_system_injection(originator, &transaction)?;
+
+        let tx_hash = transaction.hash();
+        if self.pending_transactions.iter().any(|pending| pending.hash() == tx_hash) {
+            let tx_hash_hex = hex::encode(tx_hash.as_bytes());
+            return Err(anyhow::anyhow!(
+                "Transaction {} rejected: duplicate already pending",
+                &tx_hash_hex[..16]
+            ));
+        }
 
         let label = originator.as_str();
         tracing::info!(

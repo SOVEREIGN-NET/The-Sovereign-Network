@@ -6,6 +6,7 @@ use crate::block::{Block, BlockHeader};
 use crate::transaction::Transaction;
 use crate::types::{Difficulty, Hash, MiningConfig};
 use anyhow::Result;
+use std::collections::HashSet;
 
 /// Block builder for constructing new blocks
 #[derive(Debug)]
@@ -144,6 +145,7 @@ pub fn select_transactions_for_block_filtered(
 ) -> Vec<Transaction> {
     let mut selected = Vec::new();
     let mut total_size = 0;
+    let mut seen_hashes = HashSet::new();
 
     // Sort by fee rate (highest first)
     let mut tx_refs: Vec<_> = available_transactions.iter().collect();
@@ -161,6 +163,10 @@ pub fn select_transactions_for_block_filtered(
         }
 
         if !is_valid(tx) {
+            continue;
+        }
+
+        if !seen_hashes.insert(tx.hash()) {
             continue;
         }
 
@@ -211,5 +217,49 @@ pub mod utils {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::types::TransactionType;
+
+    fn make_tx(fee: u64) -> Transaction {
+        Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::Transfer,
+            inputs: vec![],
+            outputs: vec![],
+            fee,
+            signature: Signature {
+                signature: vec![0u8; 64],
+                public_key: PublicKey::new([1u8; 2592]),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 0,
+            },
+            memo: vec![],
+            payload: crate::transaction::TransactionPayload::None,
+        }
+    }
+
+    #[test]
+    fn select_transactions_dedupes_by_hash() {
+        let tx = make_tx(100);
+        let duplicate = tx.clone();
+        let other = make_tx(200);
+
+        let selected = select_transactions_for_block(
+            &[tx, duplicate, other],
+            10,
+            usize::MAX,
+        );
+
+        assert_eq!(selected.len(), 2);
+        assert_ne!(selected[0].hash(), selected[1].hash());
+        assert_eq!(selected[0].fee, 200);
+        assert_eq!(selected[1].fee, 100);
     }
 }

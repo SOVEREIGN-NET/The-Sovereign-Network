@@ -358,6 +358,24 @@ fn system_injection_rejects_treasury_welcome_bonus_with_bad_memo() {
     assert!(err.to_string().contains("WELCOME_BONUS_V1"));
 }
 #[test]
+fn duplicate_tx_hash_rejected_from_mempool() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let tx = make_tx(TransactionType::Coinbase);
+
+    bc.add_system_transaction(tx.clone(), crate::blockchain::SystemOriginator::TestOriginator)
+        .expect("first enqueue");
+    let err = bc
+        .add_system_transaction(tx, crate::blockchain::SystemOriginator::TestOriginator)
+        .expect_err("duplicate hash must be rejected");
+    assert!(
+        err.to_string().contains("duplicate already pending"),
+        "unexpected error: {}",
+        err
+    );
+    assert_eq!(bc.pending_transactions.len(), 1);
+}
+
+#[test]
 fn audit_only_config_admits_zero_fee_transactions() {
     // The S2 default (`audit_only`) must not reject the existing zero-fee
     // traffic (coinbase, system mints) at the admission gate; BlockExecutor
