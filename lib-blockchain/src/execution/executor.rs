@@ -45,6 +45,7 @@ use crate::transaction::{
     asset_tx::{
         AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
         AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+        AssetRewardsPolicyUpdatePayloadV1,
     },
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
@@ -56,8 +57,9 @@ use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::sovereign_asset::{
-    apply_asset_authority_transfer, apply_asset_launch, apply_asset_manifest_update,
-    apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate, AssetLaunchOutcome,
+    activate_pending_rewards_policies, apply_asset_authority_transfer, apply_asset_launch,
+    apply_asset_manifest_update, apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate,
+    apply_asset_rewards_policy_update, AssetLaunchOutcome,
 };
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
 
@@ -657,6 +659,12 @@ impl BlockExecutor {
         // Initialize block-level resource accumulator
         let mut accumulator = BlockAccumulator::new();
 
+        activate_pending_rewards_policies(&mutator, block_height).map_err(|e| {
+            BlockApplyError::ValidationFailed(format!(
+                "activate pending rewards policies failed: {e}"
+            ))
+        })?;
+
         // =====================================================================
         // Pre-step: Coinbase position validation
         // =====================================================================
@@ -1066,6 +1074,7 @@ impl BlockExecutor {
             TransactionType::AssetManifestUpdate => {}
             TransactionType::AssetAuthorityTransfer => {}
             TransactionType::AssetRewardsDelegateRotate => {}
+            TransactionType::AssetRewardsPolicyUpdate => {}
             TransactionType::ContractDeployment => {}
             TransactionType::ContractExecution => {}
             TransactionType::DaoProposal => {}
@@ -1325,6 +1334,18 @@ impl BlockExecutor {
                 AssetRewardsDelegateRotatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
                     TxApplyError::InvalidType(format!(
                         "AssetRewardsDelegateRotate requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetRewardsPolicyUpdate => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetRewardsPolicyUpdate must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetRewardsPolicyUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetRewardsPolicyUpdate requires canonical memo payload: {e}"
                     ))
                 })?;
             }
@@ -3554,6 +3575,17 @@ impl BlockExecutor {
                 apply_asset_rewards_delegate_rotate(mutator, signer, &payload)?;
                 Ok(TxOutcome::LegacySystem)
             }
+            TransactionType::AssetRewardsPolicyUpdate => {
+                let payload =
+                    AssetRewardsPolicyUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                        TxApplyError::InvalidType(format!(
+                            "AssetRewardsPolicyUpdate requires canonical memo payload: {e}"
+                        ))
+                    })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_rewards_policy_update(mutator, signer, &payload, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
             TransactionType::AssetAuthorityTransfer => {
                 let payload = AssetAuthorityTransferPayloadV1::decode_memo(&tx.memo).map_err(|e| {
                     TxApplyError::InvalidType(format!(
@@ -5171,6 +5203,7 @@ mod tests {
                 policy_cid,
                 policy_hash: policy_hash_arr,
                 nonce: 0,
+                pending_policy: None,
             }
         );
         let stored_doc = store
@@ -5178,6 +5211,199 @@ mod tests {
             .expect("read policy doc")
             .expect("policy doc exists");
         assert!(!stored_doc.is_empty());
+    }
+
+    fn rewards_policy_for_asset(
+        asset_id: [u8; 32],
+        welcome_atoms: u128,
+    ) -> crate::rewards_policy::RewardsPolicyV1 {
+        use crate::rewards_policy::{legacy_bubl_policy, RewardsPolicyEvent};
+        let mut policy = legacy_bubl_policy();
+        policy.asset_id = hex::encode(asset_id);
+        for trigger in &mut policy.triggers {
+            if trigger.event == Some(RewardsPolicyEvent::Welcome) {
+                trigger.amount_atoms = Some(welcome_atoms);
+            }
+        }
+        policy
+    }
+
+    fn launch_rewards_asset(executor: &BlockExecutor, genesis: &Block) -> ([u8; 32], Block) {
+        use crate::contracts::sovereign_asset::SupplyMode;
+        use crate::rewards_policy::{legacy_bubl_policy, policy_hash, validate_rewards_policy_value};
+        use crate::transaction::asset_tx::{AssetLaunchPayloadV1, RewardsLaunchConfig};
+
+        let delegate_key = create_dummy_signature().public_key.key_id;
+        let policy = legacy_bubl_policy();
+        validate_rewards_policy_value(&policy).expect("policy valid");
+        let policy_hash_arr = policy_hash(&policy).expect("hash").as_array();
+        let policy_document = serde_json::to_vec(&policy).expect("json");
+        let mut policy_cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
+        policy_cid_input.extend_from_slice(&policy_document);
+        let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
+
+        let payload = AssetLaunchPayloadV1 {
+            name: "Bubble".to_string(),
+            symbol: "RBPL".to_string(),
+            decimals: 18,
+            initial_supply: 1_000,
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: 2_000,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: [1u8; 32],
+            manifest_hash: [2u8; 32],
+            curve: None,
+            rewards: Some(RewardsLaunchConfig {
+                spend_delegate_key_id: delegate_key,
+                policy_cid,
+                policy_hash: policy_hash_arr,
+                policy_document: Some(policy_document),
+            }),
+            governance: None,
+            transfer_authority: false,
+        };
+        let memo = payload.encode_memo().expect("memo");
+        let launch_tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::AssetLaunch,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo,
+            payload: crate::transaction::TransactionPayload::None,
+        };
+        let asset_id = hash_transaction(&launch_tx).as_array();
+
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![launch_tx]);
+        executor.apply_block(&block1).expect("launch");
+
+        let bind_tx = policy_update_tx(
+            asset_id,
+            crate::transaction::reward_claim::REWARD_WELCOME_ATOMS,
+            create_dummy_signature(),
+        );
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![bind_tx]);
+        executor.apply_block(&block2).expect("bind asset_id in policy");
+
+        (asset_id, block2)
+    }
+
+    fn policy_update_tx(
+        asset_id: [u8; 32],
+        welcome_atoms: u128,
+        signer: Signature,
+    ) -> Transaction {
+        use crate::rewards_policy::{policy_hash, validate_rewards_policy_value};
+        use crate::transaction::asset_tx::{
+            AssetAuthorityProof, AssetRewardsPolicyUpdatePayloadV1, RewardsPolicyUpdateConfig,
+        };
+
+        let policy = rewards_policy_for_asset(asset_id, welcome_atoms);
+        validate_rewards_policy_value(&policy).expect("policy valid");
+        let policy_hash_arr = policy_hash(&policy).expect("hash").as_array();
+        let policy_document = serde_json::to_vec(&policy).expect("json");
+        let mut policy_cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
+        policy_cid_input.extend_from_slice(&policy_document);
+        let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
+
+        let payload = AssetRewardsPolicyUpdatePayloadV1 {
+            asset_id,
+            policy: RewardsPolicyUpdateConfig {
+                policy_cid,
+                policy_hash: policy_hash_arr,
+                policy_document: Some(policy_document),
+            },
+            authority_proof: AssetAuthorityProof::CreatorSig,
+        };
+        let memo = payload.encode_memo().expect("memo");
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::AssetRewardsPolicyUpdate,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: signer,
+            memo,
+            payload: crate::transaction::TransactionPayload::None,
+        }
+    }
+
+    #[test]
+    fn test_asset_rewards_policy_increase_applies_immediately() {
+        use crate::transaction::reward_claim::REWARD_WELCOME_ATOMS as WELCOME;
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let (asset_id, launch_block) = launch_rewards_asset(&executor, &genesis);
+        let increased_welcome = WELCOME * 2;
+        let update_tx = policy_update_tx(
+            asset_id,
+            increased_welcome,
+            create_dummy_signature(),
+        );
+        let block3 = create_block_with_txs(3, launch_block.header.block_hash, vec![update_tx]);
+        executor.apply_block(&block3).expect("policy increase");
+
+        let state = store
+            .get_rewards_module_state(&asset_id)
+            .expect("read")
+            .expect("state");
+        assert!(state.pending_policy.is_none());
+        assert_eq!(state.nonce, 2);
+
+        let doc = store
+            .get_rewards_policy_document(&state.policy_hash)
+            .expect("read doc")
+            .expect("doc");
+        let policy = crate::rewards_policy::validate_rewards_policy(&doc).expect("valid");
+        assert_eq!(
+            crate::rewards_policy::expected_amount_for_trigger(
+                &policy,
+                crate::rewards_policy::RewardsPolicyEvent::Welcome,
+                1
+            ),
+            Some(increased_welcome)
+        );
+    }
+
+    #[test]
+    fn test_asset_rewards_policy_decrease_queues_timelock() {
+        use crate::contracts::sovereign_asset::REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS;
+        use crate::transaction::reward_claim::REWARD_WELCOME_ATOMS as WELCOME;
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let (asset_id, launch_block) = launch_rewards_asset(&executor, &genesis);
+        let old_hash = store
+            .get_rewards_module_state(&asset_id)
+            .expect("read")
+            .expect("state")
+            .policy_hash;
+
+        let update_tx = policy_update_tx(asset_id, WELCOME / 2, create_dummy_signature());
+        let block3 = create_block_with_txs(3, launch_block.header.block_hash, vec![update_tx]);
+        executor.apply_block(&block3).expect("policy decrease queue");
+
+        let state = store
+            .get_rewards_module_state(&asset_id)
+            .expect("read")
+            .expect("state");
+        assert_eq!(state.policy_hash, old_hash);
+        assert_eq!(state.nonce, 1);
+        let pending = state.pending_policy.expect("pending decrease");
+        assert_eq!(
+            pending.effective_height,
+            3u64.saturating_add(REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS)
+        );
     }
 
     #[test]

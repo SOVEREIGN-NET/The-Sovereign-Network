@@ -832,6 +832,37 @@ impl SledStore {
         bincode::deserialize(bytes).map_err(|e| StorageError::Serialization(e.to_string()))
     }
 
+    /// Deserialize rewards module state, migrating pre-P7 records without `pending_policy`.
+    fn deserialize_rewards_module_state(
+        bytes: &[u8],
+    ) -> StorageResult<crate::contracts::sovereign_asset::RewardsModuleState> {
+        use crate::contracts::sovereign_asset::RewardsModuleState;
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct LegacyRewardsModuleState {
+            spend_delegate_key_id: [u8; 32],
+            policy_cid: [u8; 32],
+            policy_hash: [u8; 32],
+            nonce: u64,
+        }
+
+        match bincode::deserialize::<RewardsModuleState>(bytes) {
+            Ok(state) => Ok(state),
+            Err(_) => {
+                let legacy: LegacyRewardsModuleState =
+                    bincode::deserialize(bytes).map_err(|e| StorageError::Serialization(e.to_string()))?;
+                Ok(RewardsModuleState {
+                    spend_delegate_key_id: legacy.spend_delegate_key_id,
+                    policy_cid: legacy.policy_cid,
+                    policy_hash: legacy.policy_hash,
+                    nonce: legacy.nonce,
+                    pending_policy: None,
+                })
+            }
+        }
+    }
+
     /// Serialize a WAL record with an explicit byte limit.
     ///
     /// The limit is applied symmetrically with [`Self::deserialize_wal`]; both
@@ -1780,7 +1811,7 @@ impl BlockchainStore for SledStore {
     ) -> StorageResult<Option<crate::contracts::sovereign_asset::RewardsModuleState>> {
         let key = keys::asset_module_state_key(asset_id);
         match self.asset_rewards.get(key) {
-            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(Some(bytes)) => Ok(Some(Self::deserialize_rewards_module_state(&bytes)?)),
             Ok(None) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -1799,6 +1830,18 @@ impl BlockchainStore for SledStore {
             batch.tree(TREE_ASSET_REWARDS).insert(key.as_ref(), value);
         }
         Ok(())
+    }
+
+    fn list_rewards_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {
+        let mut ids = Vec::new();
+        for entry in self.asset_rewards.iter().flatten() {
+            if entry.0.len() == 32 {
+                let mut asset_id = [0u8; 32];
+                asset_id.copy_from_slice(&entry.0);
+                ids.push(asset_id);
+            }
+        }
+        Ok(ids)
     }
 
     fn get_rewards_policy_document(

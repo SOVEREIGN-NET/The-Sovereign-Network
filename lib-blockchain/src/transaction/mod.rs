@@ -95,6 +95,7 @@ pub use fee::{required_token_creation_fee, TxFeeConfig, DEFAULT_TOKEN_CREATION_F
 pub use asset_tx::{
     AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
     AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    AssetRewardsPolicyUpdatePayloadV1, RewardsPolicyUpdateConfig,
     AssetUpgradeModule, CurveLaunchConfig, GovernanceLaunchConfig, RewardsLaunchConfig,
     ASSET_LAUNCH_MEMO_PREFIX, ASSET_LAUNCH_TREASURY_BPS, MAX_ASSET_MEMO_BYTES,
 };

@@ -4,16 +4,17 @@ use crate::contracts::sovereign_asset::{
     project_from_token_contract, validate_governance_verifier, AssetAuthority, AssetIdSource,
     AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState,
     GovernanceVerifierKind, GovernanceVerifierState, PendingAuthorityTransfer,
-    RewardsModuleHeader, RewardsModuleState, SovereignAsset, SupplyMode,
-    AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
+    PendingRewardsPolicyUpdate, RewardsModuleHeader, RewardsModuleState, SovereignAsset,
+    SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS, REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS,
 };
 use crate::execution::tx_apply::{apply_token_mint, StateMutator};
 use crate::execution::{TxApplyError, TxApplyResult};
 use crate::storage::{Address, TokenId};
 use crate::transaction::asset_tx::{
     AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
-    AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
-    AssetUpgradeModule, GovernanceLaunchConfig, RewardsLaunchConfig,
+    AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
+    AssetRewardsDelegateRotatePayloadV1, AssetRewardsPolicyUpdatePayloadV1, AssetUpgradeModule,
+    GovernanceLaunchConfig, RewardsLaunchConfig,
 };
 use crate::types::Hash;
 
@@ -82,6 +83,7 @@ pub fn apply_asset_launch(
                 policy_cid: rewards_cfg.policy_cid,
                 policy_hash: rewards_cfg.policy_hash,
                 nonce: 0,
+                pending_policy: None,
             },
         )?;
         if let Some(doc) = &rewards_cfg.policy_document {
@@ -241,6 +243,123 @@ pub fn apply_asset_manifest_update(
     Ok(())
 }
 
+pub fn apply_asset_rewards_policy_update(
+    mutator: &StateMutator<'_>,
+    signer_key_id: [u8; 32],
+    payload: &AssetRewardsPolicyUpdatePayloadV1,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    let asset = mutator
+        .get_sovereign_asset(&payload.asset_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
+
+    if !asset.module_flags.has_rewards() {
+        return Err(TxApplyError::InvalidType("rewards module not enabled".into()));
+    }
+    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+
+    let doc = payload
+        .policy
+        .policy_document
+        .as_ref()
+        .ok_or_else(|| TxApplyError::InvalidType("policy_document required".into()))?;
+    let new_policy = crate::rewards_policy::validate_rewards_policy(doc)
+        .map_err(|e| TxApplyError::InvalidType(format!("invalid rewards policy: {e}")))?;
+    let expected_asset_id = hex::encode(payload.asset_id);
+    if new_policy.asset_id != expected_asset_id {
+        return Err(TxApplyError::InvalidType(
+            "policy asset_id does not match payload asset_id".into(),
+        ));
+    }
+
+    let mut state = mutator
+        .get_rewards_module_state(&payload.asset_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("rewards state missing".into()))?;
+
+    if payload.policy.policy_hash == state.policy_hash {
+        return Err(TxApplyError::InvalidType(
+            "rewards policy hash unchanged".into(),
+        ));
+    }
+
+    let current_policy = mutator
+        .get_rewards_policy_document(&state.policy_hash)?
+        .ok_or_else(|| TxApplyError::InvalidType("current policy document missing".into()))?;
+    let current_policy = crate::rewards_policy::validate_rewards_policy(&current_policy)
+        .map_err(|e| TxApplyError::InvalidType(format!("invalid current policy: {e}")))?;
+
+    let is_decrease =
+        crate::rewards_policy::is_rewards_policy_decrease(&current_policy, &new_policy);
+    if is_decrease {
+        if state.pending_policy.is_some() {
+            return Err(TxApplyError::InvalidType(
+                "rewards policy decrease already pending".into(),
+            ));
+        }
+        state.pending_policy = Some(PendingRewardsPolicyUpdate {
+            policy_cid: payload.policy.policy_cid,
+            policy_hash: payload.policy.policy_hash,
+            effective_height: block_height.saturating_add(REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS),
+        });
+        mutator.put_rewards_policy_document(&payload.policy.policy_hash, doc)?;
+        mutator.put_rewards_module_state(&payload.asset_id, &state)?;
+        return Ok(());
+    }
+
+    apply_rewards_policy_now(mutator, &payload.asset_id, &mut state, &payload.policy, doc)?;
+    Ok(())
+}
+
+/// Activate queued decrease-only policy updates whose timelock has expired.
+pub fn activate_pending_rewards_policies(
+    mutator: &StateMutator<'_>,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    let asset_ids = mutator.list_rewards_module_asset_ids()?;
+    for asset_id in asset_ids {
+        let Some(mut state) = mutator.get_rewards_module_state(&asset_id)? else {
+            continue;
+        };
+        let Some(pending) = state.pending_policy.clone() else {
+            continue;
+        };
+        if pending.effective_height > block_height {
+            continue;
+        }
+        let doc = mutator
+            .get_rewards_policy_document(&pending.policy_hash)?
+            .ok_or_else(|| {
+                TxApplyError::InvalidType(format!(
+                    "pending rewards policy document missing for {}",
+                    hex::encode(asset_id)
+                ))
+            })?;
+        state.policy_cid = pending.policy_cid;
+        state.policy_hash = pending.policy_hash;
+        state.pending_policy = None;
+        state.nonce = state.nonce.saturating_add(1);
+        mutator.put_rewards_module_state(&asset_id, &state)?;
+        let _ = doc;
+    }
+    Ok(())
+}
+
+fn apply_rewards_policy_now(
+    mutator: &StateMutator<'_>,
+    asset_id: &[u8; 32],
+    state: &mut RewardsModuleState,
+    policy_cfg: &crate::transaction::asset_tx::RewardsPolicyUpdateConfig,
+    doc: &[u8],
+) -> TxApplyResult<()> {
+    state.policy_cid = policy_cfg.policy_cid;
+    state.policy_hash = policy_cfg.policy_hash;
+    state.pending_policy = None;
+    state.nonce = state.nonce.saturating_add(1);
+    mutator.put_rewards_policy_document(&policy_cfg.policy_hash, doc)?;
+    mutator.put_rewards_module_state(asset_id, state)?;
+    Ok(())
+}
+
 pub fn apply_asset_rewards_delegate_rotate(
     mutator: &StateMutator<'_>,
     signer_key_id: [u8; 32],
@@ -293,6 +412,7 @@ fn enable_rewards(
             policy_cid: cfg.policy_cid,
             policy_hash: cfg.policy_hash,
             nonce: 0,
+            pending_policy: None,
         },
     )?;
     if let Some(doc) = &cfg.policy_document {

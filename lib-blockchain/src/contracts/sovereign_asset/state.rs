@@ -36,6 +36,14 @@ impl Default for CurveModuleState {
     }
 }
 
+/// Queued rewards policy update (decrease-only timelock per DAO P7 / Q5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingRewardsPolicyUpdate {
+    pub policy_cid: [u8; 32],
+    pub policy_hash: [u8; 32],
+    pub effective_height: u64,
+}
+
 /// Rewards delegate + policy refs in `asset_rewards/`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RewardsModuleState {
@@ -43,6 +51,8 @@ pub struct RewardsModuleState {
     pub policy_cid: [u8; 32],
     pub policy_hash: [u8; 32],
     pub nonce: u64,
+    #[serde(default)]
+    pub pending_policy: Option<PendingRewardsPolicyUpdate>,
 }
 
 /// Governance verifier persisted in `asset_governance/`.
@@ -96,6 +106,9 @@ pub const GOVERNANCE_MIN_SIGNERS: usize = 1;
 pub const GOVERNANCE_MULTISIG_MIN_SIGNERS: usize = 2;
 pub const GOVERNANCE_MAX_SIGNERS: usize = 10;
 pub const AUTHORITY_TRANSFER_TIMELOCK_BLOCKS: u64 = 7_200;
+
+/// Timelock before a decrease-only rewards policy update becomes effective (DAO P7 / Q5).
+pub const REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS: u64 = AUTHORITY_TRANSFER_TIMELOCK_BLOCKS;
 
 /// Default multisig threshold: floor(N/2) + 1.
 pub fn default_governance_threshold(n: usize) -> u8 {

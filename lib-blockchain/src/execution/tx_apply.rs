@@ -327,6 +327,10 @@ impl<'a> StateMutator<'a> {
         Ok(())
     }
 
+    pub fn list_rewards_module_asset_ids(&self) -> TxApplyResult<Vec<[u8; 32]>> {
+        Ok(self.store.list_rewards_module_asset_ids()?)
+    }
+
     pub fn get_rewards_policy_document(
         &self,
         policy_hash: &[u8; 32],

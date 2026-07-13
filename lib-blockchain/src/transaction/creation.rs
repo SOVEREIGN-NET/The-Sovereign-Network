@@ -762,6 +762,7 @@ pub mod utils {
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
             | TransactionType::AssetRewardsDelegateRotate
+            | TransactionType::AssetRewardsPolicyUpdate
             | TransactionType::TokenSwap
             | TransactionType::CreatePool
             | TransactionType::AddLiquidity
