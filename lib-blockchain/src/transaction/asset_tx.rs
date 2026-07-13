@@ -149,6 +149,41 @@ impl AssetLaunchPayloadV1 {
         Ok(())
     }
 
+    /// Stricter SovSwap-aligned constraints for the DAO launch user path (M2/M1).
+    pub fn validate_dao_launch_ui_constraints(&self) -> Result<(), String> {
+        use super::token_creation::{
+            DAO_LAUNCH_MAX_SYMBOL_CHARS, DAO_LAUNCH_MIN_WHOLE_SUPPLY,
+        };
+        self.validate()?;
+        if self.symbol.len() > DAO_LAUNCH_MAX_SYMBOL_CHARS {
+            return Err(format!(
+                "symbol length {} exceeds DAO launch max {}",
+                self.symbol.len(),
+                DAO_LAUNCH_MAX_SYMBOL_CHARS
+            ));
+        }
+        if !self
+            .symbol
+            .chars()
+            .all(|c| c.is_ascii_uppercase() && c.is_ascii_alphabetic())
+        {
+            return Err("symbol must be uppercase A-Z".to_string());
+        }
+        let scale = 10u128
+            .checked_pow(self.decimals as u32)
+            .ok_or_else(|| format!("decimals {} overflow for supply scale", self.decimals))?;
+        let min_atoms = DAO_LAUNCH_MIN_WHOLE_SUPPLY
+            .checked_mul(scale)
+            .ok_or_else(|| "minimum supply atoms overflow".to_string())?;
+        if self.initial_supply < min_atoms {
+            return Err(format!(
+                "initial_supply must be at least {} whole tokens ({} atoms at {} decimals)",
+                DAO_LAUNCH_MIN_WHOLE_SUPPLY, min_atoms, self.decimals
+            ));
+        }
+        Ok(())
+    }
+
     pub fn split_initial_supply(&self) -> (u128, u128) {
         let bps = self.treasury_bps as u128;
         let treasury = self
@@ -391,5 +426,36 @@ impl AssetRewardsPolicyUpdatePayloadV1 {
             .map_err(|e| format!("invalid rewards policy update payload: {e}"))?;
         payload.policy.validate()?;
         Ok(payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_launch() -> AssetLaunchPayloadV1 {
+        AssetLaunchPayloadV1 {
+            name: "Bubble".to_string(),
+            symbol: "BUBL".to_string(),
+            decimals: 18,
+            initial_supply: 1_000 * 10u128.pow(18),
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: ASSET_LAUNCH_TREASURY_BPS,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: [0x11; 32],
+            manifest_hash: [0x22; 32],
+            curve: None,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+        }
+    }
+
+    #[test]
+    fn asset_launch_dao_ui_constraints_match_m2_rules() {
+        assert!(sample_launch().validate_dao_launch_ui_constraints().is_ok());
+        let mut long = sample_launch();
+        long.symbol = "TOOLONG".to_string();
+        assert!(long.validate_dao_launch_ui_constraints().is_err());
     }
 }

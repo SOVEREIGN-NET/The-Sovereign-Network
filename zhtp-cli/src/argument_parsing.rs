@@ -513,7 +513,7 @@ pub enum OracleAction {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DaoAction {
-    /// Launch a DAO token (TokenCreation + 80/20 split). Phase 1 minimal.
+    /// Launch a DAO sovereign asset (AssetLaunch + 80/20 split).
     Launch {
         /// Token name (e.g. Bubble)
         #[arg(short, long)]

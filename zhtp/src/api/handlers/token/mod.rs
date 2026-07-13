@@ -211,19 +211,31 @@ impl TokenHandler {
             let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).map_err(|e| {
                 anyhow::anyhow!("Invalid asset launch payload: {e}")
             })?;
+            if create_req.enforce_dao_launch_constraints {
+                if let Err(e) = payload.validate_dao_launch_ui_constraints() {
+                    return Ok(create_error_response(
+                        ZhtpStatus::BadRequest,
+                        format!("DAO launch validation failed: {e}"),
+                    ));
+                }
+            }
             let asset_id = hash_transaction(&tx).as_array();
             if let Err(e) = self.submit_to_mempool(tx).await {
                 return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
             }
             let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+            let share_link =
+                crate::api::handlers::assets::asset_share_link(&asset_id);
             return create_json_response(json!({
                 "success": true,
                 "asset_id": hex::encode(asset_id),
+                "share_link": share_link,
                 "name": payload.name,
                 "symbol": payload.symbol,
                 "creator_allocation": creator_alloc.to_string(),
                 "treasury_allocation": treasury_alloc.to_string(),
-                "deprecated_route": "/api/v1/token/create accepts AssetLaunch during migration — prefer direct broadcast",
+                "tx_status": "submitted_to_mempool",
+                "deprecated_route": "/api/v1/token/create accepts AssetLaunch during migration — prefer POST /api/v1/assets/launch",
             }));
         }
 

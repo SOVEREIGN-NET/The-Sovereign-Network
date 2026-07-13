@@ -11,6 +11,8 @@ use crate::argument_parsing::{format_output, TokenAction, TokenArgs, ZhtpCli};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
+use lib_blockchain::contracts::sovereign_asset::SupplyMode;
+use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
 use lib_blockchain::transaction::{
     TokenCreationPayloadV1, TokenMintData, TokenTransferData, DEFAULT_TOKEN_CREATION_FEE,
 };
@@ -392,6 +394,133 @@ pub async fn handle_create(
         output.error(&format!("Failed to create token: {}", error))?;
         Err(CliError::ApiCallFailed {
             endpoint: "/api/v1/token/create".to_string(),
+            status: 0,
+            reason: error.to_string(),
+        })
+    }
+}
+
+fn build_dao_launch_manifest(name: &str, symbol: &str, decimals: u8) -> ([u8; 32], [u8; 32]) {
+    let manifest = json!({
+        "schema": "zhtp/asset-manifest/v1",
+        "name": name,
+        "symbol": symbol,
+        "decimals": decimals,
+        "interface": {
+            "version": "1.0.0",
+            "tx_kinds": ["TokenTransfer", "AssetTransfer"]
+        }
+    });
+    let bytes = serde_json::to_vec(&manifest).expect("manifest json");
+    let hash = lib_crypto::hash_blake3(&bytes);
+    let mut cid = [0u8; 32];
+    cid[..16].copy_from_slice(&hash[..16]);
+    (cid, hash)
+}
+
+/// Submit a signed `AssetLaunch` for the DAO Create New path (M1).
+pub async fn handle_dao_asset_launch(
+    cli: &ZhtpCli,
+    output: &dyn Output,
+    name: &str,
+    symbol: &str,
+    supply: u128,
+    decimals: u8,
+    treasury_recipient: &str,
+) -> CliResult<()> {
+    validate_decimals(decimals)?;
+    output.info(&format!("Launching sovereign asset: {} ({})", name, symbol))?;
+    output.info(&format!("Initial supply: {} atoms ({} decimals)", supply, decimals))?;
+    output.info("Signing AssetLaunch transaction with local keypair")?;
+
+    let keypair = load_default_keypair()?;
+    let treasury_key = parse_public_key(treasury_recipient)?;
+    if treasury_key.key_id == keypair.public_key.key_id {
+        return Err(CliError::ConfigError(
+            "treasury_recipient must differ from creator".to_string(),
+        ));
+    }
+
+    let (manifest_cid, manifest_hash) = build_dao_launch_manifest(name, symbol, decimals);
+    let payload = AssetLaunchPayloadV1 {
+        name: name.to_string(),
+        symbol: symbol.to_string(),
+        decimals,
+        initial_supply: supply,
+        treasury_key_id: treasury_key.key_id,
+        treasury_bps: 2_000,
+        supply_mode: SupplyMode::Fixed,
+        manifest_cid,
+        manifest_hash,
+        curve: None,
+        rewards: None,
+        governance: None,
+        transfer_authority: false,
+    };
+    payload.validate_dao_launch_ui_constraints().map_err(|e| {
+        CliError::ConfigError(format!("DAO launch validation failed: {e}"))
+    })?;
+    let memo = payload
+        .encode_memo()
+        .map_err(|e| CliError::ConfigError(format!("Failed to encode asset launch payload: {e}")))?;
+
+    let mut tx = Transaction::new_asset_launch_with_chain_id(
+        0x03,
+        lib_crypto::Signature::default(),
+        memo,
+    );
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign asset launch tx: {e}")))?;
+
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
+    let request_body = json!({
+        "signed_tx": hex::encode(tx_bytes),
+        "enforce_dao_launch_constraints": true,
+    });
+
+    let client = connect_default(&cli.server).await?;
+    let response = client
+        .post_json("/api/v1/assets/launch", &request_body)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/assets/launch".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/assets/launch".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+
+    let formatted = format_output(&response_json, &cli.format)?;
+    output.print(&formatted)?;
+
+    if response_json
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        output.success("DAO asset launched successfully!")?;
+        if let Some(asset_id) = response_json.get("asset_id").and_then(|v| v.as_str()) {
+            output.info(&format!("Asset ID: {asset_id}"))?;
+        }
+        if let Some(link) = response_json.get("share_link").and_then(|v| v.as_str()) {
+            output.info(&format!("Share link: {link}"))?;
+        }
+        Ok(())
+    } else {
+        let error = response_json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        output.error(&format!("Failed to launch asset: {}", error))?;
+        Err(CliError::ApiCallFailed {
+            endpoint: "/api/v1/assets/launch".to_string(),
             status: 0,
             reason: error.to_string(),
         })

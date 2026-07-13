@@ -11,7 +11,7 @@ use crate::commands::web4_utils::{
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::contracts::derive_dao_id;
-use lib_blockchain::transaction::TokenCreationPayloadV1;
+
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::DaoExecutionData;
 use lib_blockchain::types::dao::DAOType;
@@ -373,7 +373,7 @@ async fn handle_dao_command_impl(
         ref treasury_recipient,
     } = args.action
     {
-        output.header("DAO Launch (TokenCreation)")?;
+        output.header("DAO Launch (AssetLaunch)")?;
         let treasury = treasury_recipient
             .clone()
             .unwrap_or_else(default_protocol_treasury_key_id_hex);
@@ -383,19 +383,7 @@ async fn handle_dao_command_impl(
             symbol,
             &treasury[..16.min(treasury.len())]
         ))?;
-        let treasury_key_id = parse_hex_32("treasury_recipient", &treasury)?;
-        let draft = TokenCreationPayloadV1 {
-            name: name.clone(),
-            symbol: symbol.clone(),
-            initial_supply: supply,
-            decimals,
-            treasury_allocation_bps: 2_000,
-            treasury_recipient: treasury_key_id,
-        };
-        draft.validate_dao_launch_ui_constraints().map_err(|e| {
-            CliError::ConfigError(format!("DAO launch validation failed: {e}"))
-        })?;
-        token::handle_create(
+        token::handle_dao_asset_launch(
             cli,
             output,
             &name,
@@ -403,28 +391,8 @@ async fn handle_dao_command_impl(
             supply,
             decimals,
             &treasury,
-            true,
         )
         .await?;
-        let token_id = hex::encode(lib_blockchain::contracts::utils::generate_custom_token_id(
-            &name, &symbol,
-        ));
-        const TREASURY_BPS: u128 = 2_000; // 20% — matches TokenCreationPayloadV1
-        let treasury_atoms = supply.saturating_mul(TREASURY_BPS) / 10_000;
-        let creator_atoms = supply.saturating_sub(treasury_atoms);
-        output.print("")?;
-        output.success("DAO token deployed.")?;
-        output.print(&format!("Deterministic token_id: {}", token_id))?;
-        output.print(&format!(
-            "Creator allocation: {} atoms (80%)",
-            creator_atoms
-        ))?;
-        output.print(&format!(
-            "Treasury allocation: {} atoms (20%) → {}",
-            treasury_atoms,
-            &treasury[..16.min(treasury.len())]
-        ))?;
-        output.print(&format!("Share (future): zhtp://asset/{}", token_id))?;
         output.print(
             "Next: publish rewards policy (D1), fund delegate (C4), enable rewards (N3)",
         )?;

@@ -4,8 +4,12 @@ use anyhow::Result;
 use lib_blockchain::contracts::sovereign_asset::{
     AssetIdSource, RewardsModuleState, SovereignAsset, SupplyMode,
 };
+use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
+use lib_blockchain::transaction::{hash_transaction, Transaction};
+use lib_blockchain::types::transaction_type::TransactionType;
 use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use serde::Deserialize;
 use lib_protocols::zhtp::ZhtpRequestHandler;
 use serde::Serialize;
 use serde_json::json;
@@ -31,6 +35,14 @@ fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
 
 fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
     ZhtpResponse::error(status, message)
+}
+
+/// POST /api/v1/assets/launch — submit a signed `AssetLaunch` tx (M1 CreateDaoTab path).
+#[derive(Debug, Deserialize)]
+struct LaunchAssetRequest {
+    pub signed_tx: String,
+    #[serde(default)]
+    pub enforce_dao_launch_constraints: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -288,6 +300,86 @@ impl AssetsHandler {
         Self { blockchain }
     }
 
+    async fn handle_launch(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let launch_req: LaunchAssetRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        let tx = decode_signed_tx_raw(&launch_req.signed_tx).map_err(|e| {
+            tracing::error!("[assets/launch] decode_signed_tx FAILED: {}", e);
+            e
+        })?;
+
+        if tx.transaction_type != TransactionType::AssetLaunch {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                format!(
+                    "Invalid transaction type for assets/launch: expected AssetLaunch, got {:?}",
+                    tx.transaction_type
+                ),
+            ));
+        }
+
+        let payload = match AssetLaunchPayloadV1::decode_memo(&tx.memo) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Invalid asset launch payload: {e}"),
+                ));
+            }
+        };
+
+        if launch_req.enforce_dao_launch_constraints {
+            if let Err(e) = payload.validate_dao_launch_ui_constraints() {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("DAO launch validation failed: {e}"),
+                ));
+            }
+        }
+
+        {
+            let bc = self.blockchain.read().await;
+            if bc
+                .iter_sovereign_assets()
+                .iter()
+                .any(|a| a.symbol.eq_ignore_ascii_case(&payload.symbol))
+            {
+                return Ok(create_error_response(
+                    ZhtpStatus::Conflict,
+                    format!(
+                        "Asset with symbol '{}' already exists",
+                        payload.symbol
+                    ),
+                ));
+            }
+        }
+
+        let asset_id = hash_transaction(&tx).as_array();
+        if let Err(e) = self.submit_to_mempool(tx).await {
+            tracing::error!("[assets/launch] submit_to_mempool FAILED: {}", e);
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+        }
+
+        let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+        info!(
+            "AssetLaunch submitted: {} ({}) asset_id={}",
+            payload.name,
+            payload.symbol,
+            hex::encode(asset_id)
+        );
+        create_json_response(json!({
+            "success": true,
+            "asset_id": hex::encode(asset_id),
+            "share_link": asset_share_link(&asset_id),
+            "name": payload.name,
+            "symbol": payload.symbol,
+            "creator_allocation": creator_alloc.to_string(),
+            "treasury_allocation": treasury_alloc.to_string(),
+            "tx_status": "submitted_to_mempool",
+        }))
+    }
+
     async fn handle_list(&self) -> Result<ZhtpResponse> {
         let bc = self.blockchain.read().await;
         let mut assets: Vec<AssetListItem> =
@@ -372,6 +464,22 @@ impl AssetsHandler {
             .filter(|s| !s.is_empty())
             .collect()
     }
+
+    async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
+        let tx_type = tx.transaction_type;
+        let mut blockchain = self.blockchain.write().await;
+        blockchain
+            .add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))?;
+        tracing::debug!("assets submit_to_mempool: type={:?} accepted", tx_type);
+        Ok(())
+    }
+}
+
+fn decode_signed_tx_raw(signed_tx: &str) -> Result<Transaction> {
+    let tx_bytes = hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+    lib_blockchain::transaction::decode_client_transaction(&tx_bytes)
+        .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))
 }
 
 fn parse_asset_id(hex_str: &str) -> Result<[u8; 32]> {
@@ -390,7 +498,16 @@ impl ZhtpRequestHandler for AssetsHandler {
         &self,
         request: ZhtpRequest,
     ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
+        if crate::session_manager::is_request_password_session(&request).await {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Asset launch requires key authentication (mobile app or seed phrase recovery)"
+                    .to_string(),
+            ));
+        }
+
         let result = match (request.method.clone(), request.uri.as_str()) {
+            (ZhtpMethod::Post, "/api/v1/assets/launch") => self.handle_launch(request).await,
             (ZhtpMethod::Get, "/api/v1/assets" | "/api/v1/assets/") => self.handle_list().await,
             (ZhtpMethod::Get, uri) if uri.starts_with("/api/v1/assets/") => {
                 let segments = Self::parse_path_segments(uri);
