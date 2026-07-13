@@ -478,7 +478,7 @@ async fn init_creator_identity(
     output.success("Creator identity ready.")?;
     output.print("Next steps:")?;
     output.print(&format!("  1. Keystore: {:?}", keystore))?;
-    output.print("  2. Launch DAO token: zhtp-cli token create (dao launch coming in #2816)")?;
+    output.print("  2. Launch DAO token: zhtp-cli dao launch --name <NAME> --symbol <SYM> --supply <atoms>")?;
     output.print("  3. Operator runbook: docs/ops/dao-launch-bootstrap.md")?;
     output.print("  4. Rewards policy: schemas/zhtp/rewards-policy/examples/bubl-v1.json")?;
     Ok(())
