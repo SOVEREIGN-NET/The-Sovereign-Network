@@ -343,7 +343,6 @@ impl Blockchain {
     /// Derive a registry entry from an `AssetLaunch` tx (P1 #2800).
     ///
     /// `dao_id` and `token_key_id` both equal the launch tx hash (`asset_id`).
-    /// Default class is `fp` until P8 adds optional `dao_class` on the payload.
     fn dao_registry_entry_from_asset_launch(
         tx: &Transaction,
         block_height: u64,
@@ -356,7 +355,7 @@ impl Blockchain {
         Some(DaoRegistryIndexEntry {
             dao_id: asset_id,
             token_key_id: asset_id,
-            class: crate::types::dao::DAOType::FP.as_str().to_string(),
+            class: payload.dao_class.as_str().to_string(),
             metadata_hash: payload.manifest_hash,
             treasury_key_id: payload.treasury_key_id,
             owner_key_id: tx.signature.public_key.key_id,

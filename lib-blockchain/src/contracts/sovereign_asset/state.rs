@@ -120,6 +120,13 @@ pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 0;
 #[cfg(not(test))]
 pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 80_000;
 
+/// Epic Q1–Q3 / Q8 economic rules (mint class, treasury spend auth, reward liquidity, burn).
+/// Inactive below [`GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT`] so replay matches pre-rules history.
+#[inline]
+pub fn economic_rules_active(block_height: u64) -> bool {
+    block_height >= GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT
+}
+
 /// Default multisig threshold: floor(N/2) + 1.
 pub fn default_governance_threshold(n: usize) -> u8 {
     ((n / 2) + 1) as u8

@@ -49,6 +49,7 @@ pub fn system_tx_signature_policy(ty: TransactionType) -> SystemTxSignaturePolic
         | TransactionType::AssetAuthorityTransfer
         | TransactionType::AssetRewardsDelegateRotate
         | TransactionType::AssetRewardsPolicyUpdate
+        | TransactionType::AssetBurnBpsUpdate
         | TransactionType::TokenSwap
         | TransactionType::CreatePool
         | TransactionType::AddLiquidity

@@ -1,8 +1,8 @@
 //! Legacy read projection: `TokenContract` / `BondingCurveToken` → `SovereignAsset`.
 
 use super::types::{
-    AssetAuthority, AssetIdSource, AssetModuleFlags, CurveModuleHeader, RewardsModuleHeader,
-    SovereignAsset, SupplyMode,
+    AssetAuthority, AssetIdSource, AssetModuleFlags, CurveModuleHeader, DaoClass,
+    RewardsModuleHeader, SovereignAsset, SupplyMode,
 };
 use crate::contracts::bonding_curve::token::BondingCurveToken;
 use crate::contracts::bonding_curve::types::Phase;
@@ -74,6 +74,9 @@ pub fn project_from_token_contract(
         curve: None,
         rewards,
         governance: None,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
+        pending_burn_bps: None,
     })
 }
 
@@ -107,6 +110,9 @@ pub fn project_from_bonding_curve_token(curve: &BondingCurveToken) -> SovereignA
         }),
         rewards: None,
         governance: None,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
+        pending_burn_bps: None,
     }
 }
 

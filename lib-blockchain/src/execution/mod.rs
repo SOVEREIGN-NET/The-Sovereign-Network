@@ -38,6 +38,7 @@
 
 pub mod errors;
 pub mod executor;
+pub mod mint_and_allocate;
 pub mod reward_claim;
 pub mod sovereign_asset;
 pub mod state_view;

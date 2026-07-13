@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 
 pub const DOMAIN_REGISTRATION_PREFIX: &[u8] = b"DOMREG1:";
 pub const DOMAIN_REGISTRATION_PREFIX_V2: &[u8] = b"DOMREG2:";
+/// DAO launch domain binding (epic Q10) — V2 + optional `asset_id`.
+pub const DOMAIN_REGISTRATION_PREFIX_V3: &[u8] = b"DOMREG3:";
 pub const DOMAIN_UPDATE_PREFIX: &[u8] = b"DOMUPD1:";
 
 /// Canonical on-chain domain record — stored in `Blockchain::domain_registry`.
@@ -52,6 +54,9 @@ pub struct OnChainDomainRecord {
     pub updated_at: u64,
     /// Hash of the SOV fee payment transaction
     pub fee_tx_hash: String,
+    /// Sovereign asset this domain is bound to (DAO launch Q10).
+    #[serde(default)]
+    pub asset_id: Option<[u8; 32]>,
 }
 
 /// Public payload type used by handlers, validators, and the block executor.
@@ -75,6 +80,8 @@ pub struct DomainRegistrationPayload {
     /// Wallet that pays the fee. Zeroed `[0; 32]` for V1. For V2, must be
     /// the signer's Primary wallet — validation enforces this.
     pub fee_payer_wallet_id: [u8; 32],
+    /// Optional sovereign `asset_id` for DAO-scoped domains (Q10).
+    pub asset_id: Option<[u8; 32]>,
 }
 
 /// Legacy (V1) wire layout — kept verbatim so historical chain replay
@@ -110,6 +117,25 @@ struct DomainRegistrationPayloadV2 {
     pub fee_payer_wallet_id: [u8; 32],
 }
 
+/// V3 wire layout — V2 + optional DAO `asset_id` binding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DomainRegistrationPayloadV3 {
+    pub domain: String,
+    pub owner_did: String,
+    pub manifest_cid: String,
+    pub build_hash: String,
+    pub title: String,
+    pub description: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub duration_days: u64,
+    pub fee_tx_hash: String,
+    pub fee_amount_atoms: u128,
+    pub fee_payer_wallet_id: [u8; 32],
+    #[serde(default)]
+    pub asset_id: Option<[u8; 32]>,
+}
+
 /// Payload embedded in a `DomainUpdate` transaction memo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainUpdatePayload {
@@ -123,8 +149,32 @@ pub struct DomainUpdatePayload {
 }
 
 impl DomainRegistrationPayload {
-    /// Always emits V2 — the canonical fee-bearing wire format.
+    /// Emits V3 when `asset_id` is set; otherwise V2 (canonical fee-bearing format).
     pub fn encode_memo(&self) -> Result<Vec<u8>> {
+        if self.asset_id.is_some() {
+            let v3 = DomainRegistrationPayloadV3 {
+                domain: self.domain.clone(),
+                owner_did: self.owner_did.clone(),
+                manifest_cid: self.manifest_cid.clone(),
+                build_hash: self.build_hash.clone(),
+                title: self.title.clone(),
+                description: self.description.clone(),
+                category: self.category.clone(),
+                tags: self.tags.clone(),
+                duration_days: self.duration_days,
+                fee_tx_hash: self.fee_tx_hash.clone(),
+                fee_amount_atoms: self.fee_amount_atoms,
+                fee_payer_wallet_id: self.fee_payer_wallet_id,
+                asset_id: self.asset_id,
+            };
+            let payload = bincode::serialize(&v3)
+                .map_err(|e| anyhow!("Failed to encode DomainRegistrationPayloadV3: {}", e))?;
+            let mut memo =
+                Vec::with_capacity(DOMAIN_REGISTRATION_PREFIX_V3.len() + payload.len());
+            memo.extend_from_slice(DOMAIN_REGISTRATION_PREFIX_V3);
+            memo.extend_from_slice(&payload);
+            return Ok(memo);
+        }
         let v2 = DomainRegistrationPayloadV2 {
             domain: self.domain.clone(),
             owner_did: self.owner_did.clone(),
@@ -153,6 +203,25 @@ impl DomainRegistrationPayload {
     /// `fee_payer_wallet_id = [0; 32]` — `process_domain_transactions`
     /// treats that as "legacy, no on-chain fee".
     pub fn decode_memo(memo: &[u8]) -> Result<Self> {
+        if let Some(v3_bytes) = memo.strip_prefix(DOMAIN_REGISTRATION_PREFIX_V3) {
+            let v3: DomainRegistrationPayloadV3 = bincode::deserialize(v3_bytes)
+                .map_err(|e| anyhow!("Failed to decode DomainRegistrationPayloadV3: {}", e))?;
+            return Ok(Self {
+                domain: v3.domain,
+                owner_did: v3.owner_did,
+                manifest_cid: v3.manifest_cid,
+                build_hash: v3.build_hash,
+                title: v3.title,
+                description: v3.description,
+                category: v3.category,
+                tags: v3.tags,
+                duration_days: v3.duration_days,
+                fee_tx_hash: v3.fee_tx_hash,
+                fee_amount_atoms: v3.fee_amount_atoms,
+                fee_payer_wallet_id: v3.fee_payer_wallet_id,
+                asset_id: v3.asset_id,
+            });
+        }
         if let Some(v2_bytes) = memo.strip_prefix(DOMAIN_REGISTRATION_PREFIX_V2) {
             let v2: DomainRegistrationPayloadV2 = bincode::deserialize(v2_bytes)
                 .map_err(|e| anyhow!("Failed to decode DomainRegistrationPayloadV2: {}", e))?;
@@ -169,6 +238,7 @@ impl DomainRegistrationPayload {
                 fee_tx_hash: v2.fee_tx_hash,
                 fee_amount_atoms: v2.fee_amount_atoms,
                 fee_payer_wallet_id: v2.fee_payer_wallet_id,
+                asset_id: None,
             });
         }
         if let Some(v1_bytes) = memo.strip_prefix(DOMAIN_REGISTRATION_PREFIX) {
@@ -187,9 +257,10 @@ impl DomainRegistrationPayload {
                 fee_tx_hash: v1.fee_tx_hash,
                 fee_amount_atoms: 0,
                 fee_payer_wallet_id: [0u8; 32],
+                asset_id: None,
             });
         }
-        Err(anyhow!("Missing DOMREG1: or DOMREG2: prefix in memo"))
+        Err(anyhow!("Missing DOMREG1:, DOMREG2:, or DOMREG3: prefix in memo"))
     }
 }
 
@@ -260,6 +331,7 @@ mod tests {
             fee_tx_hash: String::new(),
             fee_amount_atoms: 10 * lib_types::TOKEN_SCALE_18,
             fee_payer_wallet_id: [0xab; 32],
+            asset_id: None,
         };
         let memo = original.encode_memo().expect("V2 encode");
         assert!(memo.starts_with(DOMAIN_REGISTRATION_PREFIX_V2));
@@ -284,6 +356,7 @@ mod tests {
             fee_tx_hash: String::new(),
             fee_amount_atoms: 1,
             fee_payer_wallet_id: [1u8; 32],
+            asset_id: None,
         };
         let memo = p.encode_memo().unwrap();
         assert!(memo.starts_with(DOMAIN_REGISTRATION_PREFIX_V2));
@@ -318,6 +391,7 @@ mod tests {
             fee_tx_hash: "ab".repeat(32),
             fee_amount_atoms: 0,
             fee_payer_wallet_id: [0u8; 32],
+            asset_id: None,
         };
         let domain_tx = Transaction {
             version: 2,
@@ -396,6 +470,7 @@ mod tests {
             fee_tx_hash: fee_hash,
             fee_amount_atoms: 0,
             fee_payer_wallet_id: [0u8; 32],
+            asset_id: None,
         };
         let domain_tx = Transaction {
             version: 2,
@@ -462,6 +537,7 @@ mod tests {
             fee_tx_hash: fee_hash,
             fee_amount_atoms: 0,
             fee_payer_wallet_id: [0u8; 32],
+            asset_id: None,
         };
         let domain_tx = Transaction {
             version: 2,

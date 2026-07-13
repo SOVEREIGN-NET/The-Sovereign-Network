@@ -1563,6 +1563,7 @@ impl Blockchain {
                             version: 1,
                             updated_at: block_ts,
                             fee_tx_hash: payload.fee_tx_hash,
+                            asset_id: payload.asset_id,
                         };
                         info!(
                             "⛓️  Domain registered on-chain: {} at height {} (fee {} atoms, v2={})",

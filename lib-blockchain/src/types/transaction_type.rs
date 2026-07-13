@@ -241,6 +241,8 @@ pub enum TransactionType {
     AssetRewardsDelegateRotate = 66,
     /// Update the DHT-pinned rewards policy (CID + hash) for an asset.
     AssetRewardsPolicyUpdate = 68,
+    /// Queue a timelocked per-transfer burn rate change for a Sovereign Asset.
+    AssetBurnBpsUpdate = 69,
     /// BUBL reward claim — chain-enforced eligibility + treasury token transfer.
     ///
     /// Signed by the BUBL `TokenCreation` creator (or authorized delegate).
@@ -451,6 +453,9 @@ impl TransactionType {
             TransactionType::AssetRewardsPolicyUpdate => {
                 "Update Sovereign Asset rewards policy"
             }
+            TransactionType::AssetBurnBpsUpdate => {
+                "Update Sovereign Asset per-transfer burn rate"
+            }
             TransactionType::RewardClaim => "BUBL reward claim (chain-enforced eligibility)",
         }
     }
@@ -526,6 +531,7 @@ impl TransactionType {
             TransactionType::AssetAuthorityTransfer => "asset_authority_transfer",
             TransactionType::AssetRewardsDelegateRotate => "asset_rewards_delegate_rotate",
             TransactionType::AssetRewardsPolicyUpdate => "asset_rewards_policy_update",
+            TransactionType::AssetBurnBpsUpdate => "asset_burn_bps_update",
             TransactionType::RewardClaim => "reward_claim",
         }
     }
@@ -601,6 +607,7 @@ impl TransactionType {
             "asset_authority_transfer" => Some(TransactionType::AssetAuthorityTransfer),
             "asset_rewards_delegate_rotate" => Some(TransactionType::AssetRewardsDelegateRotate),
             "asset_rewards_policy_update" => Some(TransactionType::AssetRewardsPolicyUpdate),
+            "asset_burn_bps_update" => Some(TransactionType::AssetBurnBpsUpdate),
             "reward_claim" => Some(TransactionType::RewardClaim),
             _ => None,
         }

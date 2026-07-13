@@ -123,6 +123,10 @@ pub enum TxApplyError {
         token: TokenId,
     },
 
+    /// Rewards spend-delegate lacks funded balance for a valid claim (epic Q3).
+    #[error("Insufficient reward liquidity: have {have}, need {need}")]
+    InsufficientRewardLiquidity { have: u128, need: u128 },
+
     #[error("Token not found: {0}")]
     TokenNotFound(TokenId),
 

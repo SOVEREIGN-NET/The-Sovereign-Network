@@ -185,6 +185,8 @@ fn asset_launch_tx(signer: &PublicKey, symbol: &str, treasury_seed: u8) -> Trans
         rewards: None,
         governance: None,
         transfer_authority: false,
+        dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+        burn_bps: 0,
     };
 
     Transaction {

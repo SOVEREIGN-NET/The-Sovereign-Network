@@ -645,6 +645,7 @@ mod tests {
             fee_tx_hash: String::new(),
             fee_amount_atoms: fee,
             fee_payer_wallet_id: payer,
+            asset_id: None,
         };
         let mut domain_tx = create_test_tx(TransactionType::DomainRegistration);
         domain_tx.memo = payload.encode_memo().unwrap();

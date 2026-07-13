@@ -1700,14 +1700,20 @@ impl BlockchainStore for SledStore {
             if let Some(ref batch) = *batch_guard {
                 if let Some(staged) = batch.tree_lookup(TREE_ASSETS, key.as_ref()) {
                     return match staged {
-                        Some(bytes) => Ok(Some(Self::deserialize(&bytes)?)),
+                        Some(bytes) => Ok(Some(
+                            crate::contracts::sovereign_asset::deserialize_sovereign_asset(&bytes)
+                                .map_err(|e| StorageError::Serialization(e))?,
+                        )),
                         None => Ok(None),
                     };
                 }
             }
         }
         match self.assets.get(key) {
-            Ok(Some(bytes)) => Ok(Some(Self::deserialize(&bytes)?)),
+            Ok(Some(bytes)) => Ok(Some(
+                crate::contracts::sovereign_asset::deserialize_sovereign_asset(&bytes)
+                    .map_err(|e| StorageError::Serialization(e))?,
+            )),
             Ok(None) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -1727,7 +1733,8 @@ impl BlockchainStore for SledStore {
                         Err(_) => continue,
                     };
                     let asset: crate::contracts::sovereign_asset::SovereignAsset =
-                        Self::deserialize(&value)?;
+                        crate::contracts::sovereign_asset::deserialize_sovereign_asset(&value)
+                            .map_err(|e| StorageError::Serialization(e))?;
                     results.push((asset_id, asset));
                 }
                 Err(e) => return Err(StorageError::Database(e.to_string())),
