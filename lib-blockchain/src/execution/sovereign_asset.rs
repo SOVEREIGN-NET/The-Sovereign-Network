@@ -4,18 +4,21 @@ use crate::contracts::sovereign_asset::{
     project_from_token_contract, validate_governance_verifier, AssetAuthority, AssetIdSource,
     AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState,
     GovernanceVerifierKind, GovernanceVerifierState, PendingAuthorityTransfer,
-    PendingRewardsPolicyUpdate, RewardsModuleHeader, RewardsModuleState, SovereignAsset,
-    SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS, GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT,
+    PendingBurnBpsUpdate, PendingRewardsPolicyUpdate, RewardsModuleHeader, RewardsModuleState,
+    SovereignAsset, SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
+    GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT, MAX_TRANSFER_BURN_BPS,
     REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS,
 };
-use crate::execution::tx_apply::{apply_token_mint, StateMutator};
+use crate::execution::mint_and_allocate::mint_and_allocate;
+use crate::execution::tx_apply::StateMutator;
 use crate::execution::{TxApplyError, TxApplyResult};
-use crate::storage::{Address, TokenId};
+use crate::storage::{Address, AddressExt, TokenId};
 use crate::transaction::asset_tx::{
     AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
     AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
-    AssetRewardsDelegateRotatePayloadV1, AssetRewardsPolicyUpdatePayloadV1, AssetUpgradeModule,
-    GovernanceLaunchConfig, RewardsLaunchConfig,
+    AssetBurnBpsUpdatePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    AssetRewardsPolicyUpdatePayloadV1, AssetUpgradeModule, GovernanceLaunchConfig,
+    RewardsLaunchConfig,
 };
 use crate::types::Hash;
 
@@ -55,6 +58,11 @@ pub fn apply_asset_launch(
     }
 
     let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
+    let creator_recipient = if creator_allocation > 0 {
+        creator_key_id
+    } else {
+        payload.treasury_key_id
+    };
     let mut module_flags = AssetModuleFlags(0);
     let mut curve_header = None;
     let mut rewards_header = None;
@@ -119,8 +127,11 @@ pub fn apply_asset_launch(
         treasury_key_id: Some(payload.treasury_key_id),
         launched_at_height: Some(block_height),
         supply_mode: payload.supply_mode,
+        dao_class: payload.dao_class,
+        burn_bps: payload.burn_bps,
+        pending_burn_bps: None,
         max_supply: payload.initial_supply,
-        total_supply: payload.initial_supply,
+        total_supply: 0,
         manifest_cid: Some(payload.manifest_cid),
         manifest_hash: Some(payload.manifest_hash),
         schema_version: 1,
@@ -134,11 +145,15 @@ pub fn apply_asset_launch(
     mutator.put_sovereign_asset(&asset)?;
     mutator.put_asset_symbol_index(&payload.symbol, &asset_id)?;
 
-    let token_id = TokenId::new(asset_id);
-    let creator_addr = Address::new(creator_key_id);
-    let treasury_addr = Address::new(payload.treasury_key_id);
-    apply_token_mint(mutator, &token_id, &creator_addr, creator_allocation)?;
-    apply_token_mint(mutator, &token_id, &treasury_addr, treasury_allocation)?;
+    let mut live_asset = mutator
+        .get_sovereign_asset(&asset_id)?
+        .expect("asset just written");
+    mint_and_allocate(
+        mutator,
+        &mut live_asset,
+        creator_recipient,
+        payload.initial_supply,
+    )?;
 
     Ok(AssetLaunchOutcome {
         asset_id,
@@ -192,7 +207,7 @@ pub fn apply_asset_module_upgrade(
                 decimals: asset.decimals,
                 initial_supply: asset.total_supply,
                 treasury_key_id: asset.treasury_key_id.unwrap_or([0u8; 32]),
-                treasury_bps: 2_000,
+                treasury_bps: asset.dao_class.treasury_bps(),
                 supply_mode: SupplyMode::Elastic,
                 manifest_cid: asset.manifest_cid.unwrap_or([0u8; 32]),
                 manifest_hash: asset.manifest_hash.unwrap_or([0u8; 32]),
@@ -200,6 +215,8 @@ pub fn apply_asset_module_upgrade(
                 rewards: None,
                 governance: None,
                 transfer_authority: false,
+                dao_class: asset.dao_class,
+                burn_bps: asset.burn_bps,
             };
             if let Some(state) = launch.initial_curve_state() {
                 mutator.put_curve_module_state(&payload.asset_id, &state)?;
@@ -628,6 +645,144 @@ fn verifier_contains(verifier: &GovernanceVerifierState, key_id: [u8; 32]) -> bo
     }
 }
 
+/// Returns true when `signer_key_id` is an on-chain governance verifier for the asset.
+pub fn is_governance_verifier_signer(
+    mutator: &StateMutator<'_>,
+    asset_id: &[u8; 32],
+    signer_key_id: [u8; 32],
+) -> TxApplyResult<bool> {
+    let Some(gov) = mutator.get_governance_module_state(asset_id)? else {
+        return Ok(false);
+    };
+    let Some(verifier) = gov.verifier.as_ref() else {
+        return Ok(false);
+    };
+    Ok(verifier_contains(verifier, signer_key_id))
+}
+
+/// Post-launch elastic mints require a configured governance verifier signer.
+pub fn require_governance_mint_signer(
+    mutator: &StateMutator<'_>,
+    asset: &SovereignAsset,
+    signer_key_id: [u8; 32],
+) -> TxApplyResult<()> {
+    if !is_governance_verifier_signer(mutator, &asset.asset_id, signer_key_id)? {
+        return Err(TxApplyError::Unauthorized(
+            "elastic sovereign mint requires governance verifier signer".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Treasury balance moves require a governance verifier signer (epic Q2).
+pub fn require_treasury_spend_signer(
+    mutator: &StateMutator<'_>,
+    asset: &SovereignAsset,
+    from_key_id: [u8; 32],
+    signer_key_id: [u8; 32],
+) -> TxApplyResult<()> {
+    let Some(treasury_key_id) = asset.treasury_key_id else {
+        return Ok(());
+    };
+    if from_key_id != treasury_key_id {
+        return Ok(());
+    }
+    if !is_governance_verifier_signer(mutator, &asset.asset_id, signer_key_id)? {
+        return Err(TxApplyError::Unauthorized(
+            "treasury spend requires governance verifier authorization".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn apply_asset_burn_bps_update(
+    mutator: &StateMutator<'_>,
+    signer_key_id: [u8; 32],
+    payload: &AssetBurnBpsUpdatePayloadV1,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    let mut asset = mutator
+        .get_sovereign_asset(&payload.asset_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
+
+    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+
+    asset.pending_burn_bps = Some(PendingBurnBpsUpdate {
+        new_burn_bps: payload.new_burn_bps,
+        effective_height: block_height.saturating_add(AUTHORITY_TRANSFER_TIMELOCK_BLOCKS),
+    });
+    mutator.put_sovereign_asset(&asset)?;
+    Ok(())
+}
+
+/// Activate queued `burn_bps` updates whose timelock has expired (epic Q8).
+pub fn activate_pending_burn_bps(mutator: &StateMutator<'_>, block_height: u64) -> TxApplyResult<()> {
+    if block_height < GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT {
+        return Ok(());
+    }
+
+    for (asset_id, mut asset) in mutator.iter_sovereign_assets()? {
+        let Some(pending) = asset.pending_burn_bps.clone() else {
+            continue;
+        };
+        if pending.effective_height > block_height {
+            continue;
+        }
+        if pending.new_burn_bps > MAX_TRANSFER_BURN_BPS {
+            tracing::warn!(
+                asset_id = %hex::encode(asset_id),
+                burn_bps = pending.new_burn_bps,
+                "pending burn_bps exceeds cap; skipping activation"
+            );
+            asset.pending_burn_bps = None;
+            mutator.put_sovereign_asset(&asset)?;
+            continue;
+        }
+        asset.burn_bps = pending.new_burn_bps;
+        asset.pending_burn_bps = None;
+        mutator.put_sovereign_asset(&asset)?;
+    }
+    Ok(())
+}
+
+/// Apply a sovereign-asset transfer with optional burn (epic Q8).
+pub fn apply_sovereign_token_transfer(
+    mutator: &StateMutator<'_>,
+    asset: &mut SovereignAsset,
+    token: &TokenId,
+    from: &Address,
+    to: &Address,
+    amount: u128,
+    fee_bps: u16,
+    fee_destination: &Address,
+) -> TxApplyResult<u128> {
+    let burn = if asset.burn_bps > 0 {
+        (amount * asset.burn_bps as u128) / 10_000u128
+    } else {
+        0
+    };
+    let after_burn = amount.saturating_sub(burn);
+    let fee_amount = if fee_bps > 0 && *fee_destination != Address::ZERO {
+        (after_burn * fee_bps as u128) / 10_000u128
+    } else {
+        0
+    };
+    let net_to_recipient = after_burn.saturating_sub(fee_amount);
+
+    mutator.debit_token(token, from, amount)?;
+    if net_to_recipient > 0 {
+        mutator.credit_token(token, to, net_to_recipient)?;
+    }
+    if fee_amount > 0 {
+        mutator.credit_token(token, fee_destination, fee_amount)?;
+    }
+    if burn > 0 {
+        asset.total_supply = asset.total_supply.saturating_sub(burn);
+        mutator.put_sovereign_asset(asset)?;
+    }
+    Ok(fee_amount)
+}
+
 #[cfg(test)]
 mod activate_pending_tests {
     use super::*;
@@ -664,6 +819,9 @@ mod activate_pending_tests {
             treasury_key_id: Some(key(0xEE)),
             launched_at_height: Some(1),
             supply_mode: SupplyMode::Fixed,
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
+            pending_burn_bps: None,
             max_supply: 1_000,
             total_supply: 1_000,
             manifest_cid: Some([0x11; 32]),

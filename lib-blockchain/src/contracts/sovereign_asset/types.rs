@@ -17,6 +17,64 @@ pub enum SupplyMode {
     Elastic,
 }
 
+/// DAO economic class (epic Q7). Determines treasury split on every supply increase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DaoClass {
+    #[default]
+    Fp,
+    Np,
+}
+
+pub const FP_TREASURY_BPS: u16 = 2_000;
+pub const NP_TREASURY_BPS: u16 = 10_000;
+pub const MAX_TRANSFER_BURN_BPS: u16 = 1_000;
+
+impl DaoClass {
+    pub fn treasury_bps(self) -> u16 {
+        match self {
+            DaoClass::Fp => FP_TREASURY_BPS,
+            DaoClass::Np => NP_TREASURY_BPS,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DaoClass::Fp => "fp",
+            DaoClass::Np => "np",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "fp" | "for_profit" | "for-profit" => Some(DaoClass::Fp),
+            "np" | "non_profit" | "non-profit" => Some(DaoClass::Np),
+            _ => None,
+        }
+    }
+
+    pub fn from_dao_type(t: crate::types::dao::DAOType) -> Self {
+        match t {
+            crate::types::dao::DAOType::FP => DaoClass::Fp,
+            crate::types::dao::DAOType::NP => DaoClass::Np,
+        }
+    }
+
+    pub fn to_dao_type(self) -> crate::types::dao::DAOType {
+        match self {
+            DaoClass::Fp => crate::types::dao::DAOType::FP,
+            DaoClass::Np => crate::types::dao::DAOType::NP,
+        }
+    }
+}
+
+/// Queued `burn_bps` change (epic Q8 — timelocked increases and decreases).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingBurnBpsUpdate {
+    pub new_burn_bps: u16,
+    pub effective_height: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AssetAuthority {
     Creator { key_id: [u8; 32] },
@@ -82,6 +140,13 @@ pub struct SovereignAsset {
     pub treasury_key_id: Option<[u8; 32]>,
     pub launched_at_height: Option<u64>,
     pub supply_mode: SupplyMode,
+    #[serde(default)]
+    pub dao_class: DaoClass,
+    /// Per-transfer burn rate in basis points (0..=MAX_TRANSFER_BURN_BPS).
+    #[serde(default)]
+    pub burn_bps: u16,
+    #[serde(default)]
+    pub pending_burn_bps: Option<PendingBurnBpsUpdate>,
     pub max_supply: u128,
     pub total_supply: u128,
     pub manifest_cid: Option<[u8; 32]>,

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::contracts::approval_verifier::ApprovalProof;
 use crate::contracts::sovereign_asset::{
     default_governance_threshold, validate_governance_verifier, CurveModuleState, CurvePhase,
-    GovernanceVerifierState, SupplyMode,
+    DaoClass, GovernanceVerifierState, MAX_TRANSFER_BURN_BPS, SupplyMode, FP_TREASURY_BPS,
+    NP_TREASURY_BPS,
 };
 
 pub const ASSET_LAUNCH_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_LAUNCH_V1:";
@@ -15,6 +16,7 @@ pub const ASSET_MANIFEST_UPDATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_MANIFEST_V1:";
 pub const ASSET_AUTHORITY_TRANSFER_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_AUTH_XFER_V1:";
 pub const ASSET_REWARDS_DELEGATE_ROTATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_REWARDS_ROT_V1:";
 pub const ASSET_REWARDS_POLICY_UPDATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_REWARDS_POL_V1:";
+pub const ASSET_BURN_BPS_UPDATE_MEMO_PREFIX: &[u8] = b"ZHTP_ASSET_BURN_BPS_V1:";
 
 pub const MAX_ASSET_MEMO_BYTES: usize = 8192;
 pub const MAX_ASSET_NAME_BYTES: usize = 64;
@@ -108,6 +110,12 @@ pub struct AssetLaunchPayloadV1 {
     pub governance: Option<GovernanceLaunchConfig>,
     #[serde(default)]
     pub transfer_authority: bool,
+    /// Economic class (FP 80/20, NP 100% treasury). Defaults to FP for legacy memos.
+    #[serde(default)]
+    pub dao_class: DaoClass,
+    /// Optional per-transfer burn at launch (0..=1000 bps). Default 0.
+    #[serde(default)]
+    pub burn_bps: u16,
 }
 
 fn default_asset_launch_treasury_bps() -> u16 {
@@ -125,8 +133,19 @@ impl AssetLaunchPayloadV1 {
         if self.initial_supply == 0 {
             return Err("initial_supply must be > 0".to_string());
         }
-        if self.treasury_bps != ASSET_LAUNCH_TREASURY_BPS {
-            return Err(format!("treasury_bps must be {}", ASSET_LAUNCH_TREASURY_BPS));
+        let expected_bps = self.dao_class.treasury_bps();
+        if self.treasury_bps != expected_bps {
+            return Err(format!(
+                "treasury_bps must be {} for dao_class {}",
+                expected_bps,
+                self.dao_class.as_str()
+            ));
+        }
+        if self.burn_bps > MAX_TRANSFER_BURN_BPS {
+            return Err(format!(
+                "burn_bps must be <= {}",
+                MAX_TRANSFER_BURN_BPS
+            ));
         }
         if self.treasury_key_id == [0u8; 32] {
             return Err("treasury_key_id must be non-zero".to_string());
@@ -185,14 +204,7 @@ impl AssetLaunchPayloadV1 {
     }
 
     pub fn split_initial_supply(&self) -> (u128, u128) {
-        let bps = self.treasury_bps as u128;
-        let treasury = self
-            .initial_supply
-            .checked_mul(bps)
-            .map(|p| p / 10_000u128)
-            .unwrap_or(0);
-        let creator = self.initial_supply.saturating_sub(treasury);
-        (creator, treasury)
+        crate::execution::mint_and_allocate::split_mint_amount(self.initial_supply, self.dao_class)
     }
 
     pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
@@ -404,6 +416,48 @@ pub struct AssetRewardsPolicyUpdatePayloadV1 {
     pub authority_proof: AssetAuthorityProof,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetBurnBpsUpdatePayloadV1 {
+    pub asset_id: [u8; 32],
+    pub new_burn_bps: u16,
+    pub authority_proof: AssetAuthorityProof,
+}
+
+impl AssetBurnBpsUpdatePayloadV1 {
+    pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
+        if self.new_burn_bps > MAX_TRANSFER_BURN_BPS {
+            return Err(format!(
+                "new_burn_bps must be <= {}",
+                MAX_TRANSFER_BURN_BPS
+            ));
+        }
+        let encoded = bincode::DefaultOptions::new()
+            .with_limit(MAX_ASSET_MEMO_BYTES as u64)
+            .serialize(self)
+            .map_err(|e| format!("serialize burn bps update: {e}"))?;
+        let mut memo = ASSET_BURN_BPS_UPDATE_MEMO_PREFIX.to_vec();
+        memo.extend_from_slice(&encoded);
+        Ok(memo)
+    }
+
+    pub fn decode_memo(memo: &[u8]) -> Result<Self, String> {
+        if !memo.starts_with(ASSET_BURN_BPS_UPDATE_MEMO_PREFIX) {
+            return Err("missing burn bps update memo prefix".to_string());
+        }
+        let payload: Self = bincode::DefaultOptions::new()
+            .with_limit(MAX_ASSET_MEMO_BYTES as u64)
+            .deserialize(&memo[ASSET_BURN_BPS_UPDATE_MEMO_PREFIX.len()..])
+            .map_err(|e| format!("invalid burn bps update payload: {e}"))?;
+        if payload.new_burn_bps > MAX_TRANSFER_BURN_BPS {
+            return Err(format!(
+                "new_burn_bps must be <= {}",
+                MAX_TRANSFER_BURN_BPS
+            ));
+        }
+        Ok(payload)
+    }
+}
+
 impl AssetRewardsPolicyUpdatePayloadV1 {
     pub fn encode_memo(&self) -> Result<Vec<u8>, String> {
         self.policy.validate()?;
@@ -448,7 +502,27 @@ mod tests {
             rewards: None,
             governance: None,
             transfer_authority: false,
+            dao_class: DaoClass::Fp,
+            burn_bps: 0,
         }
+    }
+
+    #[test]
+    fn np_launch_split_is_all_treasury() {
+        let mut np = sample_launch();
+        np.dao_class = DaoClass::Np;
+        np.treasury_bps = NP_TREASURY_BPS;
+        let (creator, treasury) = np.split_initial_supply();
+        assert_eq!(creator, 0);
+        assert_eq!(treasury, np.initial_supply);
+    }
+
+    #[test]
+    fn fp_launch_rejects_wrong_treasury_bps() {
+        let mut bad = sample_launch();
+        bad.dao_class = DaoClass::Np;
+        bad.treasury_bps = FP_TREASURY_BPS;
+        assert!(bad.validate().is_err());
     }
 
     #[test]

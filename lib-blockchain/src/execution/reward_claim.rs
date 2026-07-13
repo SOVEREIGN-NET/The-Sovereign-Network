@@ -256,15 +256,19 @@ pub fn apply_reward_claim(
         crate::contracts::tokens::constants::SOV_FEE_RATE_BPS
     };
 
-    tx_apply::apply_token_transfer(
-        mutator,
-        &token,
-        &from,
-        &to,
-        data.amount,
-        fee_bps,
-        fee_sink,
-    )?;
+    if let Err(TxApplyError::InsufficientBalance { have, need, .. }) =
+        tx_apply::apply_token_transfer(
+            mutator,
+            &token,
+            &from,
+            &to,
+            data.amount,
+            fee_bps,
+            fee_sink,
+        )
+    {
+        return Err(TxApplyError::InsufficientRewardLiquidity { have, need });
+    }
     mutator.increment_token_nonce(&token, &from)?;
 
     match data.event {

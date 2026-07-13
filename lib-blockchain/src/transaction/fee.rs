@@ -6,12 +6,9 @@ pub const DEFAULT_TX_WITNESS_CAP: u32 = 500;
 pub const DEFAULT_TOKEN_CREATION_FEE: u64 = 1_000;
 
 /// Default DomainRegistration fee, in atomic SOV units (10^18 per whole SOV).
-/// Default value = 10 whole SOV = `10 * 10^18` atoms. The value exceeds
-/// `u64::MAX` at the 19th whole-SOV boundary, so this field is `u128`
-/// rather than `u64` like `token_creation_fee` — `token_creation_fee`
-/// stores a much smaller atom count that fits comfortably in u64.
+/// DAO launch v1 standard (epic Q10) = 100 whole SOV.
 pub const DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS: u128 =
-    10 * lib_types::TOKEN_SCALE_18;
+    100 * lib_types::TOKEN_SCALE_18;
 
 /// Non-refundable SOV burn applied at observer-admission registration time
 /// (observer-admission-3). Provides a small economic barrier against Sybil

@@ -12,7 +12,8 @@ use crate::transaction::mint_authorization::validate_token_mint_authorization;
 use crate::transaction::system_tx_signature::requires_system_tx_signature;
 use crate::transaction::asset_tx::{
     AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
-    AssetRewardsDelegateRotatePayloadV1, AssetRewardsPolicyUpdatePayloadV1,
+    AssetBurnBpsUpdatePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    AssetRewardsPolicyUpdatePayloadV1,
 };
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
@@ -313,6 +314,7 @@ impl TransactionValidator {
                 | TransactionType::AssetAuthorityTransfer
                 | TransactionType::AssetRewardsDelegateRotate
                 | TransactionType::AssetRewardsPolicyUpdate
+                | TransactionType::AssetBurnBpsUpdate
                 | TransactionType::RegisterObserver
                 | TransactionType::UpdateObserverMetadata
                 | TransactionType::SuspendObserver
@@ -489,6 +491,13 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidInputs);
                 }
                 AssetRewardsPolicyUpdatePayloadV1::decode_memo(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetBurnBpsUpdate => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                AssetBurnBpsUpdatePayloadV1::decode_memo(&transaction.memo)
                     .map_err(|_| ValidationError::InvalidMemo)?;
             }
             TransactionType::AssetAuthorityTransfer => {
@@ -857,7 +866,8 @@ impl TransactionValidator {
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
             | TransactionType::AssetRewardsDelegateRotate
-            | TransactionType::AssetRewardsPolicyUpdate => {
+            | TransactionType::AssetRewardsPolicyUpdate
+            | TransactionType::AssetBurnBpsUpdate => {
                 if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidInputs);
                 }
@@ -1839,6 +1849,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                 | TransactionType::AssetAuthorityTransfer
                 | TransactionType::AssetRewardsDelegateRotate
                 | TransactionType::AssetRewardsPolicyUpdate
+                | TransactionType::AssetBurnBpsUpdate
                 | TransactionType::RegisterObserver
                 | TransactionType::UpdateObserverMetadata
                 | TransactionType::SuspendObserver
@@ -2422,6 +2433,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::AssetAuthorityTransfer
             | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::AssetRewardsPolicyUpdate
+            | TransactionType::AssetBurnBpsUpdate
             | TransactionType::RewardClaim => {}
         }
 
@@ -3560,6 +3572,7 @@ pub mod utils {
             | TransactionType::AssetAuthorityTransfer
             | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::AssetRewardsPolicyUpdate
+            | TransactionType::AssetBurnBpsUpdate
             | TransactionType::BondingCurveDeploy
             | TransactionType::BondingCurveBuy
             | TransactionType::BondingCurveSell

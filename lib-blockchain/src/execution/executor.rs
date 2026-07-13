@@ -45,7 +45,7 @@ use crate::transaction::{
     asset_tx::{
         AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
         AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
-        AssetRewardsPolicyUpdatePayloadV1,
+        AssetBurnBpsUpdatePayloadV1, AssetRewardsPolicyUpdatePayloadV1,
     },
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
@@ -56,12 +56,16 @@ use crate::transaction::{
 use crate::types::TransactionType;
 
 use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
+use super::mint_and_allocate::mint_and_allocate;
 use super::sovereign_asset::{
-    activate_pending_authority_transfers, activate_pending_rewards_policies,
-    apply_asset_authority_transfer, apply_asset_launch,
-    apply_asset_manifest_update, apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate,
-    apply_asset_rewards_policy_update, AssetLaunchOutcome,
+    activate_pending_authority_transfers, activate_pending_burn_bps,
+    activate_pending_rewards_policies, apply_asset_authority_transfer, apply_asset_burn_bps_update,
+    apply_asset_launch, apply_asset_manifest_update, apply_asset_module_upgrade,
+    apply_asset_rewards_delegate_rotate, apply_asset_rewards_policy_update,
+    apply_sovereign_token_transfer, require_governance_mint_signer, require_treasury_spend_signer,
+    AssetLaunchOutcome,
 };
+use crate::contracts::sovereign_asset::SupplyMode;
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
 
 use crate::protocol::ProtocolParams;
@@ -671,6 +675,11 @@ impl BlockExecutor {
                 "activate pending rewards policies failed: {e}"
             ))
         })?;
+        activate_pending_burn_bps(&mutator, block_height).map_err(|e| {
+            BlockApplyError::ValidationFailed(format!(
+                "activate pending burn bps updates failed: {e}"
+            ))
+        })?;
 
         // =====================================================================
         // Pre-step: Coinbase position validation
@@ -1082,6 +1091,7 @@ impl BlockExecutor {
             TransactionType::AssetAuthorityTransfer => {}
             TransactionType::AssetRewardsDelegateRotate => {}
             TransactionType::AssetRewardsPolicyUpdate => {}
+            TransactionType::AssetBurnBpsUpdate => {}
             TransactionType::ContractDeployment => {}
             TransactionType::ContractExecution => {}
             TransactionType::DaoProposal => {}
@@ -1353,6 +1363,18 @@ impl BlockExecutor {
                 AssetRewardsPolicyUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
                     TxApplyError::InvalidType(format!(
                         "AssetRewardsPolicyUpdate requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetBurnBpsUpdate => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetBurnBpsUpdate must not have UTXO inputs or outputs".to_string(),
+                    ));
+                }
+                AssetBurnBpsUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetBurnBpsUpdate requires canonical memo payload: {e}"
                     ))
                 })?;
             }
@@ -3326,6 +3348,16 @@ impl BlockExecutor {
                 } else {
                     crate::contracts::tokens::constants::SOV_FEE_RATE_BPS
                 };
+                let signer_key_id = tx.signature.public_key.key_id;
+                if let Some(asset) = mutator.get_sovereign_asset(&transfer_data.token_id)? {
+                    require_treasury_spend_signer(
+                        mutator,
+                        &asset,
+                        transfer_data.from,
+                        signer_key_id,
+                    )?;
+                }
+
                 tracing::info!(
                     tx_hash = %hex::encode(&tx.hash().as_bytes()[..8]),
                     token = %hex::encode(&token.0[..8]),
@@ -3336,15 +3368,30 @@ impl BlockExecutor {
                     fee_bps = fee_bps,
                     "[fee-debug] BEFORE apply_token_transfer"
                 );
-                let _fee_collected = tx_apply::apply_token_transfer(
-                    mutator,
-                    &token,
-                    &from,
-                    &to,
-                    amount,
-                    fee_bps,
-                    &fee_destination,
-                )?;
+                let _fee_collected = if let Some(mut asset) =
+                    mutator.get_sovereign_asset(&transfer_data.token_id)?
+                {
+                    apply_sovereign_token_transfer(
+                        mutator,
+                        &mut asset,
+                        &token,
+                        &from,
+                        &to,
+                        amount,
+                        fee_bps,
+                        &fee_destination,
+                    )?
+                } else {
+                    tx_apply::apply_token_transfer(
+                        mutator,
+                        &token,
+                        &from,
+                        &to,
+                        amount,
+                        fee_bps,
+                        &fee_destination,
+                    )?
+                };
                 tracing::info!(
                     tx_hash = %hex::encode(&tx.hash().as_bytes()[..8]),
                     from = %hex::encode(&from.0[..8]),
@@ -3403,13 +3450,24 @@ impl BlockExecutor {
 
                 let to = Address::new(mint_data.to);
                 let amount = mint_data.amount;
+                let signer_key_id = tx.signature.public_key.key_id;
 
-                tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
-                if token == Self::canonical_sov_token_id() {
-                    self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
+                if let Some(mut asset) = mutator.get_sovereign_asset(&mint_data.token_id)? {
+                    if asset.supply_mode == SupplyMode::Fixed {
+                        return Err(TxApplyError::InvalidType(
+                            "fixed-supply sovereign asset rejects post-launch mint".to_string(),
+                        ));
+                    }
+                    require_governance_mint_signer(mutator, &asset, signer_key_id)?;
+                    mint_and_allocate(mutator, &mut asset, mint_data.to, amount)?;
+                    Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
+                } else {
+                    tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
+                    if token == Self::canonical_sov_token_id() {
+                        self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
+                    }
+                    Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
                 }
-
-                Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
             }
             TransactionType::WalletRegistration => {
                 let wallet_data = tx.wallet_data().ok_or_else(|| {
@@ -3591,6 +3649,16 @@ impl BlockExecutor {
                     })?;
                 let signer = tx.signature.public_key.key_id;
                 apply_asset_rewards_policy_update(mutator, signer, &payload, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::AssetBurnBpsUpdate => {
+                let payload = AssetBurnBpsUpdatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetBurnBpsUpdate requires canonical memo payload: {e}"
+                    ))
+                })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_burn_bps_update(mutator, signer, &payload, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::AssetAuthorityTransfer => {
@@ -4374,6 +4442,7 @@ mod tests {
             fee_tx_hash: String::new(),
             fee_amount_atoms: fee,
             fee_payer_wallet_id: payer_wallet_id,
+            asset_id: None,
         };
         let mut domain_tx = create_legacy_tx(TransactionType::DomainRegistration);
         domain_tx.memo = payload.encode_memo().unwrap();
@@ -5102,6 +5171,8 @@ mod tests {
             rewards: None,
             governance: None,
             transfer_authority: false,
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
         };
         let memo = payload.encode_memo().expect("valid asset launch memo");
         let tx = Transaction {
@@ -5127,6 +5198,7 @@ mod tests {
         assert_eq!(asset.asset_id, expected_asset_id);
         assert_eq!(asset.id_source, AssetIdSource::LaunchTx);
         assert_eq!(asset.symbol, "BUBL");
+        assert_eq!(asset.dao_class, crate::contracts::sovereign_asset::DaoClass::Fp);
 
         let creator = Address::new(create_dummy_signature().public_key.key_id);
         let treasury = Address::new([0xAA; 32]);
@@ -5174,6 +5246,8 @@ mod tests {
             }),
             governance: None,
             transfer_authority: false,
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
         };
         let memo = payload.encode_memo().expect("valid asset launch memo");
         let tx = Transaction {
@@ -5268,6 +5342,8 @@ mod tests {
             }),
             governance: None,
             transfer_authority: false,
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
         };
         let memo = payload.encode_memo().expect("memo");
         let launch_tx = Transaction {

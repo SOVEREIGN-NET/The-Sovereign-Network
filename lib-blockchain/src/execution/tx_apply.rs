@@ -335,6 +335,17 @@ impl<'a> StateMutator<'a> {
         Ok(self.store.list_governance_module_asset_ids()?)
     }
 
+    pub fn iter_sovereign_assets(
+        &self,
+    ) -> TxApplyResult<
+        Vec<([u8; 32], crate::contracts::sovereign_asset::SovereignAsset)>,
+    > {
+        Ok(self
+            .store
+            .iter_sovereign_asset_records()?
+            .collect())
+    }
+
     pub fn get_rewards_policy_document(
         &self,
         policy_hash: &[u8; 32],
