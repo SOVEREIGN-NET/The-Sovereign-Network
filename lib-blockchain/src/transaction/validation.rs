@@ -4476,25 +4476,26 @@ mod tests {
     }
 
     /// Helper: build a minimal valid-structure TokenTransfer with a given fee.
+    ///
+    /// TokenTransfer is classified as [`SystemTxSignaturePolicy::Required`], so even
+    /// mempool intake with `is_system_transaction=true` must carry a valid Dilithium
+    /// signature. We sign with a real keypair so fee-economics tests reach
+    /// `validate_economics_with_system_check` instead of failing early on signature.
     fn token_transfer_tx_with_fee(fee: u64) -> Transaction {
-        let sender_key = test_public_key(1);
-        let from_id = sender_key.key_id;
+        use crate::transaction::hashing::hash_for_signature;
+
+        let signer = lib_crypto::KeyPair::generate().expect("test keypair");
         let to_id = test_public_key(2).key_id;
-        Transaction {
+        let mut tx = Transaction {
             version: 1,
             chain_id: 0x03,
             transaction_type: TransactionType::TokenTransfer,
             inputs: vec![],
             outputs: vec![],
             fee,
-            // Empty signature — simulates a true system-generated transaction.
-            // With is_system=true the validator skips sig-validation only when
-            // the signature bytes are empty (has_nonempty_sig=false); a non-empty
-            // dummy signature would trigger crypto verification and fire
-            // InvalidSignature before the fee check.
             signature: Signature {
                 signature: vec![],
-                public_key: sender_key.clone(),
+                public_key: signer.public_key.clone(),
                 algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 0,
             },
@@ -4502,13 +4503,17 @@ mod tests {
             payload: crate::transaction::TransactionPayload::TokenTransfer(
                 crate::transaction::TokenTransferData {
                     token_id: [0u8; 32],
-                    from: from_id,
+                    from: signer.public_key.key_id,
                     to: to_id,
                     amount: 1_000,
                     nonce: 0,
                 },
             ),
-        }
+        };
+
+        let msg = hash_for_signature(&tx);
+        tx.signature = signer.sign(msg.as_bytes()).expect("test signature");
+        tx
     }
 
     fn token_creation_tx_with_fee(fee: u64) -> Transaction {
@@ -4537,9 +4542,9 @@ mod tests {
 
     #[test]
     fn test_token_transfer_nonzero_fee_rejected_with_system_flag_true() {
-        // When is_system_transaction=true, signature validation is skipped, so the
-        // fee check is the first gate to fire.  Phase 2 rule: TokenTransfer fee must
-        // be 0 even when the caller sets is_system=true.
+        // TokenTransfer always requires a valid signature (even with is_system=true).
+        // After signature passes, Phase 2 economics treat TokenTransfer as fee-exempt
+        // (fee must be 0) regardless of the caller's is_system flag.
         let tx = token_transfer_tx_with_fee(107);
         let validator = TransactionValidator::new();
         let result = validator.validate_transaction_with_system_flag(&tx, true);
@@ -4552,19 +4557,14 @@ mod tests {
 
     #[test]
     fn test_token_transfer_nonzero_fee_rejected_with_system_flag_false() {
-        // When is_system_transaction=false, signature validation runs first.
-        // A TokenTransfer with fee > 0 must NOT be accepted regardless of which
-        // error fires first — this guards against future reordering.
+        // Same fee rule as the is_system=true path; signature is also required.
         let tx = token_transfer_tx_with_fee(107);
         let validator = TransactionValidator::new();
         let result = validator.validate_transaction_with_system_flag(&tx, false);
         assert!(
-            result.is_err(),
-            "TokenTransfer with fee=107 (is_system=false) must be rejected, got Ok"
-        );
-        assert!(
-            !matches!(result, Ok(())),
-            "TokenTransfer with fee=107 must never pass validation"
+            matches!(result, Err(ValidationError::InvalidFee)),
+            "Expected InvalidFee for TokenTransfer(fee=107, is_system=false), got: {:?}",
+            result
         );
     }
 
@@ -4575,7 +4575,7 @@ mod tests {
         let tx = token_transfer_tx_with_fee(0);
         let validator = TransactionValidator::new();
 
-        // With is_system=true, signature is skipped.  The fee check must not fire.
+        // Signed tx with fee=0 must not trip the economics fee gate.
         let result = validator.validate_transaction_with_system_flag(&tx, true);
         assert!(
             !matches!(result, Err(ValidationError::InvalidFee)),
