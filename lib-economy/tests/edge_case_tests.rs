@@ -27,7 +27,7 @@ mod edge_case_tests {
     #[test]
     fn test_maximum_amount_transactions() {
         // Test transaction with maximum possible amount
-        let max_amount = u64::MAX as u128;
+        let max_amount = u128::MAX;
         let tx =
             Transaction::new_payment([1u8; 32], [2u8; 32], max_amount, Priority::Normal).unwrap();
 
@@ -187,14 +187,14 @@ mod edge_case_tests {
         assert!(!wallet.can_afford(1));
 
         // Test with maximum balance
-        wallet.available_balance = u64::MAX as u128;
-        assert!(wallet.can_afford(u64::MAX as u128));
+        wallet.available_balance = u128::MAX;
+        assert!(wallet.can_afford(u128::MAX));
         assert!(wallet.can_afford(1)); // can_afford is a plain >= check
 
         // Test total balance calculation with maximum values
-        wallet.staked_balance = u64::MAX as u128 / 3;
-        wallet.pending_rewards = u64::MAX as u128 / 3;
-        wallet.available_balance = u64::MAX as u128 / 3;
+        wallet.staked_balance = u128::MAX / 3;
+        wallet.pending_rewards = u128::MAX / 3;
+        wallet.available_balance = u128::MAX / 3;
 
         let total = wallet.total_balance();
         assert!(total >= wallet.available_balance); // Should not underflow
