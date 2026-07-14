@@ -66,10 +66,10 @@ The creator identity becomes:
 
 ## Step 2 — Build signed token launch tx
 
-### BUBL (TokenCreation — current testnet)
+### BUBL (AssetLaunch — canonical path, SA-3)
 
 ```bash
-cargo run -p tools --bin seed_founding_dao -- \
+cargo run -p tools --bin seed_asset_launch -- \
   --keystore-dir /opt/zhtp/keystores/bubl-creator \
   --token bubl \
   --supply-atoms 1000000000000000000000000000 \
@@ -79,33 +79,31 @@ cargo run -p tools --bin seed_founding_dao -- \
 
 Copy the `signed_tx` hex from JSON output.
 
-> **Do not use `seed_asset_launch` for Phase 1 BUBL bootstrap.** That path emits
-> `AssetLaunch` txs (SA-3 / N3) and is incompatible with interim Phase 1 rewards,
-> which expect a `TokenCreation` signer and `ZHTP_REWARDS_TREASURY_KEYSTORE`.
-> Reserve `tools/seed_asset_launch.rs` for the N3 chain-native activation migration
-> ([#2813](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2813)).
+> **Legacy note:** testnet BUBL deployed before SA-3 may still exist via historical
+> `TokenCreation`. New launches must use `AssetLaunch` only. `TokenCreation` is
+> rejected by `POST /api/v1/token/create` and sunset at block **80,000** in consensus
+> (`TOKEN_CREATION_SUNSET_HEIGHT`).
 
 ---
 
 ## Step 3 — Broadcast launch tx
 
-**Phase 1 (current): use Option B.** `zhtp-cli token create` still hardcodes
-`chain_id = 0x03` in `zhtp-cli/src/commands/token.rs`; txs signed that way are
-rejected on v2 testnet (`genesis.toml` `chain_id = 2`). Broadcast the
-`signed_tx` from `seed_founding_dao` (with `--chain-id 2`) until the CLI gains
-explicit chain-id selection.
+Prefer the sovereign-asset API (QUIC on testnet validators):
 
 ```bash
-# Option A: zhtp-cli (NOT for Phase 1 v2 testnet — chain_id hardcoded 0x03)
-# zhtp-cli token create --name Bubble --symbol BUBL \
-#   --supply 1000000000000000000000000000 --decimals 18 \
-#   --treasury-recipient <32-byte-hex-key_id>
+# Option A: zhtp-cli (recommended)
+./target/dev-release/zhtp-cli -s <host>:9334 dao launch \
+  --template fp-starter --keystore-dir /opt/zhtp/keystores/bubl-creator
 
-# Option B: POST pre-signed tx from seed_founding_dao (required for Phase 1)
-curl -s -X POST "https://<validator>:9334/api/v1/token/create" \
-  -H "Content-Type: application/json" \
-  -d '{"signed_tx":"<hex>"}'
+# Option B: broadcast pre-signed hex from seed_asset_launch
+./target/dev-release/zhtp-cli -s <host>:9334 blockchain broadcast-raw \
+  --tx-hex "<signed_tx_hex>"
+
+# Option C: POST /api/v1/assets/launch (same payload as Option A)
 ```
+
+`POST /api/v1/token/create` accepts `AssetLaunch` only during migration shim;
+`TokenCreation` returns **400 deprecated**.
 
 Record outputs:
 
@@ -115,22 +113,28 @@ Record outputs:
 
 ---
 
-## Step 4 — Enable rewards on validators (interim)
+## Step 4 — Enable rewards on validators
 
-On **each** validator (`zhtp-g1`, `g2`, `g3`), set environment and restart:
+On **each** validator (`zhtp-g1`, `g2`, `g3`), bind the on-chain spend delegate:
 
 ```bash
-export ZHTP_REWARDS_TREASURY_KEYSTORE=/opt/zhtp/keystores/bubl-creator
-# Optional override (defaults to deterministic BUBL token_id):
-# export ZHTP_REWARDS_TOKEN_ID=<hex>
+./target/dev-release/zhtp-cli node configure-rewards \
+  --asset-id <launch_tx_hash_hex> \
+  --delegate-keystore /opt/zhtp/keystores/bubl-rewards-hot
 export ZHTP_CHAIN_ID=2
 ```
 
-Handler activates when:
+Writes `rewards_activation.toml` under the node data dir. Validators scan
+`asset_rewards/` (pure `AssetLaunch`) plus legacy `token_contracts` rows.
 
-1. Keystore loads successfully
-2. Signer is the on-chain token **creator**
-3. Creator holds positive token balance
+**Deprecated fallback** (historical `TokenCreation` BUBL only):
+
+```bash
+export ZHTP_REWARDS_TREASURY_KEYSTORE=/opt/zhtp/keystores/bubl-creator
+```
+
+Handler activates when the configured keystore matches the on-chain spend delegate
+and delegate balance is positive.
 
 Verify:
 
@@ -155,30 +159,9 @@ Replace `asset_id` placeholder in the example with launch tx hash after migratio
 
 ---
 
-## Migration to chain-native activation (N3)
-
-When [#2813](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2813) ships:
-
-1. Remove `ZHTP_REWARDS_TREASURY_KEYSTORE` from validator env
-2. Fund `spend_delegate_key_id` on-chain
-3. Validators scan assets with `rewards` module bit + delegate balance > 0
-4. Use `zhtp-cli node configure-rewards --asset-id <hex> --delegate-keystore ...` (interim CLI)
-5. Build launch via `seed_asset_launch` (not `seed_founding_dao`):
-
-```bash
-cargo run -p tools --bin seed_asset_launch -- \
-  --keystore-dir /opt/zhtp/keystores/bubl-creator \
-  --token bubl \
-  --supply-atoms 1000000000000000000000000000 \
-  --chain-id 2 \
-  --rewards-delegate-dir /opt/zhtp/keystores/bubl-rewards-hot
-```
-
----
-
 ## Related
 
-- `tools/seed_founding_dao.rs` — TokenCreation builder
-- `tools/seed_asset_launch.rs` — AssetLaunch + rewards delegate
+- `tools/seed_asset_launch.rs` — canonical `AssetLaunch` + rewards delegate builder
+- `tools/seed_founding_dao.rs` — **deprecated** `TokenCreation` builder (replay only)
 - `scripts/effective-reset-testnet.sh` — wipe + post-reset checklist
 - Epic child issues: P3–P5, N2–N4, D3 BUBL migration

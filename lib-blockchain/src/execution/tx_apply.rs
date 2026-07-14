@@ -331,6 +331,20 @@ impl<'a> StateMutator<'a> {
         Ok(self.store.list_rewards_module_asset_ids()?)
     }
 
+    pub fn put_asset_launched_event(
+        &self,
+        event: &crate::contracts::sovereign_asset::AssetLaunchedEvent,
+    ) -> TxApplyResult<()> {
+        self.store.put_asset_launched_event(event)?;
+        Ok(())
+    }
+
+    pub fn list_asset_launched_events(
+        &self,
+    ) -> TxApplyResult<Vec<crate::contracts::sovereign_asset::AssetLaunchedEvent>> {
+        Ok(self.store.list_asset_launched_events()?)
+    }
+
     pub fn list_governance_module_asset_ids(&self) -> TxApplyResult<Vec<[u8; 32]>> {
         Ok(self.store.list_governance_module_asset_ids()?)
     }

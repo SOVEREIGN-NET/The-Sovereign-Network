@@ -1486,10 +1486,18 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         // as the blockchain difficulty may have been adjusted far above what testnet can mine quickly.
         let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
 
-        let selected = lib_blockchain::block::creation::select_transactions_for_block(
+        let selected = lib_blockchain::block::creation::select_transactions_for_block_filtered(
             &valid_pending,
             lib_blockchain::MAX_TRANSACTIONS_PER_BLOCK,
             lib_blockchain::MAX_BLOCK_SIZE,
+            |tx| {
+                if tx.transaction_type == lib_blockchain::types::TransactionType::TokenCreation {
+                    return lib_blockchain::contracts::sovereign_asset::token_creation_allowed_in_block_at_height(
+                        next_height,
+                    );
+                }
+                true
+            },
         );
 
         let block = lib_blockchain::block::creation::create_block(
@@ -1550,6 +1558,8 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         }
         match bincode::deserialize::<lib_blockchain::block::Block>(block_data) {
             Ok(block) => {
+                lib_blockchain::validation::validate_block_consensus_policy_at_prod_sunset(&block)
+                    .map_err(|e| format!("block consensus policy violation: {e}"))?;
                 let count = block.transactions.len() as u32;
                 let fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
                 Ok((count, fees))

@@ -1181,6 +1181,20 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(Vec::new())
     }
 
+    fn put_asset_launched_event(
+        &self,
+        event: &crate::contracts::sovereign_asset::AssetLaunchedEvent,
+    ) -> StorageResult<()> {
+        let _ = event;
+        Ok(())
+    }
+
+    fn list_asset_launched_events(
+        &self,
+    ) -> StorageResult<Vec<crate::contracts::sovereign_asset::AssetLaunchedEvent>> {
+        Ok(Vec::new())
+    }
+
     fn list_governance_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>>;
 
     fn get_rewards_policy_document(

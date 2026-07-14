@@ -5,6 +5,7 @@
 //! `zhtp-cli node configure-rewards`). Legacy `ZHTP_REWARDS_TREASURY_KEYSTORE`
 //! remains as a deprecated fallback for interim BUBL `TokenCreation` nodes.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use lib_blockchain::Blockchain;
@@ -93,33 +94,64 @@ pub fn resolve_activation() -> Option<ResolvedActivation> {
     })
 }
 
+fn eligible_asset_entry(
+    blockchain: &Blockchain,
+    asset_id: [u8; 32],
+    state: &RewardsModuleState,
+) -> Option<ChainEligibleAsset> {
+    let balance = match blockchain.token_balance(&asset_id, &state.spend_delegate_key_id) {
+        Ok(balance) => balance,
+        Err(e) => {
+            warn!(
+                "rewards: token_balance lookup failed for asset {} delegate {}: {e}",
+                hex::encode(&asset_id[..8]),
+                hex::encode(&state.spend_delegate_key_id[..8]),
+            );
+            return None;
+        }
+    };
+    if balance == 0 {
+        return None;
+    }
+    Some(ChainEligibleAsset {
+        asset_id,
+        spend_delegate_key_id: state.spend_delegate_key_id,
+        delegate_balance: balance,
+        policy_hash: state.policy_hash,
+    })
+}
+
 /// Assets with on-chain rewards module and a funded spend delegate (no keystore required).
+///
+/// Primary scan: `asset_rewards/` sled rows (pure `AssetLaunch` path).
+/// Legacy fallback: `token_contracts` entries that also carry rewards module state (BUBL
+/// `TokenCreation` migration).
 pub fn scan_chain_eligible_assets(blockchain: &Blockchain) -> Vec<ChainEligibleAsset> {
     let mut out = Vec::new();
-    for (asset_id, _) in blockchain.iter_token_contract_entries() {
+    let mut seen = HashSet::new();
+
+    for asset_id in blockchain.list_rewards_module_asset_ids() {
+        seen.insert(asset_id);
         let Some(state) = blockchain.get_rewards_module_state(&asset_id) else {
             continue;
         };
-        let balance = match blockchain.token_balance(&asset_id, &state.spend_delegate_key_id) {
-            Ok(balance) => balance,
-            Err(e) => {
-                warn!(
-                    "rewards: token_balance lookup failed for asset {} delegate {}: {e}",
-                    hex::encode(&asset_id[..8]),
-                    hex::encode(&state.spend_delegate_key_id[..8]),
-                );
-                continue;
-            }
-        };
-        if balance > 0 {
-            out.push(ChainEligibleAsset {
-                asset_id,
-                spend_delegate_key_id: state.spend_delegate_key_id,
-                delegate_balance: balance,
-                policy_hash: state.policy_hash,
-            });
+        if let Some(entry) = eligible_asset_entry(blockchain, asset_id, &state) {
+            out.push(entry);
         }
     }
+
+    for (asset_id, _) in blockchain.iter_token_contract_entries() {
+        if seen.contains(&asset_id) {
+            continue;
+        }
+        let Some(state) = blockchain.get_rewards_module_state(&asset_id) else {
+            continue;
+        };
+        if let Some(entry) = eligible_asset_entry(blockchain, asset_id, &state) {
+            out.push(entry);
+        }
+    }
+
     out
 }
 

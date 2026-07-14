@@ -26,8 +26,10 @@ pub mod tx_validate;
 pub use errors::{BlockValidateError, BlockValidateResult, TxValidateError, TxValidateResult};
 
 pub use block_validate::{
-    validate_block, validate_block_context, validate_block_resource_limits,
-    validate_block_structure, BlockResourceUsage, BlockValidateConfig,
+    validate_block, validate_block_consensus_policy,
+    validate_block_consensus_policy_at_prod_sunset, validate_block_context,
+    validate_block_resource_limits, validate_block_structure, BlockResourceUsage,
+    BlockValidateConfig,
 };
 
 pub use tx_validate::{

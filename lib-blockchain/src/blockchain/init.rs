@@ -1161,11 +1161,12 @@ impl Blockchain {
         }
 
         let rebuilt = std::sync::Arc::new(
-            crate::execution::executor::BlockExecutor::new_with_token_creation_fee(
+            crate::execution::executor::BlockExecutor::new_with_token_creation_fee_and_sunset(
                 std::sync::Arc::clone(executor.store()),
                 executor.fee_model().clone(),
                 executor.limits().clone(),
                 self.tx_fee_config.token_creation_fee,
+                executor.token_creation_sunset_height(),
             ),
         );
         self.executor = Some(rebuilt);

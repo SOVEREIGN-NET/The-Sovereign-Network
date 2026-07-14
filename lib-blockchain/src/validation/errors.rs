@@ -73,6 +73,13 @@ pub enum BlockValidateError {
 
     #[error("Block state write bytes exceeded: {actual} > max {max}")]
     StateWriteBytesExceeded { actual: u64, max: u32 },
+
+    #[error("Forbidden transaction at index {index} ({tx_type}): {reason}")]
+    ForbiddenTransaction {
+        index: usize,
+        tx_type: String,
+        reason: String,
+    },
 }
 
 /// Transaction validation error

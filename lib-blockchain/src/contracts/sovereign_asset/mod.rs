@@ -1,9 +1,12 @@
 //! Sovereign Asset — unified DAO/token primitive (ADR: docs/arch/sovereign-asset.md).
 
+mod events;
 mod migration;
 mod projection;
 mod state;
 mod types;
+
+pub use events::AssetLaunchedEvent;
 
 pub use migration::deserialize_sovereign_asset;
 
