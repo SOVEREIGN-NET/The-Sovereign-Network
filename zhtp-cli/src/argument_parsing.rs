@@ -567,7 +567,7 @@ pub enum OracleAction {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DaoAction {
-    /// Launch a DAO sovereign asset (AssetLaunch + 80/20 split).
+    /// Launch a DAO sovereign asset (AssetLaunch). Split follows template `dao_class` (FP 80/20, NP 100% treasury).
     Launch {
         /// Token name (e.g. Bubble)
         #[arg(short, long)]
@@ -575,10 +575,12 @@ pub enum DaoAction {
         /// Token symbol (e.g. BUBL)
         #[arg(short, long)]
         symbol: String,
-        /// Tokenomics template: unicorn | balanced | foundation (D4 #2825)
+        /// Tokenomics template id (D4 #2825, #2880). Legacy FP: unicorn, balanced, foundation.
+        /// FP presets: fp-starter, fp-growth, fp-enterprise, fp-boutique.
+        /// NP presets (100% treasury): np-charity, np-impact, np-mission, np-collective, np-commons.
         #[arg(long, value_name = "ID")]
         template: Option<String>,
-        /// Print 80/20 split preview (executor formula) and exit; requires --template or --supply
+        /// Print launch split preview (executor formula) and exit; requires --template or --supply
         #[arg(long)]
         preview: bool,
         /// Initial supply in atomic units (required without --template; overrides template default)

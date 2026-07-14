@@ -3,6 +3,10 @@
 //! Versioned JSON presets shared by CLI and mobile app. Templates are embedded at
 //! compile time via `include_str!` so deployed binaries work without a source tree.
 //! Split preview uses `AssetLaunchPayloadV1::split_initial_supply` — same path as the executor.
+//!
+//! **Catalog**
+//! - **FP (80% creator / 20% treasury):** `unicorn`, `balanced`, `foundation`, `fp-*`
+//! - **NP (0% creator / 100% treasury):** `np-charity`, `np-impact`, `np-mission`, `np-collective`, `np-commons`
 
 use crate::error::{CliError, CliResult};
 use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode, MAX_TRANSFER_BURN_BPS};
