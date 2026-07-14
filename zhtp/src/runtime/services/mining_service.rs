@@ -118,13 +118,21 @@ impl MiningService {
         transactions_for_block.extend(ubi_txs);
         let remaining = 10usize.saturating_sub(transactions_for_block.len());
         if remaining > 0 {
-            transactions_for_block.extend(
-                blockchain
-                    .pending_transactions
-                    .iter()
-                    .take(remaining)
-                    .cloned(),
+            let next_height = blockchain.height.saturating_add(1);
+            let selected = lib_blockchain::block::creation::select_transactions_for_block_filtered(
+                &blockchain.pending_transactions,
+                remaining,
+                lib_blockchain::MAX_BLOCK_SIZE,
+                |tx| {
+                    if tx.transaction_type == lib_blockchain::types::TransactionType::TokenCreation {
+                        return lib_blockchain::contracts::sovereign_asset::token_creation_allowed_in_block_at_height(
+                            next_height,
+                        );
+                    }
+                    true
+                },
             );
+            transactions_for_block.extend(selected);
         }
 
         if transactions_for_block.is_empty() {

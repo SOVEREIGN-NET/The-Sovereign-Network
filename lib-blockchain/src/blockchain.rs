@@ -978,11 +978,14 @@ impl Blockchain {
     pub async fn apply_block_trusted_for_sync(&mut self, block: Block) -> Result<()> {
         if let Some(ref exec_arc) = self.executor {
             use crate::execution::executor::BlockExecutor;
-            let catchup_exec = std::sync::Arc::new(BlockExecutor::new_catchup_sync(
-                std::sync::Arc::clone(exec_arc.store()),
-                exec_arc.fee_model().clone(),
-                Default::default(),
-            ));
+            let catchup_exec = std::sync::Arc::new(
+                BlockExecutor::new_catchup_sync(
+                    std::sync::Arc::clone(exec_arc.store()),
+                    exec_arc.fee_model().clone(),
+                    Default::default(),
+                )
+                .with_token_creation_sunset_height(exec_arc.token_creation_sunset_height()),
+            );
             // Temporarily swap in the catchup executor, apply, restore.
             let original = self.executor.replace(catchup_exec);
             let result = self.process_and_commit_block(block).await;

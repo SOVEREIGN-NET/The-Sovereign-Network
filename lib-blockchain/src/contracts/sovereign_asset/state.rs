@@ -124,9 +124,9 @@ pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 80_000;
 ///
 /// Aligned with [`GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT`] so testnet replay below 80k stays
 /// deterministic while post-cutover launches use the sovereign-asset write path only.
-#[cfg(test)]
-pub const TOKEN_CREATION_SUNSET_HEIGHT: u64 = u64::MAX;
-#[cfg(not(test))]
+///
+/// Tests inject a lower sunset via [`BlockExecutor::with_token_creation_sunset_height`]
+/// rather than swapping this constant per build profile.
 pub const TOKEN_CREATION_SUNSET_HEIGHT: u64 = 80_000;
 
 /// Returns true when `TokenCreation` may still be applied at `block_height` (replay / apply).
@@ -145,9 +145,32 @@ pub fn token_creation_apply_allowed_at_height_with_sunset(
 }
 
 /// Returns true when new `TokenCreation` submissions are accepted at the given chain tip.
+///
+/// Gates on the height the tx would be applied at (`chain_tip + 1`), not the tip itself.
 #[inline]
 pub fn token_creation_submission_allowed_at_tip(chain_tip: u64) -> bool {
-    token_creation_apply_allowed_at_height(chain_tip)
+    token_creation_submission_allowed_at_tip_with_sunset(chain_tip, TOKEN_CREATION_SUNSET_HEIGHT)
+}
+
+/// Testable mempool gate (production sunset = 80_000).
+#[inline]
+pub fn token_creation_submission_allowed_at_tip_with_sunset(chain_tip: u64, sunset_height: u64) -> bool {
+    token_creation_apply_allowed_at_height_with_sunset(chain_tip.saturating_add(1), sunset_height)
+}
+
+/// Returns true when `TokenCreation` may be included in a block at `block_height`.
+#[inline]
+pub fn token_creation_allowed_in_block_at_height(block_height: u64) -> bool {
+    token_creation_allowed_in_block_at_height_with_sunset(block_height, TOKEN_CREATION_SUNSET_HEIGHT)
+}
+
+/// Testable block-assembly gate (production sunset = 80_000).
+#[inline]
+pub fn token_creation_allowed_in_block_at_height_with_sunset(
+    block_height: u64,
+    sunset_height: u64,
+) -> bool {
+    token_creation_apply_allowed_at_height_with_sunset(block_height, sunset_height)
 }
 
 /// Epic Q1–Q3 / Q8 economic rules (mint class, treasury spend auth, reward liquidity, burn).
@@ -180,8 +203,29 @@ mod sunset_tests {
     }
 
     #[test]
-    fn test_build_never_sunsets_token_creation() {
-        assert!(token_creation_apply_allowed_at_height(u64::MAX - 1));
+    fn submission_gate_uses_apply_height_not_tip() {
+        const SUNSET: u64 = 80_000;
+        assert!(token_creation_submission_allowed_at_tip_with_sunset(
+            SUNSET - 2,
+            SUNSET
+        ));
+        assert!(!token_creation_submission_allowed_at_tip_with_sunset(
+            SUNSET - 1,
+            SUNSET
+        ));
+    }
+
+    #[test]
+    fn block_assembly_gate_matches_apply_height() {
+        const SUNSET: u64 = 80_000;
+        assert!(token_creation_allowed_in_block_at_height_with_sunset(
+            SUNSET - 1,
+            SUNSET
+        ));
+        assert!(!token_creation_allowed_in_block_at_height_with_sunset(
+            SUNSET,
+            SUNSET
+        ));
     }
 }
 

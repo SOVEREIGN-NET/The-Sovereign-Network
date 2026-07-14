@@ -246,6 +246,48 @@ mod tests {
     }
 
     #[test]
+    fn select_transactions_filters_token_creation_at_sunset_block_height() {
+        use crate::contracts::sovereign_asset::token_creation_allowed_in_block_at_height_with_sunset;
+        use crate::types::TransactionType;
+
+        let sunset = 10u64;
+        let block_height = sunset;
+        let token_tx = Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 100,
+            signature: crate::integration::crypto_integration::Signature {
+                signature: vec![0u8; 64],
+                public_key: PublicKey::new([1u8; 2592]),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 0,
+            },
+            memo: vec![],
+            payload: crate::transaction::TransactionPayload::None,
+        };
+        let transfer = make_tx(200);
+
+        let selected = select_transactions_for_block_filtered(
+            &[token_tx, transfer],
+            10,
+            usize::MAX,
+            |tx| {
+                if tx.transaction_type == TransactionType::TokenCreation {
+                    token_creation_allowed_in_block_at_height_with_sunset(block_height, sunset)
+                } else {
+                    true
+                }
+            },
+        );
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].transaction_type, TransactionType::Transfer);
+    }
+
+    #[test]
     fn select_transactions_dedupes_by_hash() {
         let tx = make_tx(100);
         let duplicate = tx.clone();

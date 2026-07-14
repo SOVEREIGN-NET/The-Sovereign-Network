@@ -1831,16 +1831,23 @@ impl<'a> StatefulTransactionValidator<'a> {
         );
 
         if transaction.transaction_type == TransactionType::TokenCreation {
-            if let Some(blockchain) = self.blockchain {
-                if !crate::contracts::sovereign_asset::token_creation_submission_allowed_at_tip(
-                    blockchain.get_height(),
-                ) {
+            let chain_tip = match self.blockchain {
+                Some(blockchain) => blockchain.get_height(),
+                None => {
                     tracing::warn!(
-                        "rejecting deprecated TokenCreation at chain tip {}; use AssetLaunch",
-                        blockchain.get_height()
+                        "rejecting TokenCreation: no blockchain context for sunset gate"
                     );
                     return Err(ValidationError::InvalidTransactionType);
                 }
+            };
+            if !crate::contracts::sovereign_asset::token_creation_submission_allowed_at_tip(
+                chain_tip,
+            ) {
+                tracing::warn!(
+                    "rejecting deprecated TokenCreation for apply height {}; use AssetLaunch",
+                    chain_tip.saturating_add(1)
+                );
+                return Err(ValidationError::InvalidTransactionType);
             }
         }
 

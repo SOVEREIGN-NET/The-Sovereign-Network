@@ -10,9 +10,12 @@
 //! 3. **Semantic** - data helix root and contextual linkage
 
 use crate::block::Block;
+use crate::contracts::sovereign_asset::{
+    token_creation_allowed_in_block_at_height_with_sunset, TOKEN_CREATION_SUNSET_HEIGHT,
+};
 use crate::fees::{classify_transaction, FeeParamsV2};
 use crate::storage::{BlockHash, BlockchainStore};
-use crate::types::Hash;
+use crate::types::{Hash, TransactionType};
 
 use super::errors::{BlockValidateError, BlockValidateResult};
 
@@ -191,7 +194,40 @@ fn validate_timestamp(
     Ok(())
 }
 
-/// Full block validation (structure + context)
+/// Consensus policy checks on block contents (pre-execution, pre-vote safe).
+///
+/// Rejects blocks that contain transaction types forbidden at the block's height.
+/// Uses the production sunset unless a custom height is passed for tests.
+pub fn validate_block_consensus_policy(
+    block: &Block,
+    token_creation_sunset_height: u64,
+) -> BlockValidateResult<()> {
+    for (index, tx) in block.transactions.iter().enumerate() {
+        if tx.transaction_type == TransactionType::TokenCreation
+            && !token_creation_allowed_in_block_at_height_with_sunset(
+                block.header.height,
+                token_creation_sunset_height,
+            )
+        {
+            return Err(BlockValidateError::ForbiddenTransaction {
+                index,
+                tx_type: "TokenCreation".to_string(),
+                reason: format!(
+                    "TokenCreation is deprecated at block height {}; use AssetLaunch",
+                    block.header.height
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// [`validate_block_consensus_policy`] with the production sunset height.
+pub fn validate_block_consensus_policy_at_prod_sunset(block: &Block) -> BlockValidateResult<()> {
+    validate_block_consensus_policy(block, TOKEN_CREATION_SUNSET_HEIGHT)
+}
+
+/// Full block validation (structure + context + consensus policy)
 pub fn validate_block(
     block: &Block,
     store: &dyn BlockchainStore,
@@ -199,6 +235,7 @@ pub fn validate_block(
 ) -> BlockValidateResult<()> {
     validate_block_structure(block, config)?;
     validate_block_context(block, store, config)?;
+    validate_block_consensus_policy_at_prod_sunset(block)?;
     Ok(())
 }
 
@@ -371,6 +408,38 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             BlockValidateError::PayloadBytesExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn test_block_consensus_policy_rejects_token_creation_at_sunset() {
+        use crate::contracts::sovereign_asset::TOKEN_CREATION_SUNSET_HEIGHT;
+        use crate::types::TransactionType;
+
+        let tx = Transaction {
+            version: 1,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: Signature {
+                signature: vec![0u8; 64],
+                public_key: PublicKey::new([0u8; 2592]),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 0,
+            },
+            memo: vec![],
+            payload: crate::transaction::TransactionPayload::None,
+        };
+
+        let mut block = create_test_block(vec![tx]);
+        block.header.height = TOKEN_CREATION_SUNSET_HEIGHT;
+
+        let result = validate_block_consensus_policy(&block, TOKEN_CREATION_SUNSET_HEIGHT);
+        assert!(matches!(
+            result.unwrap_err(),
+            BlockValidateError::ForbiddenTransaction { .. }
         ));
     }
 
