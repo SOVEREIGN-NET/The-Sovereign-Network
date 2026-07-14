@@ -18,7 +18,7 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 // Blockchain imports
 use lib_blockchain::contracts::sovereign_asset::{AssetIdSource, SovereignAsset};
 use lib_blockchain::contracts::utils::generate_custom_token_id;
-use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
+use lib_blockchain::transaction::Transaction;
 use lib_blockchain::types::transaction_type::TransactionType;
 use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_crypto::types::keys::PublicKey;
@@ -187,11 +187,10 @@ impl TokenHandler {
         Self { blockchain }
     }
 
-    /// POST /api/v1/token/create — submit a signed founding `TokenCreation` tx.
+    /// POST /api/v1/token/create — legacy shim (deprecated).
     ///
-    /// BUBL and other GENESIS-6 DAO tokens deploy via `TokenCreation` (see
-    /// `tools/seed_founding_dao`). `AssetLaunch` is the SA-3 sovereign-asset path
-    /// for *other* tickers — not BUBL on the current testnet.
+    /// New sovereign assets must use `POST /api/v1/assets/launch` (`AssetLaunch`).
+    /// This route still accepts `AssetLaunch` during migration; `TokenCreation` is rejected.
     async fn handle_create_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let create_req: CreateTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -239,113 +238,27 @@ impl TokenHandler {
             }));
         }
 
-        if tx.transaction_type != TransactionType::TokenCreation {
-            let reason = if tx.transaction_type == TransactionType::ContractExecution {
-                "Deprecated token create transaction type. Use TokenCreation for DAO tokens (BUBL) or AssetLaunch for SA-3 sovereign assets"
-                    .to_string()
-            } else {
-                format!(
-                    "Invalid transaction type for token/create: expected AssetLaunch or TokenCreation, got {:?}",
-                    tx.transaction_type
-                )
-            };
-            tracing::error!("[token/create] invalid tx type: {}", reason);
-            return Ok(create_error_response(ZhtpStatus::BadRequest, reason));
+        if tx.transaction_type == TransactionType::TokenCreation {
+            tracing::warn!(
+                "[token/create] rejected deprecated TokenCreation — use POST /api/v1/assets/launch"
+            );
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "TokenCreation is deprecated. Use POST /api/v1/assets/launch with a signed AssetLaunch transaction.".to_string(),
+            ));
         }
 
-        let payload = match TokenCreationPayloadV1::decode_memo(&tx.memo) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("[token/create] payload decode FAILED: {}", e);
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    format!("Invalid token creation payload: {}", e),
-                ));
-            }
+        let reason = if tx.transaction_type == TransactionType::ContractExecution {
+            "Deprecated token create transaction type. Use AssetLaunch via POST /api/v1/assets/launch"
+                .to_string()
+        } else {
+            format!(
+                "Invalid transaction type for token/create: expected AssetLaunch, got {:?}",
+                tx.transaction_type
+            )
         };
-        if create_req.enforce_dao_launch_constraints {
-            if let Err(e) = payload.validate_dao_launch_ui_constraints() {
-                tracing::error!("[token/create] token creation constraints FAILED: {}", e);
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    format!("Token creation validation failed: {}", e),
-                ));
-            }
-        }
-        let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
-        let TokenCreationPayloadV1 {
-            name,
-            symbol,
-            initial_supply,
-            decimals,
-            treasury_allocation_bps,
-            treasury_recipient,
-        } = payload;
-        let treasury_recipient_hex = hex::encode(treasury_recipient);
-        tracing::info!(
-            "[token/create] name='{}' symbol='{}' supply={} decimals={} treasury_bps={} treasury={}",
-            name,
-            symbol,
-            initial_supply,
-            decimals,
-            treasury_allocation_bps,
-            treasury_recipient_hex
-        );
-
-        if name.is_empty() || symbol.is_empty() {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Name and symbol are required".to_string(),
-            ));
-        }
-
-        if symbol.len() > 10 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Symbol must be 10 characters or less".to_string(),
-            ));
-        }
-
-        let token_id = generate_custom_token_id(&name, &symbol);
-
-        // Check if token already exists (duplicate name+symbol)
-        {
-            let blockchain = self.blockchain.read().await;
-            if blockchain.get_token_contract(&token_id).is_some() {
-                return Ok(create_error_response(
-                    ZhtpStatus::Conflict,
-                    format!(
-                        "Token with name '{}' and symbol '{}' already exists",
-                        name, symbol
-                    ),
-                ));
-            }
-        }
-
-        if let Err(e) = self.submit_to_mempool(tx).await {
-            tracing::error!("[token/create] submit_to_mempool FAILED: {}", e);
-            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
-        }
-
-        info!("Token creation submitted: {} ({})", name, symbol);
-
-        // u128 amount fields are serialised as decimal strings — serde_json
-        // cannot represent u128 numerically (max safe is i64), and the
-        // earlier u128/JSON panics fixed elsewhere in the codebase set the
-        // precedent.
-        create_json_response(json!({
-            "success": true,
-            "token_id": hex::encode(token_id),
-            "name": name,
-            "symbol": symbol,
-            "initial_supply": initial_supply.to_string(),
-            "decimals": decimals,
-            "treasury_allocation_bps": treasury_allocation_bps,
-            "treasury_recipient": treasury_recipient_hex,
-            "creator_allocation": creator_allocation.to_string(),
-            "treasury_allocation": treasury_allocation.to_string(),
-            "tx_status": "submitted_to_mempool"
-        }))
+        tracing::error!("[token/create] invalid tx type: {}", reason);
+        Ok(create_error_response(ZhtpStatus::BadRequest, reason))
     }
 
     /// POST /api/v1/token/mint - Mint tokens (creator only)

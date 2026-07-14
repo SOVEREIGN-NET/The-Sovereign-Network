@@ -860,6 +860,19 @@ impl BlockExecutor {
                 state_write_bytes,
             )?;
 
+            if tx.transaction_type == TransactionType::TokenCreation
+                && !crate::contracts::sovereign_asset::token_creation_apply_allowed_at_height(
+                    block_height,
+                )
+            {
+                return Err(BlockApplyError::TxFailed {
+                    index,
+                    reason: TxApplyError::InvalidType(
+                        "TokenCreation is deprecated at this height; use AssetLaunch".to_string(),
+                    ),
+                });
+            }
+
             // validate_tx_stateless
             self.validate_tx_stateless(tx)
                 .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
@@ -5316,6 +5329,119 @@ mod tests {
             .expect("read policy doc")
             .expect("policy doc exists");
         assert!(!stored_doc.is_empty());
+    }
+
+    #[test]
+    fn test_asset_launch_emits_asset_launched_event() {
+        use crate::contracts::sovereign_asset::AssetLaunchedEvent;
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let payload = crate::transaction::asset_tx::AssetLaunchPayloadV1 {
+            name: "Launch Event".to_string(),
+            symbol: "LEVT".to_string(),
+            decimals: 8,
+            initial_supply: 500,
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: 2_000,
+            supply_mode: crate::contracts::sovereign_asset::SupplyMode::Fixed,
+            manifest_cid: [3u8; 32],
+            manifest_hash: [4u8; 32],
+            curve: None,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
+        };
+        let memo = payload.encode_memo().expect("memo");
+        let tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::AssetLaunch,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo,
+            payload: crate::transaction::TransactionPayload::None,
+        };
+        let asset_id = hash_transaction(&tx).as_array();
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).expect("launch");
+
+        let events = store.list_asset_launched_events().expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0],
+            AssetLaunchedEvent {
+                asset_id,
+                module_bitmask: 0,
+                block_height: 1,
+                block_time: block1.header.timestamp,
+                symbol: "LEVT".to_string(),
+            }
+        );
+        let reward_ids = store.list_rewards_module_asset_ids().expect("ids");
+        assert!(reward_ids.is_empty());
+    }
+
+    #[test]
+    fn test_asset_launch_rewards_module_discoverable_without_token_contract() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let (asset_id, _) = launch_rewards_asset(&executor, &genesis);
+        let token_id = TokenId::new(asset_id);
+        assert!(
+            store.get_token_contract(&token_id).expect("read").is_none(),
+            "pure AssetLaunch must not require token_contracts row"
+        );
+        let reward_ids = store.list_rewards_module_asset_ids().expect("ids");
+        assert_eq!(reward_ids, vec![asset_id]);
+    }
+
+    #[test]
+    fn test_asset_rewards_delegate_rotate_on_pure_launch_asset() {
+        use crate::transaction::asset_tx::{
+            AssetAuthorityProof, AssetRewardsDelegateRotatePayloadV1,
+        };
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let (asset_id, tip_block) = launch_rewards_asset(&executor, &genesis);
+        let new_delegate = [0xEE; 32];
+        let payload = AssetRewardsDelegateRotatePayloadV1 {
+            asset_id,
+            new_delegate_key_id: new_delegate,
+            authority_proof: AssetAuthorityProof::CreatorSig,
+        };
+        let memo = payload.encode_memo().expect("memo");
+        let rotate_tx = Transaction::new_asset_rewards_delegate_rotate_with_chain_id(
+            0x03,
+            create_dummy_signature(),
+            memo,
+        );
+        let block3 = create_block_with_txs(3, tip_block.header.block_hash, vec![rotate_tx]);
+        executor
+            .apply_block(&block3)
+            .expect("delegate rotate on AssetLaunch asset");
+
+        let state = store
+            .get_rewards_module_state(&asset_id)
+            .expect("read")
+            .expect("state");
+        assert_eq!(state.spend_delegate_key_id, new_delegate);
+        // launch_rewards_asset applies a policy bind tx at block 2 (nonce 1) before rotate.
+        assert_eq!(state.nonce, 2);
     }
 
     fn rewards_policy_for_asset(

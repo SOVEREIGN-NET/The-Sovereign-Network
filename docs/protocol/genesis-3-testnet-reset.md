@@ -235,7 +235,7 @@ Allow extra time (up to T+3h) if followers are still catching up from genesis.
 
 After shrunk genesis is live:
 
-1. **CBE / BUBL** — founding `TokenCreation` + contract deploy txs in blocks 1..k (not genesis rows)
+1. **CBE / BUBL** — founding `AssetLaunch` txs (+ CBE curve contract deploy) in blocks 1..k (not genesis rows). Historical chains may replay `TokenCreation` below block 80,000 only.
 2. **Wallets** — `WalletRegistration` / UBI / coinbase in early blocks ([#2733](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2733))
 3. **Domains** — `./scripts/replay-domains.sh` if domain snapshot exists
 4. **Sites** — redeploy per ops checklist

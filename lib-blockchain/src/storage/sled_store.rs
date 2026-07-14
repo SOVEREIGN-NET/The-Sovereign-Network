@@ -76,6 +76,7 @@ const TREE_ASSET_SYMBOLS: &str = "asset_symbols";
 const TREE_ASSET_CURVE: &str = "asset_curve";
 const TREE_ASSET_REWARDS: &str = "asset_rewards";
 const TREE_ASSET_GOVERNANCE: &str = "asset_governance";
+const TREE_ASSET_EVENTS: &str = "asset_events";
 const TREE_REWARDS_POLICY_DOCS: &str = "rewards_policy_docs";
 
 /// The single key under which an in-progress block commit's post-image is
@@ -146,6 +147,7 @@ pub struct SledStore {
     asset_curve: Tree,
     asset_rewards: Tree,
     asset_governance: Tree,
+    asset_events: Tree,
     rewards_policy_docs: Tree,
 
     // Transaction state
@@ -483,6 +485,9 @@ impl SledStore {
         let asset_governance = db
             .open_tree(TREE_ASSET_GOVERNANCE)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let asset_events = db
+            .open_tree(TREE_ASSET_EVENTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let rewards_policy_docs = db
             .open_tree(TREE_REWARDS_POLICY_DOCS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -540,6 +545,7 @@ impl SledStore {
             asset_curve,
             asset_rewards,
             asset_governance,
+            asset_events,
             rewards_policy_docs,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -990,6 +996,7 @@ impl SledStore {
             TREE_ASSET_CURVE => &self.asset_curve,
             TREE_ASSET_REWARDS => &self.asset_rewards,
             TREE_ASSET_GOVERNANCE => &self.asset_governance,
+            TREE_ASSET_EVENTS => &self.asset_events,
             TREE_REWARDS_POLICY_DOCS => &self.rewards_policy_docs,
             _ => return None,
         })
@@ -1849,6 +1856,33 @@ impl BlockchainStore for SledStore {
             }
         }
         Ok(ids)
+    }
+
+    fn put_asset_launched_event(
+        &self,
+        event: &crate::contracts::sovereign_asset::AssetLaunchedEvent,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+        let key = keys::asset_launched_event_key(event.block_height, &event.asset_id);
+        let value = Self::serialize(event)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.tree(TREE_ASSET_EVENTS).insert(key.as_ref(), value);
+        }
+        Ok(())
+    }
+
+    fn list_asset_launched_events(
+        &self,
+    ) -> StorageResult<Vec<crate::contracts::sovereign_asset::AssetLaunchedEvent>> {
+        let mut events = Vec::new();
+        for entry in self.asset_events.iter().flatten() {
+            let event: crate::contracts::sovereign_asset::AssetLaunchedEvent =
+                Self::deserialize(&entry.1)?;
+            events.push(event);
+        }
+        events.sort_by_key(|e| (e.block_height, e.asset_id));
+        Ok(events)
     }
 
     fn list_governance_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {

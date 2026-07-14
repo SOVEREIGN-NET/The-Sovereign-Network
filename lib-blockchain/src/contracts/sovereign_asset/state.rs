@@ -120,6 +120,36 @@ pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 0;
 #[cfg(not(test))]
 pub const GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT: u64 = 80_000;
 
+/// Block height at which new `TokenCreation` transactions are rejected (use `AssetLaunch`).
+///
+/// Aligned with [`GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT`] so testnet replay below 80k stays
+/// deterministic while post-cutover launches use the sovereign-asset write path only.
+#[cfg(test)]
+pub const TOKEN_CREATION_SUNSET_HEIGHT: u64 = u64::MAX;
+#[cfg(not(test))]
+pub const TOKEN_CREATION_SUNSET_HEIGHT: u64 = 80_000;
+
+/// Returns true when `TokenCreation` may still be applied at `block_height` (replay / apply).
+#[inline]
+pub fn token_creation_apply_allowed_at_height(block_height: u64) -> bool {
+    token_creation_apply_allowed_at_height_with_sunset(block_height, TOKEN_CREATION_SUNSET_HEIGHT)
+}
+
+/// Testable sunset gate (production sunset = 80_000).
+#[inline]
+pub fn token_creation_apply_allowed_at_height_with_sunset(
+    block_height: u64,
+    sunset_height: u64,
+) -> bool {
+    block_height < sunset_height
+}
+
+/// Returns true when new `TokenCreation` submissions are accepted at the given chain tip.
+#[inline]
+pub fn token_creation_submission_allowed_at_tip(chain_tip: u64) -> bool {
+    token_creation_apply_allowed_at_height(chain_tip)
+}
+
 /// Epic Q1–Q3 / Q8 economic rules (mint class, treasury spend auth, reward liquidity, burn).
 /// Inactive below [`GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT`] so replay matches pre-rules history.
 #[inline]
@@ -130,6 +160,29 @@ pub fn economic_rules_active(block_height: u64) -> bool {
 /// Default multisig threshold: floor(N/2) + 1.
 pub fn default_governance_threshold(n: usize) -> u8 {
     ((n / 2) + 1) as u8
+}
+
+#[cfg(test)]
+mod sunset_tests {
+    use super::*;
+
+    #[test]
+    fn prod_token_creation_sunset_is_80k() {
+        const PROD_SUNSET: u64 = 80_000;
+        assert!(token_creation_apply_allowed_at_height_with_sunset(
+            PROD_SUNSET - 1,
+            PROD_SUNSET
+        ));
+        assert!(!token_creation_apply_allowed_at_height_with_sunset(
+            PROD_SUNSET,
+            PROD_SUNSET
+        ));
+    }
+
+    #[test]
+    fn test_build_never_sunsets_token_creation() {
+        assert!(token_creation_apply_allowed_at_height(u64::MAX - 1));
+    }
 }
 
 /// Validate governance verifier bounds at launch/upgrade.

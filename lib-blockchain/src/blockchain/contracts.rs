@@ -1355,6 +1355,36 @@ impl Blockchain {
             .find(|a| a.asset_id == *asset_id)
     }
 
+    /// Sovereign asset ids with an on-chain rewards module (`asset_rewards/` sled tree).
+    pub fn list_rewards_module_asset_ids(&self) -> Vec<[u8; 32]> {
+        let Some(store) = self.get_store() else {
+            return Vec::new();
+        };
+        match store.list_rewards_module_asset_ids() {
+            Ok(ids) => ids,
+            Err(e) => {
+                warn!("Failed to list rewards module asset ids: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// `AssetLaunched` events persisted at apply time (SA-3 / ADR §6.1).
+    pub fn list_asset_launched_events(
+        &self,
+    ) -> Vec<crate::contracts::sovereign_asset::AssetLaunchedEvent> {
+        let Some(store) = self.get_store() else {
+            return Vec::new();
+        };
+        match store.list_asset_launched_events() {
+            Ok(events) => events,
+            Err(e) => {
+                warn!("Failed to list asset launched events: {e}");
+                Vec::new()
+            }
+        }
+    }
+
     /// On-chain rewards module state (`asset_rewards/` sled tree).
     pub fn get_rewards_module_state(
         &self,

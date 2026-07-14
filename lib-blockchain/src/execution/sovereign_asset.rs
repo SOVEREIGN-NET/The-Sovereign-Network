@@ -2,11 +2,11 @@
 
 use crate::contracts::sovereign_asset::{
     project_from_token_contract, validate_governance_verifier, AssetAuthority, AssetIdSource,
-    AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader, GovernanceModuleState,
-    GovernanceVerifierKind, GovernanceVerifierState, PendingAuthorityTransfer,
-    PendingBurnBpsUpdate, PendingRewardsPolicyUpdate, RewardsModuleHeader, RewardsModuleState,
-    SovereignAsset, SupplyMode, AUTHORITY_TRANSFER_TIMELOCK_BLOCKS,
-    GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT, MAX_TRANSFER_BURN_BPS,
+    AssetLaunchedEvent, AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader,
+    GovernanceModuleState, GovernanceVerifierKind, GovernanceVerifierState,
+    PendingAuthorityTransfer, PendingBurnBpsUpdate, PendingRewardsPolicyUpdate,
+    RewardsModuleHeader, RewardsModuleState, SovereignAsset, SupplyMode,
+    AUTHORITY_TRANSFER_TIMELOCK_BLOCKS, GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT, MAX_TRANSFER_BURN_BPS,
     REWARDS_POLICY_DECREASE_TIMELOCK_BLOCKS,
 };
 use crate::execution::mint_and_allocate::mint_and_allocate;
@@ -154,6 +154,14 @@ pub fn apply_asset_launch(
         creator_recipient,
         payload.initial_supply,
     )?;
+
+    mutator.put_asset_launched_event(&AssetLaunchedEvent {
+        asset_id,
+        module_bitmask: module_flags.0,
+        block_height,
+        block_time,
+        symbol: payload.symbol.clone(),
+    })?;
 
     Ok(AssetLaunchOutcome {
         asset_id,

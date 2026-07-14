@@ -191,6 +191,15 @@ pub fn asset_module_state_key(asset_id: &[u8; 32]) -> &[u8; 32] {
     asset_id
 }
 
+/// Key for `asset_events/` tree: block height (BE u64) || asset_id (32 bytes).
+#[inline]
+pub fn asset_launched_event_key(block_height: u64, asset_id: &[u8; 32]) -> [u8; 40] {
+    let mut key = [0u8; 40];
+    key[0..8].copy_from_slice(&block_height.to_be_bytes());
+    key[8..40].copy_from_slice(asset_id);
+    key
+}
+
 /// Key prefix for token supply tree: token_id (32 bytes) → supply_u64
 #[inline]
 pub fn token_supply_key(token: &TokenId) -> [u8; 32] {

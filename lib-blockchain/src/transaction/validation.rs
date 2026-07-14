@@ -1830,6 +1830,20 @@ impl<'a> StatefulTransactionValidator<'a> {
             transaction.memo.len()
         );
 
+        if transaction.transaction_type == TransactionType::TokenCreation {
+            if let Some(blockchain) = self.blockchain {
+                if !crate::contracts::sovereign_asset::token_creation_submission_allowed_at_tip(
+                    blockchain.get_height(),
+                ) {
+                    tracing::warn!(
+                        "rejecting deprecated TokenCreation at chain tip {}; use AssetLaunch",
+                        blockchain.get_height()
+                    );
+                    return Err(ValidationError::InvalidTransactionType);
+                }
+            }
+        }
+
         // Check if this is a system transaction (empty inputs = coinbase-style), except token contract calls
         let is_token = is_token_contract_execution(transaction);
         tracing::debug!("[BREADCRUMB] is_token_contract_execution = {}", is_token);
