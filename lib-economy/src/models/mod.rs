@@ -31,7 +31,7 @@ mod tests {
         assert_eq!(model.base_storage_rate, crate::DEFAULT_STORAGE_RATE);
         assert_eq!(model.base_compute_rate, crate::DEFAULT_COMPUTE_RATE);
         assert_eq!(model.inflation_rate, 0.0);
-        assert_eq!(model.max_supply, u64::MAX);
+        assert_eq!(model.max_supply, u128::MAX);
         assert_eq!(model.current_supply, 0);
         assert_eq!(model.burn_rate, 0.0);
 
@@ -51,9 +51,25 @@ mod tests {
         // Verify all required fields are present
         assert!(stats["base_routing_rate"].is_u64());
         assert!(stats["base_storage_rate"].is_u64());
-        assert!(stats["current_supply"].is_u64());
-        assert!(stats["treasury_balance"].is_u64());
+        // u128 amounts are emitted as decimal strings — serde_json numbers cannot
+        // hold values above u64::MAX, and max_supply defaults to u128::MAX.
+        assert_eq!(stats["current_supply"].as_str(), Some("0"));
+        assert_eq!(
+            stats["max_supply"].as_str(),
+            Some(u128::MAX.to_string().as_str())
+        );
+        assert!(stats["treasury_balance"].as_str().is_some());
         // Note: isp_bypass_total_bandwidth was removed from stats
+    }
+
+    #[test]
+    fn test_calculate_fee_u128_max_does_not_overflow() {
+        let model = EconomicModel::new();
+        let (network_fee, dao_fee, total_fee) =
+            model.calculate_fee(250, u128::MAX, Priority::Normal);
+        assert!(network_fee >= crate::MINIMUM_NETWORK_FEE);
+        assert!(dao_fee >= crate::MINIMUM_DAO_FEE);
+        assert_eq!(total_fee, network_fee + dao_fee);
     }
 
     #[test]

@@ -132,7 +132,7 @@ mod tests {
     fn test_priority_fee_system() {
         let model = EconomicModel::new();
         let tx_size = 1000u64;
-        let amount = 5000u64;
+        let amount = 5000u128;
 
         // Test all priority levels
         let (net_low, dao_low, total_low) = model.calculate_fee(tx_size, amount, Priority::Low);

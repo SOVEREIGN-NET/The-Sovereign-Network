@@ -27,7 +27,7 @@ mod edge_case_tests {
     #[test]
     fn test_maximum_amount_transactions() {
         // Test transaction with maximum possible amount
-        let max_amount = u64::MAX;
+        let max_amount = u128::MAX;
         let tx =
             Transaction::new_payment([1u8; 32], [2u8; 32], max_amount, Priority::Normal).unwrap();
 
@@ -108,7 +108,7 @@ mod edge_case_tests {
         assert_eq!(treasury.dev_grants_allocated, 0);
 
         // Test maximum fee addition
-        let max_fees = u64::MAX / 2; // Divide by 2 to avoid overflow in calculations
+        let max_fees = u64::MAX as u128 / 2; // Divide by 2 to avoid overflow in calculations
         treasury
             .apply_fee_distribution(calculate_dao_fee_distribution(max_fees))
             .unwrap();
@@ -187,14 +187,14 @@ mod edge_case_tests {
         assert!(!wallet.can_afford(1));
 
         // Test with maximum balance
-        wallet.available_balance = u64::MAX;
-        assert!(wallet.can_afford(u64::MAX));
-        assert!(!wallet.can_afford(1)); // Would overflow, so should return false
+        wallet.available_balance = u128::MAX;
+        assert!(wallet.can_afford(u128::MAX));
+        assert!(wallet.can_afford(1)); // can_afford is a plain >= check
 
         // Test total balance calculation with maximum values
-        wallet.staked_balance = u64::MAX / 3;
-        wallet.pending_rewards = u64::MAX / 3;
-        wallet.available_balance = u64::MAX / 3;
+        wallet.staked_balance = u128::MAX / 3;
+        wallet.pending_rewards = u128::MAX / 3;
+        wallet.available_balance = u128::MAX / 3;
 
         let total = wallet.total_balance();
         assert!(total >= wallet.available_balance); // Should not underflow
@@ -223,7 +223,7 @@ mod edge_case_tests {
     fn test_priority_boundary_conditions() {
         let model = EconomicModel::new();
         let tx_size = 1000u64;
-        let amount = 5000u64;
+        let amount = 5000u128;
 
         // Test all priority levels for consistency
         let priorities = [
@@ -232,7 +232,7 @@ mod edge_case_tests {
             Priority::High,
             Priority::Urgent,
         ];
-        let mut prev_net_fee = 0u64;
+        let mut prev_net_fee = 0u128;
 
         for priority in priorities.iter() {
             let (net_fee, dao_fee, total_fee) = model.calculate_fee(tx_size, amount, *priority);
@@ -306,7 +306,7 @@ mod edge_case_tests {
         assert_eq!(model.current_supply, 0);
 
         // Test minting maximum tokens (in chunks to avoid overflow)
-        let large_amount = u64::MAX / 2;
+        let large_amount = u64::MAX as u128 / 2;
         let large_mint = model
             .mint_operational_tokens(large_amount, "stress test")
             .unwrap();
@@ -314,7 +314,7 @@ mod edge_case_tests {
         assert_eq!(model.current_supply, large_amount);
 
         // Test minting more tokens
-        let more_amount = u64::MAX / 4;
+        let more_amount = u64::MAX as u128 / 4;
         let more_mint = model
             .mint_operational_tokens(more_amount, "more test")
             .unwrap();
@@ -349,7 +349,7 @@ mod edge_case_tests {
     fn test_transaction_id_uniqueness() {
         let from = [1u8; 32];
         let to = [2u8; 32];
-        let amount = 1000u64;
+        let amount = 1000u128;
 
         // Create multiple transactions with same parameters
         let tx1 = Transaction::new_payment(from, to, amount, Priority::Normal).unwrap();
@@ -399,12 +399,12 @@ mod edge_case_tests {
                 }
                 2 => {
                     // Process fees
-                    let fees = (i % 1000) as u64;
+                    let fees = (i % 1000) as u128;
                     let _ = model.process_dao_fees(fees);
                 }
                 _ => {
                     // Mint tokens
-                    let amount = (i % 10000) as u64;
+                    let amount = (i % 10000) as u128;
                     let _ = model.mint_operational_tokens(amount, "concurrent test");
                 }
             }

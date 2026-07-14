@@ -61,7 +61,7 @@ impl EconomicModel {
             quality_multiplier: 0.1, // Minimal quality bonus (infrastructure focus)
             uptime_multiplier: 0.05, // Minimal uptime bonus (reliability expected)
             inflation_rate: 0.0,     // ZERO inflation (stable utility token)
-            max_supply: u128::MAX,    // UNLIMITED supply (like internet capacity)
+            max_supply: u128::MAX,   // UNLIMITED supply (like internet capacity)
             current_supply: 0,       // Start from zero, mint as needed
             burn_rate: 0.0,          // NO BURNING (utility, not speculation)
             dao_treasury,            // Treasury interface for economics
@@ -126,7 +126,12 @@ impl EconomicModel {
     }
 
     /// Calculate transaction fees including mandatory DAO fee for UBI/DAO allocations
-    pub fn calculate_fee(&self, tx_size: u64, amount: u128, priority: Priority) -> (u128, u128, u128) {
+    pub fn calculate_fee(
+        &self,
+        tx_size: u64,
+        amount: u128,
+        priority: Priority,
+    ) -> (u128, u128, u128) {
         // NETWORK INFRASTRUCTURE FEE (covers bandwidth, storage, compute)
         let base_fee = (tx_size as u128) * 1; // 1 token per byte (minimal infrastructure cost)
 
@@ -137,7 +142,7 @@ impl EconomicModel {
 
         // MANDATORY DAO FEE FOR UNIVERSAL BASIC INCOME & DAO ALLOCATIONS
         // 1% of transaction amount goes to DAO treasury for UBI/DAO services
-        let dao_fee = (amount * crate::DEFAULT_DAO_FEE_RATE) / 10000; // 1.00% mandatory DAO fee
+        let dao_fee = amount.saturating_mul(crate::DEFAULT_DAO_FEE_RATE) / 10000; // 1.00% mandatory DAO fee
         let dao_fee = dao_fee.max(crate::MINIMUM_DAO_FEE); // Minimum DAO fee
 
         let total_fee = network_fee + dao_fee;
@@ -186,17 +191,20 @@ impl EconomicModel {
     }
 
     /// Get current economic statistics
+    ///
+    /// `u128` amounts are emitted as decimal strings: serde_json numbers cannot
+    /// represent values above `u64::MAX`, and `max_supply` defaults to `u128::MAX`.
     pub fn get_economic_stats(&self) -> serde_json::Value {
         serde_json::json!({
             "base_routing_rate": self.base_routing_rate,
             "base_storage_rate": self.base_storage_rate,
             "base_compute_rate": self.base_compute_rate,
-            "current_supply": self.current_supply,
-            "max_supply": self.max_supply,
+            "current_supply": self.current_supply.to_string(),
+            "max_supply": self.max_supply.to_string(),
             "inflation_rate": self.inflation_rate,
             "burn_rate": self.burn_rate,
-            "treasury_balance": self.dao_treasury.treasury_balance,
-            "total_dao_fees_collected": self.dao_treasury.total_dao_fees_collected
+            "treasury_balance": self.dao_treasury.treasury_balance.to_string(),
+            "total_dao_fees_collected": self.dao_treasury.total_dao_fees_collected.to_string()
         })
     }
 }

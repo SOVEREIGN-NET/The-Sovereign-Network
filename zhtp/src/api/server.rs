@@ -350,8 +350,10 @@ impl ZhtpServer {
                 "total_content_count": storage_stats.1
             },
             "economic_stats": {
-                "total_supply": economic_stats.0,
-                "circulating_supply": economic_stats.1
+                // u128 as decimal strings: serde_json numbers cap at u64 and
+                // max_supply defaults to u128::MAX, which panics json!.
+                "total_supply": economic_stats.0.to_string(),
+                "circulating_supply": economic_stats.1.to_string()
             }
         });
 
@@ -438,8 +440,8 @@ impl ZhtpServer {
             "status": "active",
             "base_routing_rate": economic_model.base_routing_rate,
             "quality_multiplier": economic_model.quality_multiplier,
-            "current_supply": economic_model.current_supply,
-            "max_supply": economic_model.max_supply,
+            "current_supply": economic_model.current_supply.to_string(),
+            "max_supply": economic_model.max_supply.to_string(),
             "economic_model_ready": true
         });
 
