@@ -7,10 +7,15 @@ use crate::identity::Identity;
 use crate::token_tx::create_public_key_with_kyber;
 use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode};
 use lib_blockchain::integration::crypto_integration::Signature;
-use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
+use lib_blockchain::transaction::asset_tx::{
+    AssetLaunchPayloadV1, GovernanceLaunchConfig, RewardsLaunchConfig,
+};
 use lib_blockchain::Transaction;
 use lib_crypto::types::signatures::SignatureAlgorithm;
-use serde_json::json;
+
+pub use lib_blockchain::transaction::asset_tx::{
+    build_dao_launch_manifest, build_dao_launch_manifest_bytes, manifest_cid_hash_from_bytes,
+};
 
 /// Parameters for building a signed `AssetLaunch` transaction.
 #[derive(Debug, Clone)]
@@ -26,6 +31,8 @@ pub struct AssetLaunchBuildParams {
     pub manifest_cid: [u8; 32],
     pub manifest_hash: [u8; 32],
     pub chain_id: u8,
+    pub rewards: Option<RewardsLaunchConfig>,
+    pub governance: Option<GovernanceLaunchConfig>,
     pub transfer_authority: bool,
 }
 
@@ -43,85 +50,11 @@ impl Default for AssetLaunchBuildParams {
             manifest_cid: [0u8; 32],
             manifest_hash: [0u8; 32],
             chain_id: 0x02,
+            rewards: None,
+            governance: None,
             transfer_authority: false,
         }
     }
-}
-
-/// Build canonical DAO launch manifest JSON bytes (matches CLI default manifest).
-pub fn build_dao_launch_manifest_bytes(name: &str, symbol: &str, decimals: u8) -> Vec<u8> {
-    let manifest = json!({
-        "schema": "zhtp/asset-manifest/v1",
-        "name": name,
-        "symbol": symbol,
-        "decimals": decimals,
-        "interface": {
-            "version": "1.0.0",
-            "tx_kinds": ["TokenTransfer", "AssetTransfer", "RewardsClaim"]
-        }
-    });
-    serde_json::to_vec(&manifest).expect("manifest json")
-}
-
-/// Derive `(manifest_cid, manifest_hash)` from manifest bytes.
-///
-/// When `launch` is `Some((name, symbol, decimals))`, cross-checks manifest fields.
-pub fn manifest_cid_hash_from_bytes(
-    bytes: &[u8],
-    launch: Option<(&str, &str, u8)>,
-) -> Result<([u8; 32], [u8; 32]), String> {
-    let value: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest JSON: {e}"))?;
-    let schema = value
-        .get("schema")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if schema != "zhtp/asset-manifest/v1" {
-        return Err(format!(
-            "manifest schema must be zhtp/asset-manifest/v1, got '{schema}'"
-        ));
-    }
-    if let Some((name, symbol, decimals)) = launch {
-        validate_manifest_launch_fields(&value, name, symbol, decimals)?;
-    }
-    let hash = lib_crypto::hash_blake3(bytes);
-    let mut cid = [0u8; 32];
-    cid[..16].copy_from_slice(&hash[..16]);
-    Ok((cid, hash))
-}
-
-fn validate_manifest_launch_fields(
-    value: &serde_json::Value,
-    name: &str,
-    symbol: &str,
-    decimals: u8,
-) -> Result<(), String> {
-    if let Some(v) = value.get("name").and_then(|v| v.as_str()) {
-        if v != name {
-            return Err(format!("manifest name '{v}' does not match '{name}'"));
-        }
-    }
-    if let Some(v) = value.get("symbol").and_then(|v| v.as_str()) {
-        if v != symbol {
-            return Err(format!("manifest symbol '{v}' does not match '{symbol}'"));
-        }
-    }
-    if let Some(v) = value.get("decimals").and_then(|v| v.as_u64()) {
-        if v != decimals as u64 {
-            return Err(format!("manifest decimals {v} does not match {decimals}"));
-        }
-    }
-    Ok(())
-}
-
-/// Build default manifest cid/hash for a DAO launch (no custom manifest file).
-pub fn build_dao_launch_manifest(
-    name: &str,
-    symbol: &str,
-    decimals: u8,
-) -> Result<([u8; 32], [u8; 32]), String> {
-    let bytes = build_dao_launch_manifest_bytes(name, symbol, decimals);
-    manifest_cid_hash_from_bytes(&bytes, None)
 }
 
 /// Build and sign an `AssetLaunch` transaction.
@@ -136,6 +69,9 @@ pub fn build_asset_launch_tx(
     }
     if params.initial_supply == 0 {
         return Err("initial_supply must be non-zero".to_string());
+    }
+    if params.transfer_authority && params.governance.is_none() {
+        return Err("transfer_authority requires governance module".to_string());
     }
 
     let sender_pk =
@@ -155,8 +91,8 @@ pub fn build_asset_launch_tx(
         manifest_cid: params.manifest_cid,
         manifest_hash: params.manifest_hash,
         curve: None,
-        rewards: None,
-        governance: None,
+        rewards: params.rewards.clone(),
+        governance: params.governance.clone(),
         transfer_authority: params.transfer_authority,
         dao_class: params.dao_class,
         burn_bps: params.burn_bps,
@@ -164,9 +100,6 @@ pub fn build_asset_launch_tx(
     payload
         .validate_dao_launch_ui_constraints()
         .map_err(|e| format!("DAO launch validation failed: {e}"))?;
-    payload
-        .validate()
-        .map_err(|e| format!("DAO launch payload invalid: {e}"))?;
 
     let memo = payload
         .encode_memo()
@@ -205,11 +138,12 @@ pub fn build_asset_launch_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_blockchain::contracts::sovereign_asset::GovernanceVerifierState;
     use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
     use lib_blockchain::types::transaction_type::TransactionType;
 
     #[test]
-    fn manifest_round_trip_matches_cli_schema() {
+    fn manifest_round_trip_matches_canonical_schema() {
         let bytes = build_dao_launch_manifest_bytes("Bubble", "BUBL", 18);
         let (cid, hash) = manifest_cid_hash_from_bytes(&bytes, None).unwrap();
         assert_ne!(cid, [0u8; 32]);
@@ -241,6 +175,8 @@ mod tests {
                 manifest_cid: cid,
                 manifest_hash: hash,
                 chain_id: 2,
+                rewards: None,
+                governance: None,
                 transfer_authority: false,
             },
         )
@@ -279,6 +215,8 @@ mod tests {
                 manifest_cid: cid,
                 manifest_hash: hash,
                 chain_id: 2,
+                rewards: None,
+                governance: None,
                 transfer_authority: false,
             },
         )
@@ -290,5 +228,72 @@ mod tests {
         let (creator, treasury) = payload.split_initial_supply();
         assert_eq!(creator, 0);
         assert_eq!(treasury, supply);
+    }
+
+    #[test]
+    fn transfer_authority_requires_governance() {
+        use crate::identity::generate_identity;
+
+        let identity = generate_identity("gov-device".to_string()).unwrap();
+        let (cid, hash) = build_dao_launch_manifest("Gov", "GOV", 18).unwrap();
+        let err = build_asset_launch_tx(
+            &identity,
+            &AssetLaunchBuildParams {
+                name: "Gov".to_string(),
+                symbol: "GOV".to_string(),
+                initial_supply: 1_000_000_000_000_000_000_000,
+                decimals: 18,
+                treasury_key_id: [0x66u8; 32],
+                dao_class: DaoClass::Fp,
+                burn_bps: 0,
+                supply_mode: SupplyMode::Fixed,
+                manifest_cid: cid,
+                manifest_hash: hash,
+                chain_id: 2,
+                rewards: None,
+                governance: None,
+                transfer_authority: true,
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("transfer_authority requires governance"));
+    }
+
+    #[test]
+    fn transfer_authority_with_governance_succeeds() {
+        use crate::identity::generate_identity;
+
+        let identity = generate_identity("gov-ok".to_string()).unwrap();
+        let (cid, hash) = build_dao_launch_manifest("Gov", "GOV", 18).unwrap();
+        let signed = build_asset_launch_tx(
+            &identity,
+            &AssetLaunchBuildParams {
+                name: "Gov".to_string(),
+                symbol: "GOV".to_string(),
+                initial_supply: 1_000_000_000_000_000_000_000,
+                decimals: 18,
+                treasury_key_id: [0x77u8; 32],
+                dao_class: DaoClass::Fp,
+                burn_bps: 0,
+                supply_mode: SupplyMode::Fixed,
+                manifest_cid: cid,
+                manifest_hash: hash,
+                chain_id: 2,
+                rewards: None,
+                governance: Some(GovernanceLaunchConfig {
+                    verifier: GovernanceVerifierState::Single {
+                        signer_key_id: [0x88; 32],
+                    },
+                    threshold: None,
+                }),
+                transfer_authority: true,
+            },
+        )
+        .expect("governance launch ok");
+        let tx: Transaction =
+            bincode::deserialize(&hex::decode(signed).unwrap()).unwrap();
+        let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).unwrap();
+        assert!(payload.transfer_authority);
+        assert!(payload.governance.is_some());
     }
 }

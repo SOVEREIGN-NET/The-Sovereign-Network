@@ -16,6 +16,8 @@ use crate::output::Output;
 use lib_blockchain::contracts::sovereign_asset::{DaoClass, GovernanceVerifierState, SupplyMode};
 use lib_blockchain::rewards_policy::validate_rewards_policy;
 use lib_blockchain::transaction::asset_tx::{
+    build_dao_launch_manifest as blockchain_build_dao_launch_manifest,
+    manifest_cid_hash_from_bytes as blockchain_manifest_cid_hash_from_bytes,
     AssetLaunchPayloadV1, GovernanceLaunchConfig, RewardsLaunchConfig,
 };
 use lib_blockchain::transaction::{
@@ -411,76 +413,16 @@ fn read_manifest_file(path: &Path) -> CliResult<Vec<u8>> {
     })
 }
 
-fn validate_manifest_launch_fields(
-    value: &serde_json::Value,
-    name: &str,
-    symbol: &str,
-    decimals: u8,
-) -> CliResult<()> {
-    if let Some(manifest_name) = value.get("name").and_then(|v| v.as_str()) {
-        if manifest_name != name {
-            return Err(CliError::ConfigError(format!(
-                "manifest name '{manifest_name}' does not match --name '{name}'"
-            )));
-        }
-    }
-    if let Some(manifest_symbol) = value.get("symbol").and_then(|v| v.as_str()) {
-        if manifest_symbol != symbol {
-            return Err(CliError::ConfigError(format!(
-                "manifest symbol '{manifest_symbol}' does not match --symbol '{symbol}'"
-            )));
-        }
-    }
-    if let Some(v) = value.get("decimals") {
-        let manifest_decimals = v.as_u64().ok_or_else(|| {
-            CliError::ConfigError("manifest decimals must be a number".to_string())
-        })?;
-        if manifest_decimals != decimals as u64 {
-            return Err(CliError::ConfigError(format!(
-                "manifest decimals {manifest_decimals} does not match --decimals {decimals}"
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn manifest_cid_hash_from_bytes(
     bytes: &[u8],
     launch: Option<(&str, &str, u8)>,
 ) -> CliResult<([u8; 32], [u8; 32])> {
-    let value: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|e| CliError::ConfigError(format!("invalid manifest JSON: {e}")))?;
-    let schema = value
-        .get("schema")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if schema != "zhtp/asset-manifest/v1" {
-        return Err(CliError::ConfigError(format!(
-            "manifest schema must be zhtp/asset-manifest/v1, got '{schema}'"
-        )));
-    }
-    if let Some((name, symbol, decimals)) = launch {
-        validate_manifest_launch_fields(&value, name, symbol, decimals)?;
-    }
-    let hash = lib_crypto::hash_blake3(bytes);
-    let mut cid = [0u8; 32];
-    cid[..16].copy_from_slice(&hash[..16]);
-    Ok((cid, hash))
+    blockchain_manifest_cid_hash_from_bytes(bytes, launch)
+        .map_err(CliError::ConfigError)
 }
 
 fn build_dao_launch_manifest(name: &str, symbol: &str, decimals: u8) -> ([u8; 32], [u8; 32]) {
-    let manifest = json!({
-        "schema": "zhtp/asset-manifest/v1",
-        "name": name,
-        "symbol": symbol,
-        "decimals": decimals,
-        "interface": {
-            "version": "1.0.0",
-            "tx_kinds": ["TokenTransfer", "AssetTransfer", "RewardsClaim"]
-        }
-    });
-    let bytes = serde_json::to_vec(&manifest).expect("manifest json");
-    manifest_cid_hash_from_bytes(&bytes, None).expect("generated manifest")
+    blockchain_build_dao_launch_manifest(name, symbol, decimals).expect("generated manifest")
 }
 
 pub fn parse_supply_mode(value: &str) -> CliResult<SupplyMode> {

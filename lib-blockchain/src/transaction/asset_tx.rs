@@ -600,6 +600,84 @@ impl AssetRewardsPolicyUpdatePayloadV1 {
     }
 }
 
+pub const ASSET_MANIFEST_SCHEMA: &str = "zhtp/asset-manifest/v1";
+
+/// Build canonical DAO launch manifest JSON bytes (default manifest for CLI/SDK).
+pub fn build_dao_launch_manifest_bytes(name: &str, symbol: &str, decimals: u8) -> Vec<u8> {
+    let manifest = serde_json::json!({
+        "schema": ASSET_MANIFEST_SCHEMA,
+        "name": name,
+        "symbol": symbol,
+        "decimals": decimals,
+        "interface": {
+            "version": "1.0.0",
+            "tx_kinds": ["TokenTransfer", "AssetTransfer", "RewardsClaim"]
+        }
+    });
+    serde_json::to_vec(&manifest).expect("manifest json")
+}
+
+fn validate_manifest_launch_fields(
+    value: &serde_json::Value,
+    name: &str,
+    symbol: &str,
+    decimals: u8,
+) -> Result<(), String> {
+    if let Some(v) = value.get("name").and_then(|v| v.as_str()) {
+        if v != name {
+            return Err(format!("manifest name '{v}' does not match '{name}'"));
+        }
+    }
+    if let Some(v) = value.get("symbol").and_then(|v| v.as_str()) {
+        if v != symbol {
+            return Err(format!("manifest symbol '{v}' does not match '{symbol}'"));
+        }
+    }
+    if let Some(v) = value.get("decimals").and_then(|v| v.as_u64()) {
+        if v != decimals as u64 {
+            return Err(format!("manifest decimals {v} does not match {decimals}"));
+        }
+    }
+    Ok(())
+}
+
+/// Derive `(manifest_cid, manifest_hash)` from manifest bytes.
+///
+/// When `launch` is `Some((name, symbol, decimals))`, cross-checks manifest fields.
+pub fn manifest_cid_hash_from_bytes(
+    bytes: &[u8],
+    launch: Option<(&str, &str, u8)>,
+) -> Result<([u8; 32], [u8; 32]), String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| format!("invalid manifest JSON: {e}"))?;
+    let schema = value
+        .get("schema")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if schema != ASSET_MANIFEST_SCHEMA {
+        return Err(format!(
+            "manifest schema must be {ASSET_MANIFEST_SCHEMA}, got '{schema}'"
+        ));
+    }
+    if let Some((name, symbol, decimals)) = launch {
+        validate_manifest_launch_fields(&value, name, symbol, decimals)?;
+    }
+    let hash = lib_crypto::hash_blake3(bytes);
+    let mut cid = [0u8; 32];
+    cid[..16].copy_from_slice(&hash[..16]);
+    Ok((cid, hash))
+}
+
+/// Build default manifest cid/hash for a DAO launch (no custom manifest file).
+pub fn build_dao_launch_manifest(
+    name: &str,
+    symbol: &str,
+    decimals: u8,
+) -> Result<([u8; 32], [u8; 32]), String> {
+    let bytes = build_dao_launch_manifest_bytes(name, symbol, decimals);
+    manifest_cid_hash_from_bytes(&bytes, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,6 +763,48 @@ mod tests {
         assert!(memo.starts_with(ASSET_LAUNCH_MEMO_PREFIX_V2));
         let decoded = AssetLaunchPayloadV1::decode_memo(&memo).expect("decode");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn manifest_cid_hash_from_bytes_valid_schema() {
+        let manifest = serde_json::json!({
+            "schema": ASSET_MANIFEST_SCHEMA,
+            "name": "Test",
+            "symbol": "TST",
+            "decimals": 18
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let (cid, hash) = manifest_cid_hash_from_bytes(&bytes, None).unwrap();
+        assert_eq!(cid[..16], hash[..16]);
+        assert_eq!(hash, lib_crypto::hash_blake3(&bytes));
+    }
+
+    #[test]
+    fn manifest_cid_hash_from_bytes_rejects_wrong_schema() {
+        let manifest = serde_json::json!({"schema": "other/v1"});
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert!(manifest_cid_hash_from_bytes(&bytes, None).is_err());
+    }
+
+    #[test]
+    fn manifest_cross_validation_rejects_mismatch() {
+        let manifest = serde_json::json!({
+            "schema": ASSET_MANIFEST_SCHEMA,
+            "name": "Other",
+            "symbol": "TST",
+            "decimals": 18
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert!(manifest_cid_hash_from_bytes(&bytes, Some(("Test", "TST", 18))).is_err());
+    }
+
+    #[test]
+    fn build_dao_launch_manifest_matches_schema() {
+        let (cid, hash) = build_dao_launch_manifest("Bubble", "BUBL", 18).unwrap();
+        assert_ne!(cid, [0u8; 32]);
+        assert_ne!(hash, [0u8; 32]);
+        let bytes = build_dao_launch_manifest_bytes("Bubble", "BUBL", 18);
+        assert_eq!(hash, lib_crypto::hash_blake3(&bytes));
     }
 
     #[test]

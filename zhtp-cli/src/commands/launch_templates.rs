@@ -346,14 +346,41 @@ mod tests {
     }
 
     #[test]
-    fn preview_np_foundation_is_all_treasury() {
-        let template = load_template("foundation").unwrap();
+    fn preview_np_mission_is_all_treasury() {
+        let template = load_template("np-mission").unwrap();
         let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
         let preview = preview_launch("Mission", "MSN", atoms, template.decimals, Some(&template))
             .unwrap();
         assert_eq!(preview.creator_allocation_atoms, "0");
         assert_eq!(preview.treasury_allocation_atoms, atoms.to_string());
         assert_eq!(preview.dao_class, "np");
+    }
+
+    #[test]
+    fn np_template_split_initial_supply_is_zero_creator() {
+        let template = load_template("np-charity").unwrap();
+        let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
+        let dao_class = DaoClass::from_str(&template.dao_class).unwrap();
+        let payload = AssetLaunchPayloadV1 {
+            name: "Charity".to_string(),
+            symbol: "CHR".to_string(),
+            decimals: template.decimals,
+            initial_supply: atoms,
+            treasury_key_id: [0x01; 32],
+            treasury_bps: template.treasury_bps,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: [0x11; 32],
+            manifest_hash: [0x22; 32],
+            curve: None,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+            dao_class,
+            burn_bps: template.burn_bps,
+        };
+        let (creator, treasury) = payload.split_initial_supply();
+        assert_eq!(creator, 0);
+        assert_eq!(treasury, atoms);
     }
 
     #[test]
@@ -370,7 +397,7 @@ mod tests {
             resolve_launch_params(Some("foundation"), None, None).unwrap().unwrap();
         assert_eq!(template.id, "foundation");
         assert_eq!(resolved.decimals, 18);
-        assert_eq!(resolved.dao_class, DaoClass::Np);
+        assert_eq!(resolved.dao_class, DaoClass::Fp);
         assert_eq!(
             resolved.supply_atoms,
             whole_tokens_to_atoms(10_000_000, 18).unwrap()

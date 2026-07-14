@@ -48,11 +48,11 @@ run_cli --server "$SERVER" dao launch \
   --chain-id "$CHAIN_ID"
 
 echo
-echo "--- 2) Preview NP template (foundation) ---"
+echo "--- 2) Preview NP template (np-mission) ---"
 run_cli --server "$SERVER" dao launch \
   --name "$NP_NAME" \
   --symbol "$NP_SYMBOL" \
-  --template foundation \
+  --template np-mission \
   --preview \
   --chain-id "$CHAIN_ID"
 
@@ -71,7 +71,7 @@ echo "--- 4) Launch NP test asset ---"
 NP_OUT="$(run_cli --server "$SERVER" dao launch \
   --name "$NP_NAME" \
   --symbol "$NP_SYMBOL" \
-  --template foundation \
+  --template np-mission \
   --chain-id "$CHAIN_ID" 2>&1)" || true
 echo "$NP_OUT"
 NP_ASSET_ID="$(echo "$NP_OUT" | sed -n 's/.*Asset ID: \([0-9a-f]\{64\}\).*/\1/p' | head -1)"
