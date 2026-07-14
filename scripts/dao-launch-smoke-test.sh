@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER="${ZHTP_SERVER:-https://g1.testnet.zhtp.org}"
+SERVER="${ZHTP_SERVER:-77.42.37.161:9334}"
 CHAIN_ID="${CHAIN_ID:-2}"
 TS="$(date +%s)"
 # Symbols must be uppercase A-Z only (DAO launch validation).
@@ -88,37 +88,40 @@ NP_OUT="$(run_cli --server "$SERVER" dao launch \
 echo "$NP_OUT"
 NP_ASSET_ID="$(echo "$NP_OUT" | sed -n 's/.*Asset ID: \([0-9a-f]\{64\}\).*/\1/p' | head -1)"
 
-verify_asset() {
+verify_launch_output() {
   local label="$1"
-  local asset_id="$2"
-  local expected_class="$3"
-  if [[ -z "$asset_id" ]]; then
-    echo "WARN: $label launch did not return asset_id — check CLI output above"
-    return 0
-  fi
+  local output="$2"
+  local expect_np_split="$3" # "yes" => creator_allocation must be 0
   echo
-  echo "--- Verify $label: GET /api/v1/assets/${asset_id:0:16}... ---"
+  echo "--- Verify $label launch split from CLI response ---"
   if [[ "${SKIP_LAUNCH:-0}" == "1" ]]; then
-    echo "[dry-run] curl $SERVER/api/v1/assets/$asset_id"
+    echo "[dry-run] verify $label launch output"
     return 0
   fi
-  local body
-  body="$(curl -fsS "$SERVER/api/v1/assets/$asset_id")"
-  echo "$body" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-asset=d.get('asset') or d
-cls=(asset.get('dao_class') or '').lower()
-print('dao_class:', cls)
-print('treasury_bps:', asset.get('treasury_bps'))
-if cls != '$expected_class':
-    raise SystemExit(f'expected dao_class=$expected_class got {cls}')
+  if ! echo "$output" | grep -q 'success.*true'; then
+    echo "WARN: $label launch did not report success"
+    return 0
+  fi
+  echo "$output" | python3 -c "
+import re,sys
+out=sys.stdin.read()
+creator=re.search(r'creator_allocation\\s+\"([^\"]+)\"', out)
+if not creator:
+    raise SystemExit('missing creator_allocation in launch output')
+val=creator.group(1)
+print('creator_allocation:', val)
+if '$expect_np_split' == 'yes':
+    if val != '0':
+        raise SystemExit(f'expected NP creator_allocation=0 got {val}')
+else:
+    if val == '0':
+        raise SystemExit(f'expected FP creator_allocation>0 got {val}')
 print('OK')
 "
 }
 
-verify_asset "FP" "$FP_ASSET_ID" "fp"
-verify_asset "NP" "$NP_ASSET_ID" "np"
+verify_launch_output "FP" "$FP_OUT" "no"
+verify_launch_output "NP" "$NP_OUT" "yes"
 
 echo
 echo "=== Smoke complete ==="

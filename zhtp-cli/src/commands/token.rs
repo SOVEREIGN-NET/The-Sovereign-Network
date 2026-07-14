@@ -657,9 +657,15 @@ pub async fn handle_dao_asset_launch(
         lib_crypto::Signature::default(),
         memo,
     );
+    // Fee depends on final serialized size (signature bytes). Sign once to measure, then
+    // set fee and re-sign so mempool economics validation sees fee >= min_fee.
     tx.signature = keypair
         .sign(tx.signing_hash().as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign asset launch tx: {e}")))?;
+    tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to re-sign asset launch tx: {e}")))?;
 
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
