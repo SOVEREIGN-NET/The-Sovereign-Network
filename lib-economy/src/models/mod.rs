@@ -63,6 +63,16 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_fee_u128_max_does_not_overflow() {
+        let model = EconomicModel::new();
+        let (network_fee, dao_fee, total_fee) =
+            model.calculate_fee(250, u128::MAX, Priority::Normal);
+        assert!(network_fee >= crate::MINIMUM_NETWORK_FEE);
+        assert!(dao_fee >= crate::MINIMUM_DAO_FEE);
+        assert_eq!(total_fee, network_fee + dao_fee);
+    }
+
+    #[test]
     fn test_token_reward_calculation() {
         let model = EconomicModel::new();
         let work = WorkMetrics {
