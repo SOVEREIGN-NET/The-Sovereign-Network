@@ -58,9 +58,9 @@ Populate with:
 The creator identity becomes:
 
 - `TokenCreation` / `AssetLaunch` signer
-- Interim rewards spender (`ZHTP_REWARDS_TREASURY_KEYSTORE`)
+- Launch signer only (creator key stays cold after handoff)
 
-**Future (N3):** rewards spend moves to a dedicated hot delegate keystore; creator key leaves validators.
+Rewards spending uses a dedicated hot delegate bound via `node configure-rewards` (SA-4).
 
 ---
 
@@ -124,17 +124,10 @@ On **each** validator (`zhtp-g1`, `g2`, `g3`), bind the on-chain spend delegate:
 export ZHTP_CHAIN_ID=2
 ```
 
-Writes `rewards_activation.toml` under the node data dir. Validators scan
-`asset_rewards/` (pure `AssetLaunch`) plus legacy `token_contracts` rows.
-
-**Deprecated fallback** (historical `TokenCreation` BUBL only):
-
-```bash
-export ZHTP_REWARDS_TREASURY_KEYSTORE=/opt/zhtp/keystores/bubl-creator
-```
-
-Handler activates when the configured keystore matches the on-chain spend delegate
-and delegate balance is positive.
+Writes `rewards_activation.toml` under the node data dir. Handler activates when the
+configured keystore `key_id` matches on-chain `spend_delegate_key_id` and delegate
+balance is positive. Env-var keystore overrides (`ZHTP_REWARDS_TREASURY_KEYSTORE`) are
+removed — `configure-rewards` is required.
 
 Verify:
 

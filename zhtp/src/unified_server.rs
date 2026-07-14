@@ -993,11 +993,9 @@ impl ZhtpUnifiedServer {
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
-        // BUBL rewards endpoints — inline-mint from the treasury identity to
-        // user wallets. Loads its treasury keystore from the env var
-        // `ZHTP_REWARDS_TREASURY_KEYSTORE`; without it, all /rewards/* return
-        // 503. We currently ship the keystore on g1 only so the treasury key
-        // has exactly one exposure surface.
+        // Rewards endpoints — spend-delegate attestation via signed RewardClaim txs.
+        // Activated via rewards_activation.toml (zhtp-cli node configure-rewards);
+        // without it, all /rewards/* return 503.
         match crate::api::handlers::RewardsHandler::new(blockchain.clone()) {
             Ok(h) => {
                 let handler: Arc<dyn ZhtpRequestHandler> = Arc::new(h);

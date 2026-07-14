@@ -297,9 +297,10 @@ fn main() -> Result<()> {
         "tx_hash": hex::encode(tx.hash().as_bytes()),
         "signed_tx": signed_hex,
         "submit_hint": "Broadcast AssetLaunch tx via zhtp-cli or mempool",
-        "rewards_env": {
-            "ZHTP_REWARDS_ASSET_ID": hex::encode(asset_id),
-            "ZHTP_REWARDS_TREASURY_KEYSTORE": args.rewards_delegate_dir.as_ref().map(|p| p.display().to_string()),
+        "configure_rewards": {
+            "asset_id": hex::encode(asset_id),
+            "delegate_keystore": args.rewards_delegate_dir.as_ref().map(|p| p.display().to_string()),
+            "hint": "zhtp-cli node configure-rewards --asset-id <asset_id> --delegate-keystore <path>"
         }
     });
 

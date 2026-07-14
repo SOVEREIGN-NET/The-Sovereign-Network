@@ -6,14 +6,12 @@
 //!
 //! ## Configuration
 //!
-//! Activated via `rewards_activation.toml` (written by `zhtp-cli node
-//! configure-rewards`) or the deprecated `ZHTP_REWARDS_TREASURY_KEYSTORE` env
-//! path. Both require a spend-delegate keystore whose key_id matches the
-//! on-chain `RewardsModuleState` and holds a positive token balance.
-//! `ZHTP_REWARDS_TOKEN_ID` may override the asset id on the legacy env path.
-//! `ZHTP_REWARDS_ASSET_ID` is a deprecated alias (remove after 2026-09-01).
-//! Without a matching delegate signer the handler installs but every endpoint
-//! returns 503.
+//! Activated exclusively via `rewards_activation.toml` (written by
+//! `zhtp-cli node configure-rewards`). Requires a spend-delegate keystore whose
+//! `key_id` matches on-chain `RewardsModuleState.spend_delegate_key_id` and
+//! holds a positive token balance. Read endpoints use the configured `asset_id`
+//! from the activation file; write endpoints (claims) require a loaded delegate
+//! signer. Without activation every endpoint returns 503.
 //!
 //! ## Storage (N4 / Q6)
 //!
@@ -50,9 +48,6 @@ mod settlement;
 
 // ── Constants ────────────────────────────────────────────────────────
 
-/// Deprecated env alias — use `ZHTP_REWARDS_TOKEN_ID`. Scheduled removal 2026-09-01.
-const DEPRECATED_REWARDS_ASSET_ID_ENV: &str = "ZHTP_REWARDS_ASSET_ID";
-
 /// 18-decimal atom multiplier.
 const ATOM_18: u128 = 1_000_000_000_000_000_000;
 
@@ -81,8 +76,10 @@ struct ConversationRequest {
 
 pub struct RewardsHandler {
     blockchain: Arc<RwLock<Blockchain>>,
-    /// None when the treasury keystore env var is unset or load failed.
-    /// All POST/GET endpoints return 503 in that case.
+    /// On-chain asset id from `rewards_activation.toml` (enables read endpoints).
+    configured_asset_id: Option<[u8; 32]>,
+    /// None when delegate keystore is unset, unfunded, or chain validation failed.
+    /// POST claim endpoints return 503; GET may still serve reads when configured.
     treasury: Option<TreasuryConfig>,
 }
 
@@ -96,25 +93,43 @@ struct TreasuryConfig {
 
 impl RewardsHandler {
     pub fn new(blockchain: Arc<RwLock<Blockchain>>) -> Result<Self> {
-        // Startup-time lookup: read the BUBL token contract under a non-async
+        // Startup-time lookup: resolve on-chain spend delegate under a non-async
         // borrow of the blockchain (RewardsHandler::new is sync). The
         // blockchain Arc is shared; at startup no API traffic is yet
         // dispatched, so `blocking_read` here is uncontended. Wrapped in
         // `block_in_place` so the runtime can park the worker.
-        let treasury = tokio::task::block_in_place(|| {
+        let (configured_asset_id, treasury) = tokio::task::block_in_place(|| {
             let bc = blockchain.blocking_read();
-            load_treasury(&bc)
+            let configured_asset_id = crate::rewards_activation::configured_asset_id_from_file();
+            let treasury = load_treasury(&bc);
+            (configured_asset_id, treasury)
         });
 
-        if treasury.is_some() {
-            info!("Rewards: spend delegate loaded — /api/v1/rewards/* active (chain-native state only)");
-        } else {
-            info!(
-                "Rewards: delegate keystore unset or unfunded — /api/v1/rewards/* will return 503 on this node"
-            );
+        match (&configured_asset_id, &treasury) {
+            (Some(id), Some(_)) => {
+                info!(
+                    "Rewards: spend delegate loaded for asset {} — /api/v1/rewards/* active",
+                    hex::encode(&id[..8])
+                );
+            }
+            (Some(id), None) => {
+                info!(
+                    "Rewards: activation present for asset {} but delegate signer not loaded — reads only",
+                    hex::encode(&id[..8])
+                );
+            }
+            (None, _) => {
+                info!(
+                    "Rewards: no rewards_activation.toml — /api/v1/rewards/* will return 503"
+                );
+            }
         }
 
-        Ok(Self { blockchain, treasury })
+        Ok(Self {
+            blockchain,
+            configured_asset_id,
+            treasury,
+        })
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -195,7 +210,15 @@ impl RewardsHandler {
     }
 
     fn rewards_asset_id(&self) -> Option<[u8; 32]> {
-        self.treasury.as_ref().map(|t| t.rewards_asset_id)
+        self.treasury
+            .as_ref()
+            .map(|t| t.rewards_asset_id)
+            .or(self.configured_asset_id)
+    }
+
+    fn require_rewards_asset_id(&self) -> Result<[u8; 32], ZhtpResponse> {
+        self.rewards_asset_id()
+            .ok_or_else(Self::unavailable)
     }
 
     // ── handlers ─────────────────────────────────────────────────────
@@ -372,13 +395,14 @@ impl RewardsHandler {
             Ok(k) => k,
             Err(msg) => return Self::bad(msg),
         };
+        let token_id = match self.require_rewards_asset_id() {
+            Ok(id) => id,
+            Err(resp) => return resp,
+        };
         let bc = self.blockchain.read().await;
-        let token_id = self
-            .rewards_asset_id()
-            .unwrap_or_else(|| lib_blockchain::contracts::utils::generate_custom_token_id("Bubble", "BUBL"));
         let stats = bc.reward_lifetime_stats(&token_id, did);
 
-        // Spendable BUBL is on-chain under the holder's key_id.
+        // Spendable balance is on-chain under the holder's key_id.
         let (spendable_balance, asset_id_hex) = match &self.treasury {
             Some(treasury) => {
                 let balance = bc
@@ -420,9 +444,10 @@ impl RewardsHandler {
             return Self::bad(msg);
         }
 
-        let token_id = self.rewards_asset_id().unwrap_or_else(|| {
-            lib_blockchain::contracts::utils::generate_custom_token_id("Bubble", "BUBL")
-        });
+        let token_id = match self.require_rewards_asset_id() {
+            Ok(id) => id,
+            Err(resp) => return resp,
+        };
 
         let now = Self::now_secs();
         let date = Self::utc_date();
@@ -518,9 +543,10 @@ impl RewardsHandler {
         }
         let limit = limit.min(HISTORY_MAX_LIMIT);
 
-        let token_id = self
-            .rewards_asset_id()
-            .unwrap_or_else(|| lib_blockchain::contracts::utils::generate_custom_token_id("Bubble", "BUBL"));
+        let token_id = match self.require_rewards_asset_id() {
+            Ok(id) => id,
+            Err(resp) => return resp,
+        };
         let bc = self.blockchain.read().await;
         let cursor_seq = cursor.map(|c| c.1);
         let (page, has_more) = bc.reward_claim_history(&token_id, did, limit, cursor_seq);
@@ -671,44 +697,6 @@ pub(crate) fn chain_id_from_env() -> u8 {
 
 // ── Treasury loader ──────────────────────────────────────────────────
 
-fn rewards_token_id_override() -> Option<String> {
-    if let Ok(id) = std::env::var("ZHTP_REWARDS_TOKEN_ID") {
-        return Some(id);
-    }
-    if let Ok(id) = std::env::var(DEPRECATED_REWARDS_ASSET_ID_ENV) {
-        warn!(
-            "rewards: {} is deprecated — use ZHTP_REWARDS_TOKEN_ID (removal scheduled 2026-09-01)",
-            DEPRECATED_REWARDS_ASSET_ID_ENV
-        );
-        return Some(id);
-    }
-    None
-}
-
-fn parse_token_id_hex(hex_id: &str) -> Option<[u8; 32]> {
-    let bytes = hex::decode(hex_id).ok()?;
-    if bytes.len() != 32 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Some(out)
-}
-
-fn resolve_legacy_rewards_asset_id(
-    blockchain: &Blockchain,
-    signer_key_id: &[u8; 32],
-) -> Option<[u8; 32]> {
-    if let Some(hex_id) = rewards_token_id_override() {
-        return parse_token_id_hex(&hex_id);
-    }
-
-    crate::rewards_activation::scan_chain_eligible_assets(blockchain)
-        .into_iter()
-        .find(|asset| asset.spend_delegate_key_id == *signer_key_id)
-        .map(|asset| asset.asset_id)
-}
-
 fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
     let eligible = crate::rewards_activation::scan_chain_eligible_assets(blockchain);
     if !eligible.is_empty() {
@@ -726,32 +714,19 @@ fn load_treasury(blockchain: &Blockchain) -> Option<TreasuryConfig> {
         }
     }
 
-    if let Some(activation) = crate::rewards_activation::resolve_activation() {
-        return load_treasury_from_dir(
-            blockchain,
-            &activation.delegate_keystore_dir,
-            Some(activation.asset_id),
-            activation.source,
-        );
-    }
-
-    // Legacy interim: env-only keystore + BUBL token_id discovery (TokenCreation path).
-    let dir = std::env::var("ZHTP_REWARDS_TREASURY_KEYSTORE").ok()?;
-    warn!(
-        "rewards: ZHTP_REWARDS_TREASURY_KEYSTORE is deprecated — use `zhtp-cli node configure-rewards` (removal after 2026-09-01)"
-    );
+    let activation = crate::rewards_activation::resolve_activation()?;
     load_treasury_from_dir(
         blockchain,
-        &PathBuf::from(&dir),
-        None,
-        crate::rewards_activation::ActivationSource::LegacyEnv,
+        &activation.delegate_keystore_dir,
+        activation.asset_id,
+        activation.source,
     )
 }
 
 fn load_treasury_from_dir(
     blockchain: &Blockchain,
     path: &PathBuf,
-    asset_id_override: Option<[u8; 32]>,
+    rewards_asset_id: [u8; 32],
     source: crate::rewards_activation::ActivationSource,
 ) -> Option<TreasuryConfig> {
     if !path.is_dir() {
@@ -776,32 +751,14 @@ fn load_treasury_from_dir(
     };
     let signer_key_id = keypair.public_key.key_id;
 
-    let rewards_asset_id = if let Some(id) = asset_id_override {
-        match crate::rewards_activation::validate_activation_against_chain(
-            blockchain,
-            &id,
-            &signer_key_id,
-        ) {
-            Ok(_) => id,
-            Err(e) => {
-                warn!("rewards: chain-native activation rejected: {e}");
-                return None;
-            }
-        }
-    } else {
-        let token_id = resolve_legacy_rewards_asset_id(blockchain, &signer_key_id)?;
-        match crate::rewards_activation::validate_activation_against_chain(
-            blockchain,
-            &token_id,
-            &signer_key_id,
-        ) {
-            Ok(_) => token_id,
-            Err(e) => {
-                warn!("rewards: legacy env activation rejected: {e}");
-                return None;
-            }
-        }
-    };
+    if let Err(e) = crate::rewards_activation::validate_activation_against_chain(
+        blockchain,
+        &rewards_asset_id,
+        &signer_key_id,
+    ) {
+        warn!("rewards: chain-native activation rejected: {e}");
+        return None;
+    }
 
     let balance = match blockchain.token_balance(&rewards_asset_id, &signer_key_id) {
         Ok(balance) => balance,
@@ -823,7 +780,6 @@ fn load_treasury_from_dir(
     }
     let source_label = match source {
         crate::rewards_activation::ActivationSource::ConfigFile => "rewards_activation.toml",
-        crate::rewards_activation::ActivationSource::LegacyEnv => "ZHTP_REWARDS_TREASURY_KEYSTORE",
     };
     info!(
         "rewards: signer loaded via {source_label} — token_id={} key_id={} balance={}",
