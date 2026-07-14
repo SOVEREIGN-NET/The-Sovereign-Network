@@ -1,0 +1,13 @@
+{
+  "schema": "zhtp/dao-launch-template/v1",
+  "id": "np-commons",
+  "label": "Commons",
+  "description": "Mega non-profit commons — 5B whole tokens with 1% transfer burn cap.",
+  "dao_class": "np",
+  "whole_supply": 5000000000,
+  "decimals": 18,
+  "supply_mode": "fixed",
+  "treasury_bps": 10000,
+  "burn_bps": 100,
+  "rewards_policy_example": "schemas/zhtp/rewards-policy/examples/bubl-v1.json"
+}

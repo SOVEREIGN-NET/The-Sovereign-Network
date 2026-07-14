@@ -1,18 +1,35 @@
-//! DAO launch tokenomics templates (D4 #2825).
+//! DAO launch tokenomics templates (D4 #2825, expanded #2880).
 //!
 //! Versioned JSON presets shared by CLI and mobile app. Templates are embedded at
 //! compile time via `include_str!` so deployed binaries work without a source tree.
 //! Split preview uses `AssetLaunchPayloadV1::split_initial_supply` — same path as the executor.
+//!
+//! **Catalog**
+//! - **FP (80% creator / 20% treasury):** `unicorn`, `balanced`, `foundation`, `fp-*`
+//! - **NP (0% creator / 100% treasury):** `np-charity`, `np-impact`, `np-mission`, `np-collective`, `np-commons`
 
 use crate::error::{CliError, CliResult};
-use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode};
-use lib_blockchain::transaction::asset_tx::{AssetLaunchPayloadV1, ASSET_LAUNCH_TREASURY_BPS};
+use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode, MAX_TRANSFER_BURN_BPS};
+use lib_blockchain::transaction::asset_tx::AssetLaunchPayloadV1;
 use serde::Deserialize;
 
 const TEMPLATE_SCHEMA: &str = "zhtp/dao-launch-template/v1";
 
 /// Single source of truth for built-in template ids (embedded via `include_str!` below).
-pub const BUILTIN_TEMPLATE_IDS: &[&str] = &["unicorn", "balanced", "foundation"];
+pub const BUILTIN_TEMPLATE_IDS: &[&str] = &[
+    "unicorn",
+    "balanced",
+    "foundation",
+    "fp-starter",
+    "fp-growth",
+    "fp-enterprise",
+    "fp-boutique",
+    "np-charity",
+    "np-impact",
+    "np-mission",
+    "np-collective",
+    "np-commons",
+];
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct DaoLaunchTemplate {
@@ -20,10 +37,13 @@ pub struct DaoLaunchTemplate {
     pub id: String,
     pub label: String,
     pub description: String,
+    pub dao_class: String,
     pub whole_supply: u128,
     pub decimals: u8,
     pub supply_mode: String,
     pub treasury_bps: u16,
+    #[serde(default)]
+    pub burn_bps: u16,
     #[serde(default)]
     pub rewards_policy_example: Option<String>,
 }
@@ -33,6 +53,8 @@ pub struct ResolvedLaunchParams {
     pub supply_atoms: u128,
     pub decimals: u8,
     pub supply_mode: String,
+    pub dao_class: DaoClass,
+    pub burn_bps: u16,
     pub rewards_policy_example: Option<String>,
 }
 
@@ -40,6 +62,8 @@ pub struct ResolvedLaunchParams {
 pub struct LaunchSplitPreview {
     pub template_id: String,
     pub template_label: String,
+    pub dao_class: String,
+    pub burn_bps: u16,
     pub initial_supply_atoms: String,
     pub treasury_bps: u16,
     pub creator_allocation_atoms: String,
@@ -64,6 +88,33 @@ fn template_json_for_id(id: &str) -> Option<&'static str> {
         "foundation" => Some(include_str!(
             "../../../schemas/zhtp/dao-launch-template/examples/foundation.json"
         )),
+        "fp-starter" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/fp-starter.json"
+        )),
+        "fp-growth" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/fp-growth.json"
+        )),
+        "fp-enterprise" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/fp-enterprise.json"
+        )),
+        "fp-boutique" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/fp-boutique.json"
+        )),
+        "np-charity" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/np-charity.json"
+        )),
+        "np-impact" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/np-impact.json"
+        )),
+        "np-mission" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/np-mission.json"
+        )),
+        "np-collective" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/np-collective.json"
+        )),
+        "np-commons" => Some(include_str!(
+            "../../../schemas/zhtp/dao-launch-template/examples/np-commons.json"
+        )),
         _ => None,
     }
 }
@@ -72,7 +123,7 @@ pub fn load_template(id: &str) -> CliResult<DaoLaunchTemplate> {
     let normalized = id.trim().to_ascii_lowercase();
     let json = template_json_for_id(&normalized).ok_or_else(|| {
         CliError::ConfigError(format!(
-            "unknown template '{id}' (expected: {})",
+            "unknown template '{id}' (expected one of: {})",
             BUILTIN_TEMPLATE_IDS.join(" | ")
         ))
     })?;
@@ -89,9 +140,22 @@ pub(crate) fn validate_template(template: &DaoLaunchTemplate) -> CliResult<()> {
             template.schema
         )));
     }
-    if template.treasury_bps != ASSET_LAUNCH_TREASURY_BPS {
+    let dao_class = DaoClass::from_str(&template.dao_class).ok_or_else(|| {
+        CliError::ConfigError(format!(
+            "template dao_class must be fp or np, got '{}'",
+            template.dao_class
+        ))
+    })?;
+    if template.treasury_bps != dao_class.treasury_bps() {
         return Err(CliError::ConfigError(format!(
-            "template treasury_bps must be {ASSET_LAUNCH_TREASURY_BPS} (canonical 80/20)"
+            "template treasury_bps must be {} for dao_class {}",
+            dao_class.treasury_bps(),
+            dao_class.as_str()
+        )));
+    }
+    if template.burn_bps > MAX_TRANSFER_BURN_BPS {
+        return Err(CliError::ConfigError(format!(
+            "template burn_bps must be <= {MAX_TRANSFER_BURN_BPS}"
         )));
     }
     if template.supply_mode.to_ascii_lowercase() != "fixed" {
@@ -127,6 +191,7 @@ pub fn resolve_launch_params(
         return Ok(None);
     };
     let template = load_template(id)?;
+    let dao_class = DaoClass::from_str(&template.dao_class).expect("validated above");
     let decimals = decimals_override.unwrap_or(template.decimals);
     let supply_atoms = match supply_override {
         Some(atoms) => atoms,
@@ -138,12 +203,14 @@ pub fn resolve_launch_params(
             supply_atoms,
             decimals,
             supply_mode: template.supply_mode.clone(),
+            dao_class,
+            burn_bps: template.burn_bps,
             rewards_policy_example: template.rewards_policy_example.clone(),
         },
     )))
 }
 
-/// Preview 80/20 split using the executor's `AssetLaunchPayloadV1::split_initial_supply`.
+/// Preview launch split using the executor's `AssetLaunchPayloadV1::split_initial_supply`.
 pub fn preview_launch(
     name: &str,
     symbol: &str,
@@ -151,9 +218,13 @@ pub fn preview_launch(
     decimals: u8,
     template: Option<&DaoLaunchTemplate>,
 ) -> CliResult<LaunchSplitPreview> {
-    let treasury_bps = template
-        .map(|t| t.treasury_bps)
-        .unwrap_or(ASSET_LAUNCH_TREASURY_BPS);
+    let (dao_class, treasury_bps, burn_bps) = template
+        .map(|t| {
+            let class = DaoClass::from_str(&t.dao_class).unwrap_or(DaoClass::Fp);
+            (class, t.treasury_bps, t.burn_bps)
+        })
+        .unwrap_or((DaoClass::Fp, DaoClass::Fp.treasury_bps(), 0));
+
     let payload = AssetLaunchPayloadV1 {
         name: name.to_string(),
         symbol: symbol.to_string(),
@@ -168,11 +239,14 @@ pub fn preview_launch(
         rewards: None,
         governance: None,
         transfer_authority: false,
-        dao_class: DaoClass::Fp,
-        burn_bps: 0,
+        dao_class,
+        burn_bps,
     };
     payload
         .validate_dao_launch_ui_constraints()
+        .map_err(|e| CliError::ConfigError(format!("launch preview validation: {e}")))?;
+    payload
+        .validate()
         .map_err(|e| CliError::ConfigError(format!("launch preview validation: {e}")))?;
     let (creator, treasury) = payload.split_initial_supply();
     let creator_percent = if initial_supply == 0 {
@@ -192,6 +266,8 @@ pub fn preview_launch(
         template_label: template
             .map(|t| t.label.clone())
             .unwrap_or_else(|| "Custom".to_string()),
+        dao_class: dao_class.as_str().to_string(),
+        burn_bps,
         initial_supply_atoms: initial_supply.to_string(),
         treasury_bps,
         creator_allocation_atoms: creator.to_string(),
@@ -211,7 +287,8 @@ mod tests {
         for id in list_template_ids() {
             let t = load_template(id).expect("load");
             assert_eq!(t.schema, TEMPLATE_SCHEMA);
-            assert_eq!(t.treasury_bps, ASSET_LAUNCH_TREASURY_BPS);
+            let class = DaoClass::from_str(&t.dao_class).expect("dao_class");
+            assert_eq!(t.treasury_bps, class.treasury_bps());
         }
     }
 
@@ -229,10 +306,12 @@ mod tests {
             id: "x".to_string(),
             label: "X".to_string(),
             description: "x".to_string(),
+            dao_class: "fp".to_string(),
             whole_supply: 1,
             decimals: 18,
             supply_mode: "fixed".to_string(),
-            treasury_bps: ASSET_LAUNCH_TREASURY_BPS,
+            treasury_bps: 2000,
+            burn_bps: 0,
             rewards_policy_example: None,
         };
         assert!(validate_template(&template).is_err());
@@ -245,17 +324,19 @@ mod tests {
             id: "x".to_string(),
             label: "X".to_string(),
             description: "x".to_string(),
+            dao_class: "fp".to_string(),
             whole_supply: 1,
             decimals: 18,
             supply_mode: "fixed".to_string(),
             treasury_bps: 1000,
+            burn_bps: 0,
             rewards_policy_example: None,
         };
         assert!(validate_template(&template).is_err());
     }
 
     #[test]
-    fn preview_split_matches_eighty_twenty() {
+    fn preview_split_matches_eighty_twenty_for_fp() {
         let template = load_template("balanced").unwrap();
         let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
         let preview = preview_launch("Bubble", "BUBL", atoms, template.decimals, Some(&template))
@@ -266,6 +347,44 @@ mod tests {
         assert_eq!(creator + treasury, supply);
         assert_eq!(treasury, supply / 5);
         assert_eq!(creator, supply - supply / 5);
+    }
+
+    #[test]
+    fn preview_np_mission_is_all_treasury() {
+        let template = load_template("np-mission").unwrap();
+        let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
+        let preview = preview_launch("Mission", "MSN", atoms, template.decimals, Some(&template))
+            .unwrap();
+        assert_eq!(preview.creator_allocation_atoms, "0");
+        assert_eq!(preview.treasury_allocation_atoms, atoms.to_string());
+        assert_eq!(preview.dao_class, "np");
+    }
+
+    #[test]
+    fn np_template_split_initial_supply_is_zero_creator() {
+        let template = load_template("np-charity").unwrap();
+        let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
+        let dao_class = DaoClass::from_str(&template.dao_class).unwrap();
+        let payload = AssetLaunchPayloadV1 {
+            name: "Charity".to_string(),
+            symbol: "CHR".to_string(),
+            decimals: template.decimals,
+            initial_supply: atoms,
+            treasury_key_id: [0x01; 32],
+            treasury_bps: template.treasury_bps,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: [0x11; 32],
+            manifest_hash: [0x22; 32],
+            curve: None,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+            dao_class,
+            burn_bps: template.burn_bps,
+        };
+        let (creator, treasury) = payload.split_initial_supply();
+        assert_eq!(creator, 0);
+        assert_eq!(treasury, atoms);
     }
 
     #[test]
@@ -282,6 +401,7 @@ mod tests {
             resolve_launch_params(Some("foundation"), None, None).unwrap().unwrap();
         assert_eq!(template.id, "foundation");
         assert_eq!(resolved.decimals, 18);
+        assert_eq!(resolved.dao_class, DaoClass::Fp);
         assert_eq!(
             resolved.supply_atoms,
             whole_tokens_to_atoms(10_000_000, 18).unwrap()
@@ -295,5 +415,6 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.supply_atoms, 999);
         assert_eq!(resolved.decimals, 6);
+        assert_eq!(resolved.dao_class, DaoClass::Fp);
     }
 }

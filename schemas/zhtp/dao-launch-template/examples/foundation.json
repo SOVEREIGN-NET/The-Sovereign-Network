@@ -3,9 +3,11 @@
   "id": "foundation",
   "label": "Foundation",
   "description": "Community/non-profit lean preset — 10M whole tokens, fixed supply, canonical 80/20 launch split.",
+  "dao_class": "fp",
   "whole_supply": 10000000,
   "decimals": 18,
   "supply_mode": "fixed",
   "treasury_bps": 2000,
+  "burn_bps": 0,
   "rewards_policy_example": "schemas/zhtp/rewards-policy/examples/bubl-v1.json"
 }

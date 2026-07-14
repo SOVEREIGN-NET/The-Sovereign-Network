@@ -88,6 +88,7 @@ pub struct SubmittedClaim {
 
 pub enum ClaimFlowError {
     Ineligible { reason: String },
+    InsufficientRewardLiquidity { have: u128, need: u128 },
     Unavailable(String),
     SubmitFailed(String),
 }
@@ -189,16 +190,31 @@ pub async fn run_claim_flow(
     spec: &ClaimSpec,
 ) -> Result<SubmittedClaim, ClaimFlowError> {
     let token_id = treasury.rewards_asset_id;
-    let plan = {
+    let (plan, chain_height) = {
         let bc = blockchain.read().await;
-        plan_reward_claim(&bc, &token_id, did, spec).map_err(|reason| {
+        let plan = plan_reward_claim(&bc, &token_id, did, spec).map_err(|reason| {
             if spec.soft_fail_reasons.contains(&reason.as_str()) {
                 ClaimFlowError::Ineligible { reason }
             } else {
                 ClaimFlowError::Unavailable(reason)
             }
-        })?
+        })?;
+        (plan, bc.height)
     };
+
+    if lib_blockchain::contracts::sovereign_asset::economic_rules_active(chain_height) {
+        let delegate_balance = {
+            let bc = blockchain.read().await;
+            bc.token_balance(&token_id, &treasury.signer_key_id)
+                .unwrap_or(0)
+        };
+        if delegate_balance < plan.amount {
+            return Err(ClaimFlowError::InsufficientRewardLiquidity {
+                have: delegate_balance,
+                need: plan.amount,
+            });
+        }
+    }
 
     let tx_hash = submit_reward_claim(
         blockchain,

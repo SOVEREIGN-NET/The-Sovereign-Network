@@ -1,13 +1,13 @@
 {
   "schema": "zhtp/dao-launch-template/v1",
-  "id": "balanced",
-  "label": "Balanced",
-  "description": "Mid-cap for-profit preset — 100M whole tokens, fixed supply, 80/20 launch split.",
+  "id": "fp-growth",
+  "label": "Growth",
+  "description": "Growth for-profit preset — 500M whole tokens with 0.25% transfer burn.",
   "dao_class": "fp",
-  "whole_supply": 100000000,
+  "whole_supply": 500000000,
   "decimals": 18,
   "supply_mode": "fixed",
   "treasury_bps": 2000,
-  "burn_bps": 0,
+  "burn_bps": 25,
   "rewards_policy_example": "schemas/zhtp/rewards-policy/examples/bubl-v1.json"
 }

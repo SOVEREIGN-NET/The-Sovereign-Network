@@ -306,6 +306,15 @@ impl RewardsHandler {
                     "identity must be registered on-chain before claiming rewards".to_string(),
                 )
             }
+            Err(settlement::ClaimFlowError::InsufficientRewardLiquidity { have, need }) => {
+                Self::ok_json(json!({
+                    "awarded": false,
+                    "amount": "0",
+                    "reason": "InsufficientRewardLiquidity",
+                    "have": have.to_string(),
+                    "need": need.to_string(),
+                }))
+            }
             Err(settlement::ClaimFlowError::Ineligible { reason }) => {
                 let partners_this_week = if spec.event == RewardEventKind::NewPartner {
                     let week = Self::iso_week();

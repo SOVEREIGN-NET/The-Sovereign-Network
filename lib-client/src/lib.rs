@@ -43,6 +43,7 @@
 //! ```
 
 mod bip39_wordlist;
+pub mod asset_launch_tx;
 pub mod bonding_curve_tx;
 pub mod cbe_tx;
 pub mod crypto;
@@ -72,6 +73,10 @@ pub mod token_tx;
 pub mod wasm;
 
 // Re-exports for convenience
+pub use asset_launch_tx::{
+    build_asset_launch_tx, build_dao_launch_manifest, build_dao_launch_manifest_bytes,
+    manifest_cid_hash_from_bytes, AssetLaunchBuildParams,
+};
 pub use cbe_tx::{
     build_create_employment_contract_tx, build_init_cbe_token_tx, build_process_payroll_tx,
 };

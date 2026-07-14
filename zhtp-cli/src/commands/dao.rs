@@ -391,31 +391,39 @@ async fn handle_dao_command_impl(
             ));
         }
 
-        let (resolved_supply, resolved_decimals, resolved_supply_mode, template_meta) =
-            match crate::commands::launch_templates::resolve_launch_params(
-                template.as_deref(),
-                supply,
-                decimals,
-            )? {
-                Some((tmpl, resolved)) => {
-                    if supply_mode.to_ascii_lowercase() != "fixed" {
-                        output.warning(
-                            "--supply-mode is ignored when --template is set (templates are fixed-only)",
-                        )?;
-                    }
-                    (
-                        resolved.supply_atoms,
-                        resolved.decimals,
-                        resolved.supply_mode,
-                        Some(tmpl),
-                    )
+        let (
+            resolved_supply,
+            resolved_decimals,
+            resolved_supply_mode,
+            template_meta,
+            template_dao_class,
+            template_burn_bps,
+        ) = match crate::commands::launch_templates::resolve_launch_params(
+            template.as_deref(),
+            supply,
+            decimals,
+        )? {
+            Some((tmpl, resolved)) => {
+                if supply_mode.to_ascii_lowercase() != "fixed" {
+                    output.warning(
+                        "--supply-mode is ignored when --template is set (templates are fixed-only)",
+                    )?;
                 }
-                None => {
-                    let supply_atoms = supply.expect("clap requires --supply without --template");
-                    let dec = decimals.unwrap_or(18);
-                    (supply_atoms, dec, supply_mode.clone(), None)
-                }
-            };
+                (
+                    resolved.supply_atoms,
+                    resolved.decimals,
+                    resolved.supply_mode,
+                    Some(tmpl),
+                    Some(resolved.dao_class),
+                    Some(resolved.burn_bps),
+                )
+            }
+            None => {
+                let supply_atoms = supply.expect("clap requires --supply without --template");
+                let dec = decimals.unwrap_or(18);
+                (supply_atoms, dec, supply_mode.clone(), None, None, None)
+            }
+        };
 
         if preview {
             let split = crate::commands::launch_templates::preview_launch(
@@ -458,14 +466,26 @@ async fn handle_dao_command_impl(
         let treasury = treasury_recipient
             .clone()
             .unwrap_or_else(default_protocol_treasury_key_id_hex);
-        let class_hint = dao_class
+        let effective_dao_class = dao_class
             .as_deref()
             .map(parse_dao_class)
-            .transpose()?;
+            .transpose()?
+            .or_else(|| template_dao_class.map(|c| c.to_dao_type()));
+        let effective_burn_bps = template_burn_bps;
+        let split_label = effective_dao_class
+            .map(|c| {
+                if c == DAOType::NP {
+                    "100% treasury (NP)".to_string()
+                } else {
+                    "80% creator / 20% treasury (FP)".to_string()
+                }
+            })
+            .unwrap_or_else(|| "80% creator / 20% treasury".to_string());
         output.info(&format!(
-            "Launching {} ({}) — 80% creator / 20% treasury ({})",
+            "Launching {} ({}) — {} ({})",
             name,
             symbol,
+            split_label,
             &treasury[..16.min(treasury.len())]
         ))?;
         if let Some(tmpl) = &template_meta {
@@ -481,11 +501,14 @@ async fn handle_dao_command_impl(
                 split.creator_allocation_atoms, split.treasury_allocation_atoms
             ))?;
         }
-        if let Some(class) = class_hint {
+        if let Some(class) = effective_dao_class {
             output.info(&format!(
-                "DAO class hint: {} (use with `dao registry-register` after launch)",
-                class.as_str()
+                "DAO class: {} (on-chain via AssetLaunch)",
+                class.as_str().to_ascii_lowercase()
             ))?;
+        }
+        if let Some(burn) = effective_burn_bps.filter(|b| *b > 0) {
+            output.info(&format!("Transfer burn: {burn} bps"))?;
         }
         if manifest_file.is_some() {
             output.info("Using custom manifest file")?;
@@ -512,7 +535,11 @@ async fn handle_dao_command_impl(
             transfer_authority,
             supply_mode: resolved_supply_mode,
             chain_id,
-            dao_class: dao_class.clone(),
+            dao_class: effective_dao_class.map(|c| match c {
+                DAOType::FP => "fp".to_string(),
+                DAOType::NP => "np".to_string(),
+            }),
+            burn_bps: effective_burn_bps,
         };
         token::handle_dao_asset_launch(
             cli,

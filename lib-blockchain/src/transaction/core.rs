@@ -1010,6 +1010,25 @@ impl Transaction {
         }
     }
 
+    /// Create a new Sovereign Asset authority transfer transaction.
+    pub fn new_asset_authority_transfer_with_chain_id(
+        chain_id: u8,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::AssetAuthorityTransfer,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::None,
+        }
+    }
+
     /// Create a new token creation transaction with an explicit chain id.
     pub fn new_token_creation_with_chain_id(
         chain_id: u8,

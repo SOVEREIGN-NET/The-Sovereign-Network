@@ -1,0 +1,13 @@
+{
+  "schema": "zhtp/dao-launch-template/v1",
+  "id": "np-collective",
+  "label": "Collective",
+  "description": "Large non-profit collective — 1B whole tokens with 0.5% transfer burn.",
+  "dao_class": "np",
+  "whole_supply": 1000000000,
+  "decimals": 18,
+  "supply_mode": "fixed",
+  "treasury_bps": 10000,
+  "burn_bps": 50,
+  "rewards_policy_example": "schemas/zhtp/rewards-policy/examples/bubl-v1.json"
+}
