@@ -2459,6 +2459,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::TokenTransfer
             && transaction.transaction_type != TransactionType::TokenMint
             && transaction.transaction_type != TransactionType::TokenCreation
+            && transaction.transaction_type != TransactionType::AssetLaunch
             && transaction.transaction_type != TransactionType::DaoStake
             && transaction.transaction_type != TransactionType::DaoUnstake
             && transaction.transaction_type != TransactionType::DomainRegistration // owner_did↔signer binding enforced above

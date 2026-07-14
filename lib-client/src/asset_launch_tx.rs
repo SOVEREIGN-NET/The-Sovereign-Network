@@ -115,11 +115,22 @@ pub fn build_asset_launch_tx(
         },
         memo,
     );
-
+    let provisional_hash = tx.signing_hash();
+    let signature_bytes = crate::identity::sign_message(identity, provisional_hash.as_bytes())
+        .map_err(|e| format!("Failed to sign AssetLaunch: {e}"))?;
+    tx.signature = Signature {
+        signature: signature_bytes,
+        public_key: sender_pk.clone(),
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+    tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
     let tx_hash = tx.signing_hash();
     let signature_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
         .map_err(|e| format!("Failed to sign AssetLaunch: {e}"))?;
-
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: sender_pk,
