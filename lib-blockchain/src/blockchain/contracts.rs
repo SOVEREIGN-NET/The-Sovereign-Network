@@ -1369,6 +1369,20 @@ impl Blockchain {
         }
     }
 
+    /// Sovereign asset ids with an on-chain curve module (`asset_curve/` sled tree).
+    pub fn list_curve_module_asset_ids(&self) -> Vec<[u8; 32]> {
+        let Some(store) = self.get_store() else {
+            return Vec::new();
+        };
+        match store.list_curve_module_asset_ids() {
+            Ok(ids) => ids,
+            Err(e) => {
+                warn!("Failed to list curve module asset ids: {e}");
+                Vec::new()
+            }
+        }
+    }
+
     /// `AssetLaunched` events persisted at apply time (SA-3 / ADR §6.1).
     pub fn list_asset_launched_events(
         &self,

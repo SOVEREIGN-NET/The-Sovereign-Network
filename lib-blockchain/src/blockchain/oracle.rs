@@ -338,25 +338,14 @@ impl Blockchain {
         token_id: [u8; 32],
         block_timestamp: u64,
     ) -> Result<()> {
-        use crate::contracts::tokens::CBE_SYMBOL;
         use crate::oracle::ORACLE_PRICE_SCALE;
 
         use crate::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD;
         const MICRO_USD_PER_USD: u128 = 1_000_000;
 
-        let token = if let Some(store) = &self.store {
-            store
-                .get_bonding_curve_token(&crate::storage::TokenId(token_id))
-                .map_err(|e| anyhow::anyhow!("failed to read bonding curve token: {}", e))?
-                .or_else(|| self.bonding_curve_registry.get(&token_id).cloned())
-        } else {
-            self.bonding_curve_registry.get(&token_id).cloned()
-        }
-        .ok_or_else(|| anyhow::anyhow!("bonding curve token not found"))?;
-
-        if token.symbol != CBE_SYMBOL || token.phase.is_graduated() {
+        let Some(reserve_sov) = self.resolve_cbe_graduation_reserve(token_id)? else {
             return Ok(());
-        }
+        };
 
         let current_epoch = self.oracle_state.epoch_id(block_timestamp);
         let fresh_price = self.oracle_state.latest_fresh_price(current_epoch).ok_or_else(|| {
@@ -365,8 +354,6 @@ impl Blockchain {
                 current_epoch
             )
         })?;
-
-        let reserve_sov = token.reserve_balance as u128;
         let sov_usd_price = fresh_price.sov_usd_price;
         let usd_value_scaled = reserve_sov.checked_mul(sov_usd_price).ok_or_else(|| {
             anyhow::anyhow!("CBE graduation blocked: arithmetic overflow in USD value calculation")
@@ -387,6 +374,55 @@ impl Blockchain {
         }
 
         Ok(())
+    }
+
+    /// Resolve SOV reserve for CBE graduation oracle gating.
+    ///
+    /// Prefers sovereign `asset_curve/` state when the asset has the curve flag (SA-5);
+    /// falls back to the legacy bonding-curve registry. Returns `None` when the gate
+    /// does not apply (non-CBE symbol or already graduated).
+    fn resolve_cbe_graduation_reserve(&self, token_id: [u8; 32]) -> Result<Option<u128>> {
+        use crate::contracts::sovereign_asset::CurvePhase;
+        use crate::contracts::tokens::CBE_SYMBOL;
+
+        if let Some(store) = &self.store {
+            if let Ok(Some(asset)) = store.get_sovereign_asset(&token_id) {
+                if asset.module_flags.has_curve() {
+                    if asset.symbol != CBE_SYMBOL {
+                        return Ok(None);
+                    }
+                    let curve_state = store
+                        .get_curve_module_state(&token_id)
+                        .map_err(|e| {
+                            anyhow::anyhow!("failed to read curve module state: {}", e)
+                        })?
+                        .ok_or_else(|| anyhow::anyhow!("curve module state not found"))?;
+                    if matches!(
+                        curve_state.phase,
+                        CurvePhase::Graduated | CurvePhase::Amm
+                    ) {
+                        return Ok(None);
+                    }
+                    return Ok(Some(curve_state.reserve_balance));
+                }
+            }
+        }
+
+        let token = if let Some(store) = &self.store {
+            store
+                .get_bonding_curve_token(&crate::storage::TokenId(token_id))
+                .map_err(|e| anyhow::anyhow!("failed to read bonding curve token: {}", e))?
+                .or_else(|| self.bonding_curve_registry.get(&token_id).cloned())
+        } else {
+            self.bonding_curve_registry.get(&token_id).cloned()
+        }
+        .ok_or_else(|| anyhow::anyhow!("bonding curve token not found"))?;
+
+        if token.symbol != CBE_SYMBOL || token.phase.is_graduated() {
+            return Ok(None);
+        }
+
+        Ok(Some(token.reserve_balance))
     }
 
     pub(super) fn validate_block_cbe_graduation_gating(&self, block: &Block) -> Result<()> {

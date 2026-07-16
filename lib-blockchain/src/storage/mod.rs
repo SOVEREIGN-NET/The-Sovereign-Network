@@ -1181,6 +1181,10 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(Vec::new())
     }
 
+    fn list_curve_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {
+        Ok(Vec::new())
+    }
+
     fn put_asset_launched_event(
         &self,
         event: &crate::contracts::sovereign_asset::AssetLaunchedEvent,
@@ -1931,6 +1935,9 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ) -> StorageResult<Option<crate::contracts::bonding_curve::BondingCurveToken>>;
 
     /// Store a bonding curve token.
+    ///
+    /// **Deprecated (SA-5):** Prefer [`Self::put_curve_module_state`] for assets launched with
+    /// `curve: Some(CurveLaunchConfig)`. Retained for legacy bonding-curve registry replay.
     ///
     /// # Requirements
     /// - MUST be called within begin_block/commit_block
