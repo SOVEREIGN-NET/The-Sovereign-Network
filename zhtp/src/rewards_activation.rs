@@ -1,9 +1,10 @@
 //! Chain-native rewards handler activation (DAO N3 / SA-4, #2813).
 //!
-//! Operators bind a spend-delegate keystore to an on-chain asset via
-//! `rewards_activation.toml` under the node data dir (written by
-//! `zhtp-cli node configure-rewards`). The rewards handler does not activate
-//! without this file — env-var ticker/keystore hacks are removed.
+//! Operators record the rewards `asset_id` in `rewards_activation.toml` under the
+//! node data dir (`zhtp-cli node configure-rewards` on the signing node; copy the
+//! toml to read replicas without copying the hot keystore). The file enables read
+//! endpoints cluster-wide; only the node with a loadable delegate keystore signs
+//! claims. Env-var ticker/keystore hacks are removed in SA-4.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

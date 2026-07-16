@@ -6,12 +6,13 @@
 //!
 //! ## Configuration
 //!
-//! Activated exclusively via `rewards_activation.toml` (written by
-//! `zhtp-cli node configure-rewards`). Requires a spend-delegate keystore whose
-//! `key_id` matches on-chain `RewardsModuleState.spend_delegate_key_id` and
-//! holds a positive token balance. Read endpoints use the configured `asset_id`
-//! from the activation file; write endpoints (claims) require a loaded delegate
-//! signer. Without activation every endpoint returns 503.
+//! Activated via `rewards_activation.toml` (written by `zhtp-cli node configure-rewards`
+//! or copied across validators). **Ops posture:** place the toml on every validator
+//! (enables read endpoints); mount the hot delegate keystore on **one** validator only
+//! (enables claim POSTs). Read endpoints need only `asset_id` in the file; claims
+//! additionally require a local keystore whose `key_id` matches on-chain
+//! `spend_delegate_key_id` with positive delegate balance. Without the toml, every
+//! endpoint returns 503.
 //!
 //! ## Storage (N4 / Q6)
 //!
