@@ -70,6 +70,7 @@ pub mod dht_indexing;
 pub mod did_startup;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
 pub mod identity_manager_provider;
+pub mod manifest_pin_bridge;
 pub mod mesh_router_provider;
 pub mod messaging_provider;
 pub mod network_blockchain_event_receiver;

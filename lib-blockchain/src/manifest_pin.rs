@@ -8,7 +8,7 @@ use crate::contracts::sovereign_asset::{
     manifest_pin_gate_active, manifest_pin_strict_mode,
 };
 use crate::execution::TxApplyError;
-use crate::storage::BlockchainStore;
+use crate::storage::{BlockchainStore, StorageResult};
 use crate::transaction::asset_tx::ASSET_MANIFEST_SCHEMA;
 
 /// Optional cross-checks against manifest JSON (launch name/symbol/decimals or asset_id).
@@ -83,6 +83,44 @@ fn validate_manifest_json(
     }
 
     Ok(())
+}
+
+/// Canonical `(manifest_cid, manifest_hash)` for raw manifest bytes (matches `asset_tx`).
+pub fn manifest_cid_hash_from_content(content: &[u8]) -> ([u8; 32], [u8; 32]) {
+    let hash = lib_crypto::hash_blake3(content);
+    let mut cid = [0u8; 32];
+    cid[..16].copy_from_slice(&hash[..16]);
+    (cid, hash)
+}
+
+/// Parse a 64-char hex manifest CID (32 bytes) as used by DHT / assets API keys.
+pub fn manifest_cid_from_hex(hex_str: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(hex_str).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut cid = [0u8; 32];
+    cid.copy_from_slice(&bytes);
+    Some(cid)
+}
+
+/// Mirror pinned content into the consensus `dht_pins` sled cache (SA-7 bridge).
+pub fn record_dht_pin_content(
+    store: &dyn BlockchainStore,
+    content: &[u8],
+) -> StorageResult<([u8; 32], [u8; 32])> {
+    let (cid, hash) = manifest_cid_hash_from_content(content);
+    store.put_dht_pin_content_direct(&cid, content)?;
+    Ok((cid, hash))
+}
+
+/// Mirror by explicit CID when the DHT layer already computed the key.
+pub fn record_dht_pin_at_cid(
+    store: &dyn BlockchainStore,
+    manifest_cid: &[u8; 32],
+    content: &[u8],
+) -> StorageResult<()> {
+    store.put_dht_pin_content_direct(manifest_cid, content)
 }
 
 /// Verify a manifest CID/hash against the local DHT pin cache when the gate is active.

@@ -29,6 +29,7 @@ use lib_blockchain::{
 };
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
+use lib_protocols::types::ZhtpRequest;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -563,6 +564,34 @@ pub fn build_governance_launch_config(
     }
 }
 
+/// Pin manifest JSON to the validator DHT + consensus `dht_pins` cache before `AssetLaunch`.
+async fn pin_manifest_for_launch(cli: &ZhtpCli, manifest_bytes: &[u8]) -> CliResult<()> {
+    let client = connect_default(&cli.server).await?;
+    let request = ZhtpRequest::post(
+        "/api/v1/web4/content/blob".to_string(),
+        manifest_bytes.to_vec(),
+        "application/json".to_string(),
+        Some(client.identity().id.clone()),
+    )
+    .map_err(|e| CliError::ConfigError(format!("Failed to build manifest pin request: {e}")))?;
+    let response = client
+        .request(request)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/web4/content/blob".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+    if !response.status.is_success() {
+        return Err(CliError::ApiCallFailed {
+            endpoint: "/api/v1/web4/content/blob".to_string(),
+            status: response.status.code(),
+            reason: response.status_message.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// Submit a signed `AssetLaunch` for the DAO Create New path (M1 / Phase 3).
 pub async fn handle_dao_asset_launch(
     cli: &ZhtpCli,
@@ -589,16 +618,20 @@ pub async fn handle_dao_asset_launch(
 
     let supply_mode = parse_supply_mode(&options.supply_mode)?;
 
-    let (manifest_cid, manifest_hash) = if let Some(path) = &options.manifest_file {
+    let (manifest_cid, manifest_hash, manifest_bytes) = if let Some(path) = &options.manifest_file {
         let bytes = read_manifest_file(Path::new(path))?;
-        output.warning(
-            "Custom manifest is committed by hash/CID only — pin or publish the file separately; \
-             AssetLaunch does not carry manifest bytes on chain",
-        )?;
-        manifest_cid_hash_from_bytes(&bytes, Some((name, symbol, decimals)))?
+        let (cid, hash) = manifest_cid_hash_from_bytes(&bytes, Some((name, symbol, decimals)))?;
+        (cid, hash, bytes)
     } else {
-        build_dao_launch_manifest(name, symbol, decimals)
+        let bytes = lib_blockchain::transaction::asset_tx::build_dao_launch_manifest_bytes(
+            name, symbol, decimals,
+        );
+        let (cid, hash) = build_dao_launch_manifest(name, symbol, decimals);
+        (cid, hash, bytes)
     };
+
+    pin_manifest_for_launch(cli, &manifest_bytes).await?;
+    output.info("Manifest pinned to validator for SA-7 pin gate")?;
 
     validate_rewards_launch_flags(
         &options.rewards_policy_file,
