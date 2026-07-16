@@ -243,6 +243,8 @@ pub enum TransactionType {
     AssetRewardsPolicyUpdate = 68,
     /// Queue a timelocked per-transfer burn rate change for a Sovereign Asset.
     AssetBurnBpsUpdate = 69,
+    /// Cancel a queued creator → governance authority transfer before timelock elapses.
+    AssetAuthorityTransferCancel = 70,
     /// BUBL reward claim — chain-enforced eligibility + treasury token transfer.
     ///
     /// Signed by the BUBL `TokenCreation` creator (or authorized delegate).
@@ -456,6 +458,9 @@ impl TransactionType {
             TransactionType::AssetBurnBpsUpdate => {
                 "Update Sovereign Asset per-transfer burn rate"
             }
+            TransactionType::AssetAuthorityTransferCancel => {
+                "Cancel queued Sovereign Asset authority transfer"
+            }
             TransactionType::RewardClaim => "BUBL reward claim (chain-enforced eligibility)",
         }
     }
@@ -532,6 +537,7 @@ impl TransactionType {
             TransactionType::AssetRewardsDelegateRotate => "asset_rewards_delegate_rotate",
             TransactionType::AssetRewardsPolicyUpdate => "asset_rewards_policy_update",
             TransactionType::AssetBurnBpsUpdate => "asset_burn_bps_update",
+            TransactionType::AssetAuthorityTransferCancel => "asset_authority_transfer_cancel",
             TransactionType::RewardClaim => "reward_claim",
         }
     }
@@ -608,6 +614,7 @@ impl TransactionType {
             "asset_rewards_delegate_rotate" => Some(TransactionType::AssetRewardsDelegateRotate),
             "asset_rewards_policy_update" => Some(TransactionType::AssetRewardsPolicyUpdate),
             "asset_burn_bps_update" => Some(TransactionType::AssetBurnBpsUpdate),
+            "asset_authority_transfer_cancel" => Some(TransactionType::AssetAuthorityTransferCancel),
             "reward_claim" => Some(TransactionType::RewardClaim),
             _ => None,
         }

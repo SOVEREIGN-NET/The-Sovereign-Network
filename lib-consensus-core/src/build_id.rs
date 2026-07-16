@@ -20,7 +20,7 @@
 /// - Consensus admission rules change in a way that requires homogeneous binaries
 ///
 /// Do **not** bump for docs-only, CLI-only, or unrelated crate changes.
-pub const CONSENSUS_BUILD_ID: &str = "3";
+pub const CONSENSUS_BUILD_ID: &str = "4";
 
 /// Marker assigned when decoding codec v1 frames (no epoch field on wire).
 pub const LEGACY_BUILD_ID: &str = "";

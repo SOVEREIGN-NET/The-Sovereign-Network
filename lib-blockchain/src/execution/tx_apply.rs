@@ -39,6 +39,11 @@ impl<'a> StateMutator<'a> {
         Self { store }
     }
 
+    /// Underlying block store (read-only during apply).
+    pub fn store(&self) -> &dyn BlockchainStore {
+        self.store
+    }
+
     // =========================================================================
     // UTXO Primitives
     // =========================================================================

@@ -114,6 +114,9 @@ pub enum ApprovalProof {
         threshold: u8,
         /// Hash of the message being signed
         message_hash: [u8; 32],
+        /// Raw Dilithium signatures (required for sovereign-asset governance at economic-rules height).
+        #[serde(default)]
+        raw_signatures: Vec<Vec<u8>>,
     },
     /// Delegated verifier approval
     Delegated {
@@ -351,6 +354,7 @@ mod tests {
             signers: vec![],
             threshold: 2,
             message_hash: [0u8; 32],
+            raw_signatures: vec![],
         };
         assert_eq!(multisig_proof.proof_type(), "multisig");
 
