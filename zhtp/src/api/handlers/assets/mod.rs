@@ -544,6 +544,51 @@ impl AssetsHandler {
         }))
     }
 
+    /// GET /api/v1/assets/symbol/available/{symbol} — case-insensitive symbol uniqueness check.
+    async fn handle_symbol_available(&self, symbol: &str) -> Result<ZhtpResponse> {
+        let bc = self.blockchain.read().await;
+        let symbol_upper = symbol.to_ascii_uppercase();
+
+        if let Some(asset) = bc
+            .iter_sovereign_assets()
+            .iter()
+            .find(|a| a.symbol.eq_ignore_ascii_case(symbol))
+        {
+            return create_json_response(json!({
+                "symbol": symbol,
+                "available": false,
+                "reason": format!("Symbol already used by asset '{}'", asset.name),
+                "existing_asset": {
+                    "asset_id": hex::encode(asset.asset_id),
+                    "name": asset.name,
+                    "symbol": asset.symbol,
+                }
+            }));
+        }
+
+        if let Some(token) = bc
+            .iter_token_contract_metadata()
+            .into_iter()
+            .find(|t| t.symbol.to_ascii_uppercase() == symbol_upper)
+        {
+            return create_json_response(json!({
+                "symbol": symbol,
+                "available": false,
+                "reason": format!("Symbol already used by legacy token '{}'", token.name),
+                "existing_token": {
+                    "token_id": hex::encode(token.token_id),
+                    "name": token.name,
+                    "symbol": token.symbol,
+                }
+            }));
+        }
+
+        create_json_response(json!({
+            "symbol": symbol,
+            "available": true
+        }))
+    }
+
     fn parse_path_segments(uri: &str) -> Vec<&str> {
         uri.trim_start_matches("/api/v1/assets/")
             .trim_end_matches('/')
@@ -599,6 +644,9 @@ impl ZhtpRequestHandler for AssetsHandler {
             (ZhtpMethod::Get, uri) if uri.starts_with("/api/v1/assets/") => {
                 let segments = Self::parse_path_segments(uri);
                 match segments.as_slice() {
+                    ["symbol", "available", symbol] if !symbol.is_empty() => {
+                        self.handle_symbol_available(symbol).await
+                    }
                     [id] => self.handle_get(id).await,
                     [id, "interface"] => self.handle_interface(id).await,
                     [id, "balances", address] => self.handle_balance(id, address).await,
