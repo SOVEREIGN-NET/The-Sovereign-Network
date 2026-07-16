@@ -735,7 +735,6 @@ fn verify_authority_proof(
                             verifier,
                             gov_proof,
                             &message_hash,
-                            block_height,
                         )?;
                     }
                     Ok(())
@@ -745,7 +744,6 @@ fn verify_authority_proof(
                     verifier,
                     gov_proof,
                     &message_hash,
-                    block_height,
                 ),
             }
         }

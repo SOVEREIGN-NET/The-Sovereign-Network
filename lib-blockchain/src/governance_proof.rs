@@ -6,9 +6,7 @@
 
 use crate::contracts::approval_verifier::ApprovalProof;
 use crate::contracts::approval_verifier::traits::Signature64;
-use crate::contracts::sovereign_asset::{
-    economic_rules_active, GovernanceVerifierState,
-};
+use crate::contracts::sovereign_asset::GovernanceVerifierState;
 use crate::execution::tx_apply::StateMutator;
 use crate::execution::TxApplyError;
 use crate::integration::crypto_integration::PublicKey;
@@ -84,12 +82,14 @@ fn verify_dilithium_over_hash(
 }
 
 /// Verify a multisig governance proof against the configured verifier.
+///
+/// Signature verification is **not** gated on [`economic_rules_active`]: governance
+/// authentication is replay-safe at every height, unlike economic-policy constraints.
 pub fn verify_governance_multisig_proof(
     mutator: &StateMutator<'_>,
     verifier: &GovernanceVerifierState,
     proof: &ApprovalProof,
     expected_message_hash: &[u8; 32],
-    block_height: u64,
 ) -> Result<(), TxApplyError> {
     let ApprovalProof::Multisig {
         signatures,
@@ -154,33 +154,30 @@ pub fn verify_governance_multisig_proof(
         }
     }
 
-    if economic_rules_active(block_height) {
-        if raw_signatures.len() != signers.len() {
+    if raw_signatures.len() != signers.len() {
+        return Err(TxApplyError::InvalidType(
+            "governance multisig requires raw_signatures".into(),
+        ));
+    }
+    for (idx, (signer, raw_sig)) in signers.iter().zip(raw_signatures.iter()).enumerate() {
+        let wire_sig = signatures
+            .get(idx)
+            .ok_or_else(|| TxApplyError::InvalidType("missing wire signature".into()))?;
+        if signature64_from_dilithium(raw_sig) != *wire_sig {
             return Err(TxApplyError::InvalidType(
-                "governance multisig requires raw_signatures when economic rules are active"
-                    .into(),
+                "governance wire signature does not match raw Dilithium signature".into(),
             ));
         }
-        for (idx, (signer, raw_sig)) in signers.iter().zip(raw_signatures.iter()).enumerate() {
-            let wire_sig = signatures
-                .get(idx)
-                .ok_or_else(|| TxApplyError::InvalidType("missing wire signature".into()))?;
-            if signature64_from_dilithium(raw_sig) != *wire_sig {
-                return Err(TxApplyError::InvalidType(
-                    "governance wire signature does not match raw Dilithium signature".into(),
-                ));
-            }
-            let pk = resolve_public_key_by_key_id(mutator.store(), signer).ok_or_else(|| {
-                TxApplyError::InvalidType(format!(
-                    "governance signer {} has no registered identity",
-                    hex::encode(&signer[..8])
-                ))
-            })?;
-            if !verify_dilithium_over_hash(expected_message_hash, raw_sig, &pk) {
-                return Err(TxApplyError::InvalidType(
-                    "governance multisig signature verification failed".into(),
-                ));
-            }
+        let pk = resolve_public_key_by_key_id(mutator.store(), signer).ok_or_else(|| {
+            TxApplyError::InvalidType(format!(
+                "governance signer {} has no registered identity",
+                hex::encode(&signer[..8])
+            ))
+        })?;
+        if !verify_dilithium_over_hash(expected_message_hash, raw_sig, &pk) {
+            return Err(TxApplyError::InvalidType(
+                "governance multisig signature verification failed".into(),
+            ));
         }
     }
 
@@ -195,8 +192,7 @@ mod tests {
     use lib_crypto::KeyPair;
     use std::sync::Arc;
 
-    fn store_with_signer(kp: &KeyPair) -> Arc<dyn BlockchainStore> {
-        let store = Arc::new(SledStore::open_temporary().unwrap()) as Arc<dyn BlockchainStore>;
+    fn seed_signer(store: &dyn BlockchainStore, kp: &KeyPair) {
         let did = format!("did:zhtp:{}", hex::encode(kp.public_key.key_id));
         let legacy = IdentityTransactionData {
             did,
@@ -213,18 +209,39 @@ mod tests {
             kyber_public_key: kp.public_key.kyber_pk.to_vec(),
         };
         let (consensus, metadata) = convert_legacy_identity(&legacy);
-        store.begin_block(0).unwrap();
-        StateMutator::new(store.as_ref())
+        StateMutator::new(store)
             .register_identity(&consensus.did_hash, &consensus, &metadata)
             .expect("seed identity");
+    }
+
+    fn store_with_signers(kps: &[KeyPair]) -> Arc<dyn BlockchainStore> {
+        let store = Arc::new(SledStore::open_temporary().unwrap()) as Arc<dyn BlockchainStore>;
+        store.begin_block(0).unwrap();
+        for kp in kps {
+            seed_signer(store.as_ref(), kp);
+        }
         store.commit_block().unwrap();
         store
+    }
+
+    /// Production activation height — tests must exercise heights below this even though
+    /// `#[cfg(test)]` sets `GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT` to 0.
+    const PROD_GOVERNANCE_ACTIVATION_HEIGHT: u64 = 80_000;
+
+    fn verify_multisig_proof_on_store(
+        store: &Arc<dyn BlockchainStore>,
+        verifier: &GovernanceVerifierState,
+        proof: &ApprovalProof,
+        msg: &[u8; 32],
+    ) -> Result<(), TxApplyError> {
+        let mutator = StateMutator::new(store.as_ref());
+        verify_governance_multisig_proof(&mutator, verifier, proof, msg)
     }
 
     #[test]
     fn multisig_proof_verifies_with_raw_signatures() {
         let kp1 = KeyPair::generate().unwrap();
-        let store = store_with_signer(&kp1);
+        let store = store_with_signers(std::slice::from_ref(&kp1));
 
         let asset_id = [0xAB; 32];
         let policy_hash = [0xCD; 32];
@@ -246,9 +263,48 @@ mod tests {
             signer_key_id: kp1.public_key.key_id,
         };
 
-        store.begin_block(1).unwrap();
-        let mutator = StateMutator::new(store.as_ref());
-        verify_governance_multisig_proof(&mutator, &verifier, &proof, &msg, 1).unwrap();
-        store.commit_block().unwrap();
+        verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap();
+        // Height is not consulted for crypto; re-run to model pre-activation prod (~39k).
+        let _pre_activation = PROD_GOVERNANCE_ACTIVATION_HEIGHT - 1;
+        verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap();
+    }
+
+    #[test]
+    fn multisig_proof_rejects_garbage_signatures_below_prod_activation_height() {
+        let kp1 = KeyPair::generate().unwrap();
+        let kp2 = KeyPair::generate().unwrap();
+        let key_id1 = kp1.public_key.key_id;
+        let key_id2 = kp2.public_key.key_id;
+
+        let asset_id = [0xAB; 32];
+        let policy_hash = [0xCD; 32];
+        let msg = governance_action_message_hash(
+            &asset_id,
+            PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
+            &policy_hash,
+        );
+        let raw1 = kp1.sign(&msg).unwrap().signature;
+        let garbage = vec![0u8; 4595];
+        let proof = ApprovalProof::Multisig {
+            signatures: vec![
+                signature64_from_dilithium(&raw1),
+                signature64_from_dilithium(&garbage),
+            ],
+            signers: vec![key_id1, key_id2],
+            threshold: 2,
+            message_hash: msg,
+            raw_signatures: vec![raw1, garbage],
+        };
+        let verifier = GovernanceVerifierState::Multisig {
+            signers: vec![key_id1, key_id2],
+            threshold: 2,
+        };
+
+        let store = store_with_signers(&[kp1, kp2]);
+
+        let _pre_activation = PROD_GOVERNANCE_ACTIVATION_HEIGHT - 1;
+        let err =
+            verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap_err();
+        assert!(matches!(err, TxApplyError::InvalidType(msg) if msg.contains("signature verification failed")));
     }
 }
