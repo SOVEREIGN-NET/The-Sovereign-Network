@@ -58,9 +58,9 @@ Populate with:
 The creator identity becomes:
 
 - `TokenCreation` / `AssetLaunch` signer
-- Interim rewards spender (`ZHTP_REWARDS_TREASURY_KEYSTORE`)
+- Launch signer only (creator key stays cold after handoff)
 
-**Future (N3):** rewards spend moves to a dedicated hot delegate keystore; creator key leaves validators.
+Rewards spending uses a dedicated hot delegate bound via `node configure-rewards` (SA-4).
 
 ---
 
@@ -113,9 +113,48 @@ Record outputs:
 
 ---
 
-## Step 4 — Enable rewards on validators
+## Step 4 — Enable rewards on validators (SA-4)
 
-On **each** validator (`zhtp-g1`, `g2`, `g3`), bind the on-chain spend delegate:
+SA-4 splits **activation** (no private key on disk; enables read endpoints) from
+**delegate keystore** (hot wallet; required only for claim POSTs). This is strictly
+better key exposure than the pre-SA-4 posture (creator/treasury key on one box via env
+var): the spendable delegate key stays on **one** validator; the other validators serve
+mobile read traffic without holding signing material.
+
+### Keystore posture (do not put the hot wallet on every box)
+
+| Validator | `rewards_activation.toml` | Hot delegate keystore (`bubl-rewards-hot`) |
+|-----------|---------------------------|---------------------------------------------|
+| g1 | yes | **yes** — only node that signs `RewardClaim` txs |
+| g2 | yes (copy from g1) | **no** — reads only; claim POSTs return 503 |
+| g3 | yes (copy from g1) | **no** — reads only; claim POSTs return 503 |
+
+The activation file records `asset_id` and a `delegate_keystore_dir` path. Read
+endpoints (`/status`, `/balance`, `/history`) need only `asset_id` in the file.
+Claim endpoints additionally require the keystore directory to exist locally, the
+signer `key_id` to match on-chain `spend_delegate_key_id`, and delegate balance &gt; 0.
+
+### Rollout order (load-bearing — do not invert)
+
+Without `rewards_activation.toml`, **every** `/api/v1/rewards/*` route — including
+reads the mobile app calls — returns **503**. The safe sequence:
+
+1. **Activation first (while the current binary is still running)** — on **all**
+   validators, materialise `rewards_activation.toml` *before* deploying the SA-4
+   binary that drops `ZHTP_REWARDS_TREASURY_KEYSTORE`:
+   - **g1:** run `configure-rewards` (writes toml + validates keystore against chain)
+   - **g2 / g3:** copy g1's `rewards_activation.toml` into each node's data dir (do
+     **not** copy the hot keystore)
+2. **Verify reads on all three** — `curl …/api/v1/rewards/status/<did>` must not be 503
+   on g1, g2, and g3.
+3. **Deploy SA-4 binary second** — env-var fallback is gone; nodes missing the toml
+   lose all rewards routes immediately on restart.
+
+> **Pre-merge check:** confirm whether g1/g2/g3 systemd units still set
+> `ZHTP_REWARDS_TREASURY_KEYSTORE`. If yes, step 1 can lag until the env path is
+> retired; if no, step 1 is mandatory before any SA-4 deploy.
+
+### g1 — write activation + attach keystore
 
 ```bash
 ./target/dev-release/zhtp-cli node configure-rewards \
@@ -124,25 +163,29 @@ On **each** validator (`zhtp-g1`, `g2`, `g3`), bind the on-chain spend delegate:
 export ZHTP_CHAIN_ID=2
 ```
 
-Writes `rewards_activation.toml` under the node data dir. Validators scan
-`asset_rewards/` (pure `AssetLaunch`) plus legacy `token_contracts` rows.
-
-**Deprecated fallback** (historical `TokenCreation` BUBL only):
+### g2 / g3 — activation file only
 
 ```bash
-export ZHTP_REWARDS_TREASURY_KEYSTORE=/opt/zhtp/keystores/bubl-creator
+# After g1 step succeeds, copy the toml (not the keystore):
+scp g1:/var/lib/zhtp/rewards_activation.toml /var/lib/zhtp/rewards_activation.toml
+systemctl restart zhtp   # or your deploy script
 ```
 
-Handler activates when the configured keystore matches the on-chain spend delegate
-and delegate balance is positive.
+Env-var overrides (`ZHTP_REWARDS_TREASURY_KEYSTORE`, `ZHTP_REWARDS_TOKEN_ID`) are
+removed in SA-4 — `rewards_activation.toml` is required.
 
-Verify:
+### Verify
 
 ```bash
+# Reads — must succeed on g1, g2, g3 once toml is present
 curl -s "https://<validator>:9334/api/v1/rewards/status/<did>"
+
+# Claims — only g1 (or whichever node holds the hot keystore)
+curl -s -X POST "https://g1:9334/api/v1/rewards/claim" …
 ```
 
-503 means keystore unset, wrong signer, or zero balance.
+503 on reads → missing or invalid `rewards_activation.toml`. 503 on claims on a
+read-only replica → expected (no local keystore).
 
 ---
 

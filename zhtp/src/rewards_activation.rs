@@ -1,9 +1,10 @@
-//! Chain-native rewards handler activation (DAO N3, #2813).
+//! Chain-native rewards handler activation (DAO N3 / SA-4, #2813).
 //!
-//! Operators bind a spend-delegate keystore to an on-chain asset via
-//! `rewards_activation.toml` under the node data dir (written by
-//! `zhtp-cli node configure-rewards`). Legacy `ZHTP_REWARDS_TREASURY_KEYSTORE`
-//! remains as a deprecated fallback for interim BUBL `TokenCreation` nodes.
+//! Operators record the rewards `asset_id` in `rewards_activation.toml` under the
+//! node data dir (`zhtp-cli node configure-rewards` on the signing node; copy the
+//! toml to read replicas without copying the hot keystore). The file enables read
+//! endpoints cluster-wide; only the node with a loadable delegate keystore signs
+//! claims. Env-var ticker/keystore hacks are removed in SA-4.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -33,7 +34,6 @@ pub struct ResolvedActivation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationSource {
     ConfigFile,
-    LegacyEnv,
 }
 
 pub fn activation_config_path() -> PathBuf {
@@ -68,6 +68,12 @@ pub fn read_activation_file() -> Option<RewardsActivationFile> {
             None
         }
     }
+}
+
+/// Asset id from `rewards_activation.toml` when present (no keystore validation).
+pub fn configured_asset_id_from_file() -> Option<[u8; 32]> {
+    let file = read_activation_file()?;
+    parse_asset_id_hex(&file.asset_id).ok()
 }
 
 pub fn resolve_activation() -> Option<ResolvedActivation> {
@@ -204,5 +210,17 @@ mod tests {
         let id = [0xab_u8; 32];
         let hex = hex::encode(id);
         assert_eq!(parse_asset_id_hex(&hex).unwrap(), id);
+    }
+
+    #[test]
+    fn activation_file_roundtrip_toml() {
+        let asset_id = [0x42_u8; 32];
+        let file = RewardsActivationFile {
+            asset_id: hex::encode(asset_id),
+            delegate_keystore_dir: "/tmp/delegate".to_string(),
+        };
+        let raw = toml::to_string(&file).expect("serialize");
+        let parsed: RewardsActivationFile = toml::from_str(&raw).expect("parse");
+        assert_eq!(parse_asset_id_hex(&parsed.asset_id).unwrap(), asset_id);
     }
 }

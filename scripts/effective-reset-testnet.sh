@@ -23,8 +23,8 @@
 #   cargo run -p tools --bin seed_founding_dao -- \
 #     --keystore-dir /opt/zhtp/keystores/bubl-creator \
 #     --token bubl --supply-atoms 1000000000000000000000000000 --chain-id 2
-# Broadcast signed_tx, then set ZHTP_REWARDS_TREASURY_KEYSTORE to bubl-creator.
-# ZHTP_REWARDS_TOKEN_ID is optional (defaults to deterministic BUBL token_id).
+# Broadcast signed_tx, then on each validator:
+#   zhtp-cli node configure-rewards --asset-id <launch_tx_hash> --delegate-keystore <hot-wallet-dir>
 
 set -euo pipefail
 
