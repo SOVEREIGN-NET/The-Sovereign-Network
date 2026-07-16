@@ -1214,6 +1214,26 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         Ok(())
     }
 
+    /// Local DHT pin cache: `manifest_cid` → manifest bytes (SA-7).
+    ///
+    /// Non-consensus auxiliary data populated by the node DHT layer; used during
+    /// `AssetLaunch` / `AssetManifestUpdate` apply when the pin gate is active.
+    fn get_dht_pin_content(&self, manifest_cid: &[u8; 32]) -> StorageResult<Option<Vec<u8>>> {
+        let _ = manifest_cid;
+        Ok(None)
+    }
+
+    fn put_dht_pin_content_direct(
+        &self,
+        manifest_cid: &[u8; 32],
+        content: &[u8],
+    ) -> StorageResult<()> {
+        let _ = (manifest_cid, content);
+        Err(StorageError::Database(
+            "put_dht_pin_content_direct not supported by this backend".to_string(),
+        ))
+    }
+
     fn get_governance_module_state(
         &self,
         asset_id: &[u8; 32],

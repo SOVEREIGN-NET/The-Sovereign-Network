@@ -78,6 +78,7 @@ const TREE_ASSET_REWARDS: &str = "asset_rewards";
 const TREE_ASSET_GOVERNANCE: &str = "asset_governance";
 const TREE_ASSET_EVENTS: &str = "asset_events";
 const TREE_REWARDS_POLICY_DOCS: &str = "rewards_policy_docs";
+const TREE_DHT_PINS: &str = "dht_pins";
 
 /// The single key under which an in-progress block commit's post-image is
 /// staged in the `wal` tree. Only one block commits at a time, so one key
@@ -149,6 +150,7 @@ pub struct SledStore {
     asset_governance: Tree,
     asset_events: Tree,
     rewards_policy_docs: Tree,
+    dht_pins: Tree,
 
     // Transaction state
     tx_active: AtomicBool,
@@ -491,6 +493,9 @@ impl SledStore {
         let rewards_policy_docs = db
             .open_tree(TREE_REWARDS_POLICY_DOCS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let dht_pins = db
+            .open_tree(TREE_DHT_PINS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         let store = Self {
             db,
@@ -547,6 +552,7 @@ impl SledStore {
             asset_governance,
             asset_events,
             rewards_policy_docs,
+            dht_pins,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
             tx_utxo_merkle_next_index: AtomicU64::new(0),
@@ -998,6 +1004,7 @@ impl SledStore {
             TREE_ASSET_GOVERNANCE => &self.asset_governance,
             TREE_ASSET_EVENTS => &self.asset_events,
             TREE_REWARDS_POLICY_DOCS => &self.rewards_policy_docs,
+            TREE_DHT_PINS => &self.dht_pins,
             _ => return None,
         })
     }
@@ -1920,6 +1927,28 @@ impl BlockchainStore for SledStore {
                 .tree(TREE_REWARDS_POLICY_DOCS)
                 .insert(policy_hash.as_ref(), document);
         }
+        Ok(())
+    }
+
+    fn get_dht_pin_content(&self, manifest_cid: &[u8; 32]) -> StorageResult<Option<Vec<u8>>> {
+        match self.dht_pins.get(manifest_cid.as_ref()) {
+            Ok(Some(bytes)) => Ok(Some(bytes.to_vec())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_dht_pin_content_direct(
+        &self,
+        manifest_cid: &[u8; 32],
+        content: &[u8],
+    ) -> StorageResult<()> {
+        self.dht_pins
+            .insert(manifest_cid.as_ref(), content)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.dht_pins
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
 
