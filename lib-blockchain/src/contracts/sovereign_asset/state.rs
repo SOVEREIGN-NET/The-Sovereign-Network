@@ -175,6 +175,9 @@ pub fn token_creation_allowed_in_block_at_height_with_sunset(
 
 /// Epic Q1–Q3 / Q8 economic rules (mint class, treasury spend auth, reward liquidity, burn).
 /// Inactive below [`GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT`] so replay matches pre-rules history.
+///
+/// **Not** used for governance multisig signature verification — auth is replay-safe at every
+/// height and is always enforced in [`crate::governance_proof::verify_governance_multisig_proof`].
 #[inline]
 pub fn economic_rules_active(block_height: u64) -> bool {
     block_height >= GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT
