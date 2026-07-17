@@ -260,6 +260,8 @@ mod tests {
         };
 
         verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap();
+        // Height is not consulted for crypto; re-run for determinism.
+        verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap();
     }
 
     /// Garbage co-signatures are rejected at every height (auth is not height-gated).

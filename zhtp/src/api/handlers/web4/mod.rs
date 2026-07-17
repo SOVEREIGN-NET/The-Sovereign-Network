@@ -502,6 +502,12 @@ impl Web4Handler {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
 
+        crate::runtime::manifest_pin_bridge::mirror_hex_cid_content_to_consensus_pin_store(
+            &content_id,
+            &request.body,
+        )
+        .await;
+
         let response = serde_json::json!({
             "content_id": content_id,
             "size": request.body.len(),
@@ -567,6 +573,12 @@ impl Web4Handler {
             .store_content_by_cid(request.body.clone())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
+
+        crate::runtime::manifest_pin_bridge::mirror_hex_cid_content_to_consensus_pin_store(
+            &manifest_cid,
+            &request.body,
+        )
+        .await;
 
         let response = serde_json::json!({
             "manifest_cid": manifest_cid,

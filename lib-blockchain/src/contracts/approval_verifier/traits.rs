@@ -114,8 +114,7 @@ pub enum ApprovalProof {
         threshold: u8,
         /// Hash of the message being signed
         message_hash: [u8; 32],
-        /// Raw Dilithium signatures required for sovereign-asset governance multisig
-        /// verification at every height (not gated on economic-rules activation).
+        /// Raw Dilithium signatures (required for sovereign-asset governance at every height).
         #[serde(default)]
         raw_signatures: Vec<Vec<u8>>,
     },

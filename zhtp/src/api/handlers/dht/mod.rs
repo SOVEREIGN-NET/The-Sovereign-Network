@@ -728,6 +728,7 @@ impl DhtHandler {
             }
         };
 
+        let content = store_request.content.clone();
         let mut dht = client.write().await;
         match dht
             .store_content(
@@ -739,6 +740,11 @@ impl DhtHandler {
             .await
         {
             Ok(content_hash) => {
+                crate::runtime::manifest_pin_bridge::mirror_hex_cid_content_to_consensus_pin_store(
+                    &content_hash,
+                    &content,
+                )
+                .await;
                 let response = DhtStoreResponse {
                     content_hash: content_hash.clone(),
                     success: true,
