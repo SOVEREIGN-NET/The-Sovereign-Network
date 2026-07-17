@@ -175,12 +175,16 @@ impl MessagingHandler {
         }
 
         // Deposit when no live subscriber (MSG-R2 will deposit before push too).
+        // Local store-full is not fatal: still mesh-relay so peers can deposit.
         if let Err(e) = self.deposits.deposit_one(
             &envelope.sender_did,
             &recipient_did,
             envelope_bytes.clone(),
         ) {
-            return Ok(error_resp(ZhtpStatus::BadRequest, &e));
+            warn!(
+                error = %e,
+                "msg/send: local deposit failed — continuing mesh relay"
+            );
         }
 
         // Also relay via mesh so all nodes have the message
@@ -250,8 +254,35 @@ impl MessagingHandler {
         }
     }
 
+    /// Resolve authenticated requester → canonical DID (same paths as receive).
+    async fn resolve_caller_did(&self, request: &ZhtpRequest) -> Result<String, String> {
+        let requester_key_id = request
+            .requester
+            .as_ref()
+            .map(|id| hex::encode(&id.0))
+            .unwrap_or_default();
+        if requester_key_id.is_empty() {
+            return Err("Authenticated DID required".to_string());
+        }
+        let key_id_did = format!("did:zhtp:{}", requester_key_id);
+        let bound = match (
+            crate::session_manager::session_manager_handle(),
+            request.requester.as_ref(),
+        ) {
+            (Some(mgr), Some(req_id)) => mgr.canonical_did_for_quic_key(&req_id.0).await,
+            _ => None,
+        };
+        if let Some(did) = bound {
+            return Ok(did);
+        }
+        let blockchain = self.blockchain.read().await;
+        Ok(blockchain
+            .did_by_device_key_id(&requester_key_id)
+            .unwrap_or(key_id_did))
+    }
+
     /// POST /api/v1/msg/ack
-    /// Client confirms receipt; removes envelopes from the deposit store (MSG-R1).
+    /// Client confirms receipt; removes only envelopes addressed to the caller.
     async fn handle_ack(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: AckRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -260,14 +291,12 @@ impl MessagingHandler {
             return Ok(error_resp(ZhtpStatus::BadRequest, "message_ids required"));
         }
 
-        if request.requester.is_none() {
-            return Ok(error_resp(
-                ZhtpStatus::Unauthorized,
-                "Authenticated DID required",
-            ));
-        }
+        let recipient_did = match self.resolve_caller_did(request).await {
+            Ok(d) => d,
+            Err(e) => return Ok(error_resp(ZhtpStatus::Unauthorized, &e)),
+        };
 
-        let removed = self.deposits.ack(&req.message_ids);
+        let removed = self.deposits.ack(&recipient_did, &req.message_ids);
         json_response(json!({
             "status": "success",
             "acked": removed,
@@ -275,74 +304,18 @@ impl MessagingHandler {
     }
 
     /// GET /api/v1/msg/receive
-    /// Peek pending messages (does not remove — client must POST /msg/ack).
+    /// Peek pending messages (does not remove — client must POST /api/v1/msg/ack).
     async fn handle_receive(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        // Extract recipient DID from authenticated session.
-        // The requester identity hash may differ from the DID (key_id = blake3(dil||kyber)
-        // vs DID = blake3(dil) only). Look up the canonical DID from the identity registry.
+        let recipient_did = match self.resolve_caller_did(request).await {
+            Ok(d) => d,
+            Err(e) => return Ok(error_resp(ZhtpStatus::Unauthorized, &e)),
+        };
+
         let requester_key_id = request
             .requester
             .as_ref()
             .map(|id| hex::encode(&id.0))
             .unwrap_or_default();
-
-        if requester_key_id.is_empty() {
-            return Ok(error_resp(
-                ZhtpStatus::Unauthorized,
-                "Authenticated DID required",
-            ));
-        }
-
-        // Resolve the polling device's QUIC identity to the canonical chain
-        // DID the deposit was keyed under. Three paths, first hit wins:
-        //
-        // (1) **Session-bound device map.** OPAQUE login records
-        //     (quic_key_id → canonical_did) in SessionManager via
-        //     `bind_device_to_canonical_did`. Handles mobiles that generate
-        //     an ephemeral QUIC keypair per session (the dominant case):
-        //     mobile logs in with password → server binds this connection's
-        //     QUIC key under the user's canonical DID → /msg/receive on the
-        //     same connection (or any future connection whose key has been
-        //     bound) resolves correctly.
-        //
-        // (2) **Direct DID match.** A registry entry keyed by
-        //     `did:zhtp:<requester_key_id>` (rare — happens when the QUIC
-        //     key coincides with the canonical DID derivation).
-        //
-        // (3) **Public-key hash match.** Legacy / non-OPAQUE flow: scan all
-        //     identity_registry entries, hash `dilithium_pk` and
-        //     `dilithium_pk||kyber_pk`, see if either matches the requester
-        //     key_id. Genesis identities and identities registered before
-        //     OPAQUE existed land here.
-        //
-        // Fallback: derive a stub DID from the key_id itself. Deposit store
-        // returns empty for unknown DIDs — better than 500-ing.
-        let key_id_did = format!("did:zhtp:{}", requester_key_id);
-        let recipient_did = {
-            // (1) Session-bound device map.
-            let bound = match (
-                crate::session_manager::session_manager_handle(),
-                request.requester.as_ref(),
-            ) {
-                (Some(mgr), Some(req_id)) => {
-                    mgr.canonical_did_for_quic_key(&req_id.0).await
-                }
-                _ => None,
-            };
-            if let Some(did) = bound {
-                did
-            } else {
-                let blockchain = self.blockchain.read().await;
-                // #58: sled-first direct-match + Dilithium / Dilithium+Kyber hash
-                // resolution. Reads durable `identity_metadata` so a store-backed
-                // node resolves the requester after a restart (the in-memory
-                // `identity_registry` is empty then). Falls back to the raw
-                // key-id DID when no identity matches, as before.
-                blockchain
-                    .did_by_device_key_id(&requester_key_id)
-                    .unwrap_or(key_id_did)
-            }
-        };
 
         info!(
             "msg/receive lookup: requester_key_id={} -> recipient_did={}",

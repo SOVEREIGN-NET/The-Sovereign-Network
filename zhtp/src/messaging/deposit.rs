@@ -1,4 +1,4 @@
-//! Deposit store — durable (in-process) store-and-forward for undelivered messages.
+//! Deposit store — process-local (in-memory) store-and-forward for undelivered messages.
 //!
 //! ## Delivery model (MSG-R1 / MSG-R5)
 //!
@@ -6,8 +6,9 @@
 //! streaming **peek** only; they never delete. That way a disconnect mid-response
 //! cannot lose mail.
 //!
-//! Each envelope gets a stable `message_id` = hex(blake3(envelope_bytes)).
-//! Duplicate deposits of the same bytes are ignored (idempotent).
+//! Storage is **not** durable across process restart (Phase 3 / sled persistence).
+//! Within a running process: stable `message_id` = hex(blake3(envelope_bytes));
+//! duplicate deposits of the same bytes are ignored (idempotent).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -186,8 +187,12 @@ impl DepositStore {
         out
     }
 
-    /// Remove specific messages by id (client ACK). Returns count removed.
-    pub fn ack(&self, message_ids: &[String]) -> usize {
+    /// Remove specific messages by id **only if** they are addressed to
+    /// `recipient_did` (client ACK). Returns count removed.
+    ///
+    /// Ids that are unknown or belong to another recipient are ignored (not
+    /// removed). Callers must pass the authenticated caller's canonical DID.
+    pub fn ack(&self, recipient_did: &str, message_ids: &[String]) -> usize {
         if message_ids.is_empty() {
             return 0;
         }
@@ -196,9 +201,19 @@ impl DepositStore {
         let mut removed = 0;
 
         for mid in message_ids {
-            let Some((sender, recipient)) = by_id.remove(mid) else {
+            let Some((sender, recipient)) = by_id.get(mid).cloned() else {
                 continue;
             };
+            if recipient != recipient_did {
+                debug!(
+                    message_id = %mid,
+                    caller = %recipient_did,
+                    owner = %recipient,
+                    "ack ignored: message not addressed to caller"
+                );
+                continue;
+            }
+            by_id.remove(mid);
             if let Some(queue) = store.get_mut(&(sender.clone(), recipient.clone())) {
                 let before = queue.len();
                 queue.retain(|d| d.message_id != *mid);
@@ -210,7 +225,11 @@ impl DepositStore {
         }
 
         if removed > 0 {
-            info!(count = removed, "acked and removed deposits");
+            info!(
+                count = removed,
+                recipient = %recipient_did,
+                "acked and removed deposits"
+            );
         }
         removed
     }
@@ -319,9 +338,22 @@ mod tests {
         let (id, _) = store
             .deposit_one("did:sov:alice", "did:sov:bob", vec![9, 9, 9])
             .unwrap();
-        assert_eq!(store.ack(&[id]), 1);
+        assert_eq!(store.ack("did:sov:bob", &[id]), 1);
         assert_eq!(store.total_pending(), 0);
         assert!(store.peek_for_recipient("did:sov:bob").is_empty());
+    }
+
+    #[test]
+    fn ack_ignores_wrong_recipient() {
+        let store = DepositStore::new();
+        let (id, _) = store
+            .deposit_one("did:sov:alice", "did:sov:bob", vec![1, 2, 3])
+            .unwrap();
+        // Eve must not be able to ack Bob's mail
+        assert_eq!(store.ack("did:sov:eve", &[id.clone()]), 0);
+        assert_eq!(store.total_pending(), 1);
+        assert_eq!(store.ack("did:sov:bob", &[id]), 1);
+        assert_eq!(store.total_pending(), 0);
     }
 
     #[test]
