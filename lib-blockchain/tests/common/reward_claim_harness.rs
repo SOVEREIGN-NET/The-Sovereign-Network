@@ -207,12 +207,24 @@ pub fn seed_executor_store(
 
 /// Signed welcome `RewardClaim` for `actors.beneficiary` at `nonce`.
 pub fn welcome_claim_tx(actors: &RewardClaimActors, nonce: u64) -> Transaction {
+    welcome_claim_tx_from(actors, nonce, &actors.treasury)
+}
+
+/// Welcome claim signed by `signer` with `data.from == signer.key_id`.
+///
+/// Use a non-treasury signer to assert mempool rejects unauthorized claims
+/// (must not reach apply / halt).
+pub fn welcome_claim_tx_from(
+    actors: &RewardClaimActors,
+    nonce: u64,
+    signer: &KeyPair,
+) -> Transaction {
     let data = RewardClaimData {
         event: RewardEventKind::Welcome,
         owner_did: actors.owner_did.clone(),
         recipient_key_id: actors.beneficiary.public_key.key_id,
         token_id: actors.token_id,
-        from: actors.treasury.public_key.key_id,
+        from: signer.public_key.key_id,
         amount: expected_amount_for_event(RewardEventKind::Welcome, 1),
         nonce,
         peer_did: None,
@@ -223,12 +235,12 @@ pub fn welcome_claim_tx(actors: &RewardClaimActors, nonce: u64) -> Transaction {
         data,
         lib_crypto::Signature {
             signature: Vec::new(),
-            public_key: actors.treasury.public_key.clone(),
+            public_key: signer.public_key.clone(),
             algorithm: SignatureAlgorithm::DEFAULT,
             timestamp: 0,
         },
         REWARD_CLAIM_MEMO.to_vec(),
     );
-    sign_transaction(&mut tx, &actors.treasury.private_key).expect("sign reward claim");
+    sign_transaction(&mut tx, &signer.private_key).expect("sign reward claim");
     tx
 }

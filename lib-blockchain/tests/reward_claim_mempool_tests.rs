@@ -16,7 +16,7 @@ use common::block_builders;
 use common::reward_claim_harness::{
     mempool_blockchain, mempool_blockchain_shadow_phantom_beneficiary,
     mempool_blockchain_unregistered_beneficiary, mempool_blockchain_unregistered_treasury,
-    seed_executor_store, welcome_claim_tx, RewardClaimActors,
+    seed_executor_store, welcome_claim_tx, welcome_claim_tx_from, RewardClaimActors,
 };
 
 #[test]
@@ -42,6 +42,28 @@ fn unregistered_treasury_signer_accepted_into_mempool() {
         .add_pending_transaction(welcome_claim_tx(&actors, 0))
         .expect("RewardClaim must not require treasury identity registration");
     assert_eq!(blockchain.get_pending_transactions().len(), 1);
+}
+
+#[test]
+fn non_delegate_signer_rejected_from_mempool() {
+    // Without a mempool spend-delegate gate, any key with from==signer and a
+    // registered owner_did would admit and then halt apply (non-delegate Err).
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain(&actors);
+    let impostor = lib_crypto::KeyPair::generate().expect("impostor keypair");
+
+    let err = blockchain
+        .add_pending_transaction(welcome_claim_tx_from(&actors, 0, &impostor))
+        .expect_err("non-delegate RewardClaim must be rejected at mempool");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("verification failed") || msg.contains("Unauthorized"),
+        "expected mempool unauthorized rejection, got: {msg}"
+    );
+    assert!(
+        blockchain.get_pending_transactions().is_empty(),
+        "non-delegate claim must not enter mempool"
+    );
 }
 
 #[test]
