@@ -20,8 +20,9 @@
 /// - Consensus admission rules change in a way that requires homogeneous binaries
 ///
 /// Do **not** bump for docs-only, CLI-only, or unrelated crate changes.
-// SA-7 (manifest pin gate) requires epoch 5; keep above development's SA-6 epoch 4.
-pub const CONSENSUS_BUILD_ID: &str = "5";
+// Epoch 6: RewardClaim mempool gates (UnregisteredSender fix + spend-delegate
+// admission). Homogeneous cluster required so nodes agree on mempool admits.
+pub const CONSENSUS_BUILD_ID: &str = "6";
 
 /// Marker assigned when decoding codec v1 frames (no epoch field on wire).
 pub const LEGACY_BUILD_ID: &str = "";
