@@ -15,7 +15,7 @@ use lib_blockchain::{
     protocol::ProtocolParams,
     rewards_policy::{policy_hash, validate_rewards_policy},
     transaction::{
-        asset_tx::{AssetLaunchPayloadV1, RewardsLaunchConfig},
+        asset_tx::{AssetLaunchPayloadV1, CurveLaunchConfig, RewardsLaunchConfig},
         hash_transaction, Transaction,
     },
     TransactionType,
@@ -173,6 +173,7 @@ fn build_signed_asset_launch(
     decimals: u8,
     supply_mode: SupplyMode,
     treasury_key_id: [u8; 32],
+    curve: Option<CurveLaunchConfig>,
     rewards: Option<RewardsLaunchConfig>,
     chain_id: u8,
     fee: u64,
@@ -188,7 +189,7 @@ fn build_signed_asset_launch(
         supply_mode,
         manifest_cid,
         manifest_hash,
-        curve: None,
+        curve,
         rewards,
         governance: None,
         transfer_authority: false,
@@ -252,6 +253,17 @@ fn main() -> Result<()> {
         _ => None,
     };
 
+    let curve = match &args.token {
+        FoundingToken::Cbe => {
+            use lib_blockchain::contracts::bonding_curve::canonical::GRAD_THRESHOLD;
+            Some(CurveLaunchConfig {
+                threshold: GRAD_THRESHOLD,
+                sell_enabled: true,
+            })
+        }
+        FoundingToken::Bubl => None,
+    };
+
     let tx = build_signed_asset_launch(
         &keypair,
         name,
@@ -260,6 +272,7 @@ fn main() -> Result<()> {
         decimals,
         supply_mode,
         treasury,
+        curve,
         rewards,
         args.chain_id,
         args.fee,

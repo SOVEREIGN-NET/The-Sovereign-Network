@@ -1865,6 +1865,18 @@ impl BlockchainStore for SledStore {
         Ok(ids)
     }
 
+    fn list_curve_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {
+        let mut ids = Vec::new();
+        for entry in self.asset_curve.iter().flatten() {
+            if entry.0.len() == 32 {
+                let mut asset_id = [0u8; 32];
+                asset_id.copy_from_slice(&entry.0);
+                ids.push(asset_id);
+            }
+        }
+        Ok(ids)
+    }
+
     fn put_asset_launched_event(
         &self,
         event: &crate::contracts::sovereign_asset::AssetLaunchedEvent,

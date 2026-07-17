@@ -336,6 +336,10 @@ impl<'a> StateMutator<'a> {
         Ok(self.store.list_rewards_module_asset_ids()?)
     }
 
+    pub fn list_curve_module_asset_ids(&self) -> TxApplyResult<Vec<[u8; 32]>> {
+        Ok(self.store.list_curve_module_asset_ids()?)
+    }
+
     pub fn put_asset_launched_event(
         &self,
         event: &crate::contracts::sovereign_asset::AssetLaunchedEvent,
