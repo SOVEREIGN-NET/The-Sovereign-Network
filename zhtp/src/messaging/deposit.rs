@@ -1,168 +1,414 @@
-//! Deposit-on-disconnect: temporary encrypted dead drop on sender's node.
+//! Deposit store — process-local (in-memory) store-and-forward for undelivered messages.
 //!
-//! When the sender's phone goes offline, it deposits encrypted envelopes
-//! on its node. The node holds them until the recipient comes online,
-//! then relays via QUIC mesh. Deposits auto-expire after TTL.
+//! ## Delivery model (MSG-R1 / MSG-R5)
+//!
+//! Envelopes stay in the store until the client **acks** them. Polling and inbound
+//! streaming **peek** only; they never delete. That way a disconnect mid-response
+//! cannot lose mail.
+//!
+//! Storage is **not** durable across process restart (Phase 3 / sled persistence).
+//! Within a running process: stable `message_id` = hex(blake3(envelope_bytes));
+//! duplicate deposits of the same bytes are ignored (idempotent).
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, warn};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Default deposit TTL: 48 hours.
-const DEFAULT_DEPOSIT_TTL_SECS: u64 = 48 * 3600;
-/// Max envelopes per sender-recipient pair.
-const MAX_ENVELOPES_PER_PAIR: usize = 100;
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
 
-/// A pending delivery stored on the sender's node.
-#[derive(Debug, Clone)]
+/// How long undelivered deposits are kept before GC purges them.
+const DEPOSIT_TTL: Duration = Duration::from_secs(48 * 3600); // 48 hours
+
+/// Maximum pending envelopes per (sender, recipient) pair.
+const MAX_PENDING_PER_PAIR: usize = 100;
+
+/// A single pending delivery (one envelope).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingDelivery {
-    pub sender_did: String,
-    pub recipient_did: String,
-    /// Opaque encrypted envelopes — node cannot read these.
-    pub envelopes: Vec<Vec<u8>>,
+    /// Stable id: hex(blake3(envelope_bytes)).
+    pub message_id: String,
+    /// Opaque PQ-encrypted envelope (bincode of client SecureMessage / MessageEnvelope).
+    pub envelope: Vec<u8>,
+    /// Unix seconds when deposited (API / clients).
     pub deposited_at: u64,
-    pub expires_at: u64,
+    /// Monotonic clock for TTL GC (not serialized).
+    #[serde(skip, default = "Instant::now")]
+    pub deposited_instant: Instant,
+    /// Sender DID (for cancellation / auth).
+    pub sender_did: String,
+    /// Recipient DID.
+    pub recipient_did: String,
 }
 
-/// Deposit store: keyed by (sender_did, recipient_did).
-#[derive(Debug)]
+/// Compute stable message id from envelope bytes.
+pub fn message_id_for_envelope(envelope: &[u8]) -> String {
+    hex::encode(lib_crypto::hash_blake3(envelope))
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// In-memory deposit store (process-local; Phase 3 will add sled).
+#[derive(Debug, Default)]
 pub struct DepositStore {
-    deposits: Arc<RwLock<HashMap<(String, String), PendingDelivery>>>,
+    /// Keyed by (sender_did, recipient_did).
+    pending: RwLock<HashMap<(String, String), Vec<PendingDelivery>>>,
+    /// Index message_id → (sender, recipient) for O(1) ack.
+    by_id: RwLock<HashMap<String, (String, String)>>,
 }
 
 impl DepositStore {
     pub fn new() -> Self {
         Self {
-            deposits: Arc::new(RwLock::new(HashMap::new())),
+            pending: RwLock::new(HashMap::new()),
+            by_id: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Deposit encrypted envelopes for a recipient.
-    pub async fn deposit(
+    /// Deposit a single envelope. Returns `(message_id, is_new)`.
+    /// If the same envelope bytes were already deposited, returns existing id and `false`.
+    pub fn deposit_one(
+        &self,
+        sender_did: &str,
+        recipient_did: &str,
+        envelope: Vec<u8>,
+    ) -> Result<(String, bool), String> {
+        let message_id = message_id_for_envelope(&envelope);
+        let key = (sender_did.to_string(), recipient_did.to_string());
+
+        {
+            let by_id = self.by_id.read();
+            if by_id.contains_key(&message_id) {
+                debug!(
+                    message_id = %message_id,
+                    "deposit: duplicate envelope, already stored"
+                );
+                return Ok((message_id, false));
+            }
+        }
+
+        let mut store = self.pending.write();
+        let mut by_id = self.by_id.write();
+
+        // Re-check under write lock
+        if by_id.contains_key(&message_id) {
+            return Ok((message_id, false));
+        }
+
+        let queue = store.entry(key.clone()).or_default();
+
+        if queue.len() >= MAX_PENDING_PER_PAIR {
+            warn!(
+                sender = %sender_did,
+                recipient = %recipient_did,
+                max = MAX_PENDING_PER_PAIR,
+                "deposit store full for pair — rejecting"
+            );
+            return Err(format!(
+                "deposit store full: max {MAX_PENDING_PER_PAIR} pending for this pair"
+            ));
+        }
+
+        queue.push(PendingDelivery {
+            message_id: message_id.clone(),
+            envelope,
+            deposited_at: now_unix(),
+            deposited_instant: Instant::now(),
+            sender_did: sender_did.to_string(),
+            recipient_did: recipient_did.to_string(),
+        });
+        by_id.insert(message_id.clone(), key);
+
+        info!(
+            sender = %sender_did,
+            recipient = %recipient_did,
+            message_id = %message_id,
+            pending = queue.len(),
+            "message deposited"
+        );
+        Ok((message_id, true))
+    }
+
+    /// Deposit many envelopes. Returns `(accepted_count, message_ids)`.
+    /// Stops on first capacity error after accepting earlier envelopes.
+    pub fn deposit(
         &self,
         sender_did: &str,
         recipient_did: &str,
         envelopes: Vec<Vec<u8>>,
-    ) -> Result<usize, String> {
-        if envelopes.len() > MAX_ENVELOPES_PER_PAIR {
-            return Err(format!(
-                "Too many envelopes ({}, max {})",
-                envelopes.len(),
-                MAX_ENVELOPES_PER_PAIR
-            ));
+    ) -> Result<(usize, Vec<String>), String> {
+        if envelopes.is_empty() {
+            return Err("no envelopes".to_string());
         }
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let count = envelopes.len();
-        let delivery = PendingDelivery {
-            sender_did: sender_did.to_string(),
-            recipient_did: recipient_did.to_string(),
-            envelopes,
-            deposited_at: now,
-            expires_at: now + DEFAULT_DEPOSIT_TTL_SECS,
-        };
-
-        let key = (sender_did.to_string(), recipient_did.to_string());
-        let mut deposits = self.deposits.write().await;
-        // Append envelopes to existing deposit instead of overwriting
-        if let Some(existing) = deposits.get_mut(&key) {
-            if existing.envelopes.len() + count <= MAX_ENVELOPES_PER_PAIR {
-                existing.envelopes.extend(delivery.envelopes);
-                existing.expires_at = delivery.expires_at; // refresh TTL
-            } else {
-                return Err(format!(
-                    "Too many envelopes ({}, max {})",
-                    existing.envelopes.len() + count,
-                    MAX_ENVELOPES_PER_PAIR
-                ));
+        let mut ids = Vec::with_capacity(envelopes.len());
+        let mut accepted = 0usize;
+        for env in envelopes {
+            match self.deposit_one(sender_did, recipient_did, env) {
+                Ok((id, is_new)) => {
+                    ids.push(id);
+                    if is_new {
+                        accepted += 1;
+                    }
+                }
+                Err(e) => {
+                    if accepted == 0 && ids.is_empty() {
+                        return Err(e);
+                    }
+                    // Partial success: return what we took
+                    break;
+                }
             }
-        } else {
-            deposits.insert(key, delivery);
         }
-
-        info!(
-            "Deposited {} envelopes from {} for {} (FULL recipient={}, expires in {}h)",
-            count,
-            &sender_did[..16.min(sender_did.len())],
-            &recipient_did[..16.min(recipient_did.len())],
-            recipient_did,
-            DEFAULT_DEPOSIT_TTL_SECS / 3600,
-        );
-
-        Ok(count)
+        Ok((accepted, ids))
     }
 
-    /// Retrieve and remove all pending envelopes for a recipient.
-    pub async fn collect_for_recipient(&self, recipient_did: &str) -> Vec<PendingDelivery> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut deposits = self.deposits.write().await;
-        info!(
-            "collect_for_recipient: store has {} entries, looking for {}",
-            deposits.len(),
-            recipient_did
-        );
-        for ((s, r), d) in deposits.iter() {
-            info!(
-                "  entry: sender={}, recipient={}, envelopes={}, expires_at={}, matches={}",
-                s,
-                r,
-                d.envelopes.len(),
-                d.expires_at,
-                d.recipient_did == recipient_did
+    /// Peek all pending envelopes for a recipient (does **not** remove).
+    pub fn peek_for_recipient(&self, recipient_did: &str) -> Vec<PendingDelivery> {
+        let store = self.pending.read();
+        let mut out = Vec::new();
+        for ((_, recip), queue) in store.iter() {
+            if recip == recipient_did {
+                out.extend(queue.iter().cloned());
+            }
+        }
+        if !out.is_empty() {
+            debug!(
+                recipient = %recipient_did,
+                count = out.len(),
+                "peeked pending deposits (retained until ack)"
             );
         }
-        let mut collected = Vec::new();
+        out
+    }
 
-        deposits.retain(|(_sender, _recipient), delivery| {
-            if delivery.recipient_did == recipient_did && delivery.expires_at > now {
-                collected.push(delivery.clone());
-                false // remove from store
-            } else if delivery.expires_at <= now {
-                false // expired, remove
-            } else {
-                true // keep
+    /// Remove specific messages by id **only if** they are addressed to
+    /// `recipient_did` (client ACK). Returns count removed.
+    ///
+    /// Ids that are unknown or belong to another recipient are ignored (not
+    /// removed). Callers must pass the authenticated caller's canonical DID.
+    pub fn ack(&self, recipient_did: &str, message_ids: &[String]) -> usize {
+        if message_ids.is_empty() {
+            return 0;
+        }
+        let mut store = self.pending.write();
+        let mut by_id = self.by_id.write();
+        let mut removed = 0;
+
+        for mid in message_ids {
+            let Some((sender, recipient)) = by_id.get(mid).cloned() else {
+                continue;
+            };
+            if recipient != recipient_did {
+                debug!(
+                    message_id = %mid,
+                    caller = %recipient_did,
+                    owner = %recipient,
+                    "ack ignored: message not addressed to caller"
+                );
+                continue;
             }
+            by_id.remove(mid);
+            if let Some(queue) = store.get_mut(&(sender.clone(), recipient.clone())) {
+                let before = queue.len();
+                queue.retain(|d| d.message_id != *mid);
+                removed += before - queue.len();
+                if queue.is_empty() {
+                    store.remove(&(sender, recipient));
+                }
+            }
+        }
+
+        if removed > 0 {
+            info!(
+                count = removed,
+                recipient = %recipient_did,
+                "acked and removed deposits"
+            );
+        }
+        removed
+    }
+
+    /// Cancel undelivered messages from a sender to a recipient.
+    /// Returns number of envelopes cancelled.
+    pub fn cancel(&self, sender_did: &str, recipient_did: &str) -> usize {
+        let key = (sender_did.to_string(), recipient_did.to_string());
+        let mut store = self.pending.write();
+        let mut by_id = self.by_id.write();
+
+        let Some(queue) = store.remove(&key) else {
+            return 0;
+        };
+        let count = queue.len();
+        for d in &queue {
+            by_id.remove(&d.message_id);
+        }
+        if count > 0 {
+            info!(
+                sender = %sender_did,
+                recipient = %recipient_did,
+                count,
+                "cancelled undelivered deposits"
+            );
+        }
+        count
+    }
+
+    /// Purge expired deposits. Returns number of envelopes purged.
+    pub fn gc_expired(&self) -> usize {
+        let mut store = self.pending.write();
+        let mut by_id = self.by_id.write();
+        let mut purged = 0;
+        let now = Instant::now();
+
+        store.retain(|_, queue| {
+            let before = queue.len();
+            for d in queue.iter() {
+                if now.duration_since(d.deposited_instant) >= DEPOSIT_TTL {
+                    by_id.remove(&d.message_id);
+                }
+            }
+            queue.retain(|d| now.duration_since(d.deposited_instant) < DEPOSIT_TTL);
+            purged += before - queue.len();
+            !queue.is_empty()
         });
 
-        collected
+        if purged > 0 {
+            info!(purged, "GC purged expired deposits");
+        }
+        purged
     }
 
-    /// Cancel a deposit (sender came back online).
-    pub async fn cancel(&self, sender_did: &str, recipient_did: &str) -> bool {
-        let key = (sender_did.to_string(), recipient_did.to_string());
-        let mut deposits = self.deposits.write().await;
-        deposits.remove(&key).is_some()
+    /// Alias used by cleanup task (historical name).
+    pub fn cleanup_expired(&self) -> usize {
+        self.gc_expired()
     }
 
-    /// Clean up expired deposits.
-    pub async fn cleanup_expired(&self) -> usize {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut deposits = self.deposits.write().await;
-        let before = deposits.len();
-        deposits.retain(|_, d| d.expires_at > now);
-        before - deposits.len()
+    /// Total pending envelopes across all pairs.
+    pub fn total_pending(&self) -> usize {
+        self.pending.read().values().map(|q| q.len()).sum()
     }
 
-    /// Check if there are any pending deposits for a recipient.
-    pub async fn has_pending(&self, recipient_did: &str) -> bool {
-        let deposits = self.deposits.read().await;
-        deposits.values().any(|d| d.recipient_did == recipient_did)
+    pub fn has_pending(&self, recipient_did: &str) -> bool {
+        self.pending
+            .read()
+            .iter()
+            .any(|((_, r), q)| r == recipient_did && !q.is_empty())
+    }
+}
+
+/// Shared deposit store handle.
+pub type SharedDepositStore = Arc<DepositStore>;
+
+/// Create a new shared deposit store.
+pub fn new_shared_deposit_store() -> SharedDepositStore {
+    Arc::new(DepositStore::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deposit_peek_does_not_remove() {
+        let store = DepositStore::new();
+        let (id, is_new) = store
+            .deposit_one("did:sov:alice", "did:sov:bob", vec![1, 2, 3])
+            .unwrap();
+        assert!(is_new);
+        assert!(!id.is_empty());
+
+        let peeked = store.peek_for_recipient("did:sov:bob");
+        assert_eq!(peeked.len(), 1);
+        assert_eq!(peeked[0].message_id, id);
+
+        // Still there
+        assert_eq!(store.peek_for_recipient("did:sov:bob").len(), 1);
+        assert_eq!(store.total_pending(), 1);
     }
 
-    pub async fn pending_count(&self) -> usize {
-        self.deposits.read().await.len()
+    #[test]
+    fn ack_removes() {
+        let store = DepositStore::new();
+        let (id, _) = store
+            .deposit_one("did:sov:alice", "did:sov:bob", vec![9, 9, 9])
+            .unwrap();
+        assert_eq!(store.ack("did:sov:bob", &[id]), 1);
+        assert_eq!(store.total_pending(), 0);
+        assert!(store.peek_for_recipient("did:sov:bob").is_empty());
+    }
+
+    #[test]
+    fn ack_ignores_wrong_recipient() {
+        let store = DepositStore::new();
+        let (id, _) = store
+            .deposit_one("did:sov:alice", "did:sov:bob", vec![1, 2, 3])
+            .unwrap();
+        // Eve must not be able to ack Bob's mail
+        assert_eq!(store.ack("did:sov:eve", &[id.clone()]), 0);
+        assert_eq!(store.total_pending(), 1);
+        assert_eq!(store.ack("did:sov:bob", &[id]), 1);
+        assert_eq!(store.total_pending(), 0);
+    }
+
+    #[test]
+    fn duplicate_deposit_idempotent() {
+        let store = DepositStore::new();
+        let env = vec![7, 7, 7];
+        let (id1, new1) = store
+            .deposit_one("did:sov:a", "did:sov:b", env.clone())
+            .unwrap();
+        let (id2, new2) = store.deposit_one("did:sov:a", "did:sov:b", env).unwrap();
+        assert_eq!(id1, id2);
+        assert!(new1);
+        assert!(!new2);
+        assert_eq!(store.total_pending(), 1);
+    }
+
+    #[test]
+    fn cancel_clears_pair() {
+        let store = DepositStore::new();
+        store
+            .deposit_one("did:sov:alice", "did:sov:bob", vec![1])
+            .unwrap();
+        store
+            .deposit_one("did:sov:alice", "did:sov:bob", vec![2])
+            .unwrap();
+        assert_eq!(store.cancel("did:sov:alice", "did:sov:bob"), 2);
+        assert_eq!(store.total_pending(), 0);
+    }
+
+    #[test]
+    fn max_pending_enforced() {
+        let store = DepositStore::new();
+        for i in 0..MAX_PENDING_PER_PAIR {
+            store
+                .deposit_one("did:sov:a", "did:sov:b", vec![i as u8])
+                .unwrap();
+        }
+        let err = store
+            .deposit_one("did:sov:a", "did:sov:b", vec![255])
+            .unwrap_err();
+        assert!(err.contains("full"));
+    }
+
+    #[test]
+    fn batch_deposit() {
+        let store = DepositStore::new();
+        let (n, ids) = store
+            .deposit(
+                "did:sov:a",
+                "did:sov:b",
+                vec![vec![1], vec![2], vec![1]], // third is dup of first
+            )
+            .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(ids.len(), 3);
+        assert_eq!(store.total_pending(), 2);
     }
 }

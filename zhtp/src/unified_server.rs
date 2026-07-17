@@ -1077,7 +1077,7 @@ impl ZhtpUnifiedServer {
                 let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
                 loop {
                     interval.tick().await;
-                    let expired = deposits_cleanup.cleanup_expired().await;
+                    let expired = deposits_cleanup.cleanup_expired();
                     if expired > 0 {
                         tracing::info!("Cleaned up {} expired message deposits", expired);
                     }
@@ -1092,7 +1092,7 @@ impl ZhtpUnifiedServer {
                 let provider =
                     crate::runtime::messaging_provider::get_global_messaging_provider();
                 while let Some((recipient_did, envelope)) = relay_rx.recv().await {
-                    // Try live push first
+                    // Try live push first (MSG-R2 will deposit before push).
                     if provider.try_push(&recipient_did, envelope.clone()).await {
                         tracing::debug!(
                             "Relay pushed to live subscriber for {}",
@@ -1104,10 +1104,7 @@ impl ZhtpUnifiedServer {
                     let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
                         .map(|env| env.sender_did)
                         .unwrap_or_else(|_| "mesh_relay".to_string());
-                    if let Err(e) = deposits_relay
-                        .deposit(&sender, &recipient_did, vec![envelope])
-                        .await
-                    {
+                    if let Err(e) = deposits_relay.deposit_one(&sender, &recipient_did, envelope) {
                         tracing::warn!("Failed to deposit relayed message: {}", e);
                     }
                 }

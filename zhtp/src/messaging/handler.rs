@@ -51,6 +51,12 @@ struct PresenceWatchRequest {
     target_dids: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct AckRequest {
+    /// Message ids returned by receive / computed as hex(blake3(envelope)).
+    message_ids: Vec<String>,
+}
+
 // ── Handler ────────────────────────────────────────────────────────
 
 fn json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -168,10 +174,18 @@ impl MessagingHandler {
             }));
         }
 
-        // Always deposit locally — recipient may poll any node, or come online later
-        let _ = self.deposits
-            .deposit(&envelope.sender_did, &recipient_did, vec![envelope_bytes.clone()])
-            .await;
+        // Deposit when no live subscriber (MSG-R2 will deposit before push too).
+        // Local store-full is not fatal: still mesh-relay so peers can deposit.
+        if let Err(e) = self.deposits.deposit_one(
+            &envelope.sender_did,
+            &recipient_did,
+            envelope_bytes.clone(),
+        ) {
+            warn!(
+                error = %e,
+                "msg/send: local deposit failed — continuing mesh relay"
+            );
+        }
 
         // Also relay via mesh so all nodes have the message
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
@@ -229,86 +243,79 @@ impl MessagingHandler {
         match self
             .deposits
             .deposit(&req.sender_did, &req.recipient_did, envelopes)
-            .await
         {
-            Ok(count) => json_response(json!({
+            Ok((count, message_ids)) => json_response(json!({
                 "status": "deposited",
                 "count": count,
+                "message_ids": message_ids,
                 "ttl_hours": 48,
             })),
             Err(e) => Ok(error_resp(ZhtpStatus::BadRequest, &e)),
         }
     }
 
-    /// GET /api/v1/msg/receive
-    /// Poll for pending messages (deposits from other users).
-    async fn handle_receive(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        // Extract recipient DID from authenticated session.
-        // The requester identity hash may differ from the DID (key_id = blake3(dil||kyber)
-        // vs DID = blake3(dil) only). Look up the canonical DID from the identity registry.
+    /// Resolve authenticated requester → canonical DID (same paths as receive).
+    async fn resolve_caller_did(&self, request: &ZhtpRequest) -> Result<String, String> {
         let requester_key_id = request
             .requester
             .as_ref()
             .map(|id| hex::encode(&id.0))
             .unwrap_or_default();
-
         if requester_key_id.is_empty() {
-            return Ok(error_resp(
-                ZhtpStatus::Unauthorized,
-                "Authenticated DID required",
-            ));
+            return Err("Authenticated DID required".to_string());
+        }
+        let key_id_did = format!("did:zhtp:{}", requester_key_id);
+        let bound = match (
+            crate::session_manager::session_manager_handle(),
+            request.requester.as_ref(),
+        ) {
+            (Some(mgr), Some(req_id)) => mgr.canonical_did_for_quic_key(&req_id.0).await,
+            _ => None,
+        };
+        if let Some(did) = bound {
+            return Ok(did);
+        }
+        let blockchain = self.blockchain.read().await;
+        Ok(blockchain
+            .did_by_device_key_id(&requester_key_id)
+            .unwrap_or(key_id_did))
+    }
+
+    /// POST /api/v1/msg/ack
+    /// Client confirms receipt; removes only envelopes addressed to the caller.
+    async fn handle_ack(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: AckRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        if req.message_ids.is_empty() {
+            return Ok(error_resp(ZhtpStatus::BadRequest, "message_ids required"));
         }
 
-        // Resolve the polling device's QUIC identity to the canonical chain
-        // DID the deposit was keyed under. Three paths, first hit wins:
-        //
-        // (1) **Session-bound device map.** OPAQUE login records
-        //     (quic_key_id → canonical_did) in SessionManager via
-        //     `bind_device_to_canonical_did`. Handles mobiles that generate
-        //     an ephemeral QUIC keypair per session (the dominant case):
-        //     mobile logs in with password → server binds this connection's
-        //     QUIC key under the user's canonical DID → /msg/receive on the
-        //     same connection (or any future connection whose key has been
-        //     bound) resolves correctly.
-        //
-        // (2) **Direct DID match.** A registry entry keyed by
-        //     `did:zhtp:<requester_key_id>` (rare — happens when the QUIC
-        //     key coincides with the canonical DID derivation).
-        //
-        // (3) **Public-key hash match.** Legacy / non-OPAQUE flow: scan all
-        //     identity_registry entries, hash `dilithium_pk` and
-        //     `dilithium_pk||kyber_pk`, see if either matches the requester
-        //     key_id. Genesis identities and identities registered before
-        //     OPAQUE existed land here.
-        //
-        // Fallback: derive a stub DID from the key_id itself. Deposit store
-        // returns empty for unknown DIDs — better than 500-ing.
-        let key_id_did = format!("did:zhtp:{}", requester_key_id);
-        let recipient_did = {
-            // (1) Session-bound device map.
-            let bound = match (
-                crate::session_manager::session_manager_handle(),
-                request.requester.as_ref(),
-            ) {
-                (Some(mgr), Some(req_id)) => {
-                    mgr.canonical_did_for_quic_key(&req_id.0).await
-                }
-                _ => None,
-            };
-            if let Some(did) = bound {
-                did
-            } else {
-                let blockchain = self.blockchain.read().await;
-                // #58: sled-first direct-match + Dilithium / Dilithium+Kyber hash
-                // resolution. Reads durable `identity_metadata` so a store-backed
-                // node resolves the requester after a restart (the in-memory
-                // `identity_registry` is empty then). Falls back to the raw
-                // key-id DID when no identity matches, as before.
-                blockchain
-                    .did_by_device_key_id(&requester_key_id)
-                    .unwrap_or(key_id_did)
-            }
+        let recipient_did = match self.resolve_caller_did(request).await {
+            Ok(d) => d,
+            Err(e) => return Ok(error_resp(ZhtpStatus::Unauthorized, &e)),
         };
+
+        let removed = self.deposits.ack(&recipient_did, &req.message_ids);
+        json_response(json!({
+            "status": "success",
+            "acked": removed,
+        }))
+    }
+
+    /// GET /api/v1/msg/receive
+    /// Peek pending messages (does not remove — client must POST /api/v1/msg/ack).
+    async fn handle_receive(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let recipient_did = match self.resolve_caller_did(request).await {
+            Ok(d) => d,
+            Err(e) => return Ok(error_resp(ZhtpStatus::Unauthorized, &e)),
+        };
+
+        let requester_key_id = request
+            .requester
+            .as_ref()
+            .map(|id| hex::encode(&id.0))
+            .unwrap_or_default();
 
         info!(
             "msg/receive lookup: requester_key_id={} -> recipient_did={}",
@@ -318,24 +325,25 @@ impl MessagingHandler {
         // Mark as online
         self.presence.set_online(&recipient_did).await;
 
-        // Collect pending deposits
-        let deliveries = self.deposits.collect_for_recipient(&recipient_did).await;
+        // Peek only — retain until explicit ack (MSG-R1)
+        let deliveries = self.deposits.peek_for_recipient(&recipient_did);
         info!(
-            "msg/receive collected {} deliveries for {}",
+            "msg/receive peeked {} deliveries for {}",
             deliveries.len(),
             recipient_did
         );
 
-        let mut all_envelopes: Vec<serde_json::Value> = Vec::new();
-        for delivery in &deliveries {
-            for env_bytes in &delivery.envelopes {
-                all_envelopes.push(json!({
-                    "sender_did": delivery.sender_did,
-                    "envelope_hex": hex::encode(env_bytes),
-                    "deposited_at": delivery.deposited_at,
-                }));
-            }
-        }
+        let all_envelopes: Vec<serde_json::Value> = deliveries
+            .iter()
+            .map(|d| {
+                json!({
+                    "message_id": d.message_id,
+                    "sender_did": d.sender_did,
+                    "envelope_hex": hex::encode(&d.envelope),
+                    "deposited_at": d.deposited_at,
+                })
+            })
+            .collect();
 
         json_response(json!({
             "status": "success",
@@ -395,6 +403,9 @@ impl ZhtpRequestHandler for MessagingHandler {
             }
             (ZhtpMethod::Get, "/api/v1/msg/receive") => {
                 Ok(self.handle_receive(&request).await?)
+            }
+            (ZhtpMethod::Post, "/api/v1/msg/ack") => {
+                Ok(self.handle_ack(&request).await?)
             }
             (ZhtpMethod::Post, "/api/v1/msg/presence/watch") => {
                 Ok(self.handle_presence_watch(&request).await?)
