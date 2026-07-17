@@ -224,10 +224,6 @@ mod tests {
         store
     }
 
-    /// Production activation height — tests must exercise heights below this even though
-    /// `#[cfg(test)]` sets `GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT` to 0.
-    const PROD_GOVERNANCE_ACTIVATION_HEIGHT: u64 = 80_000;
-
     fn verify_multisig_proof_on_store(
         store: &Arc<dyn BlockchainStore>,
         verifier: &GovernanceVerifierState,
@@ -264,13 +260,11 @@ mod tests {
         };
 
         verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap();
-        // Height is not consulted for crypto; re-run to model pre-activation prod (~39k).
-        let _pre_activation = PROD_GOVERNANCE_ACTIVATION_HEIGHT - 1;
-        verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap();
     }
 
+    /// Garbage co-signatures are rejected at every height (auth is not height-gated).
     #[test]
-    fn multisig_proof_rejects_garbage_signatures_below_prod_activation_height() {
+    fn multisig_proof_rejects_garbage_cosignatures() {
         let kp1 = KeyPair::generate().unwrap();
         let kp2 = KeyPair::generate().unwrap();
         let key_id1 = kp1.public_key.key_id;
@@ -301,8 +295,6 @@ mod tests {
         };
 
         let store = store_with_signers(&[kp1, kp2]);
-
-        let _pre_activation = PROD_GOVERNANCE_ACTIVATION_HEIGHT - 1;
         let err =
             verify_multisig_proof_on_store(&store, &verifier, &proof, &msg).unwrap_err();
         assert!(matches!(err, TxApplyError::InvalidType(msg) if msg.contains("signature verification failed")));
