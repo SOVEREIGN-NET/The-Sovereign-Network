@@ -51,6 +51,12 @@ struct PresenceWatchRequest {
     target_dids: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct AckRequest {
+    /// Message ids returned by receive / computed as hex(blake3(envelope)).
+    message_ids: Vec<String>,
+}
+
 // ── Handler ────────────────────────────────────────────────────────
 
 fn json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -168,10 +174,14 @@ impl MessagingHandler {
             }));
         }
 
-        // Always deposit locally — recipient may poll any node, or come online later
-        let _ = self.deposits
-            .deposit(&envelope.sender_did, &recipient_did, vec![envelope_bytes.clone()])
-            .await;
+        // Deposit when no live subscriber (MSG-R2 will deposit before push too).
+        if let Err(e) = self.deposits.deposit_one(
+            &envelope.sender_did,
+            &recipient_did,
+            envelope_bytes.clone(),
+        ) {
+            return Ok(error_resp(ZhtpStatus::BadRequest, &e));
+        }
 
         // Also relay via mesh so all nodes have the message
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
@@ -229,19 +239,43 @@ impl MessagingHandler {
         match self
             .deposits
             .deposit(&req.sender_did, &req.recipient_did, envelopes)
-            .await
         {
-            Ok(count) => json_response(json!({
+            Ok((count, message_ids)) => json_response(json!({
                 "status": "deposited",
                 "count": count,
+                "message_ids": message_ids,
                 "ttl_hours": 48,
             })),
             Err(e) => Ok(error_resp(ZhtpStatus::BadRequest, &e)),
         }
     }
 
+    /// POST /api/v1/msg/ack
+    /// Client confirms receipt; removes envelopes from the deposit store (MSG-R1).
+    async fn handle_ack(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: AckRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        if req.message_ids.is_empty() {
+            return Ok(error_resp(ZhtpStatus::BadRequest, "message_ids required"));
+        }
+
+        if request.requester.is_none() {
+            return Ok(error_resp(
+                ZhtpStatus::Unauthorized,
+                "Authenticated DID required",
+            ));
+        }
+
+        let removed = self.deposits.ack(&req.message_ids);
+        json_response(json!({
+            "status": "success",
+            "acked": removed,
+        }))
+    }
+
     /// GET /api/v1/msg/receive
-    /// Poll for pending messages (deposits from other users).
+    /// Peek pending messages (does not remove — client must POST /msg/ack).
     async fn handle_receive(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Extract recipient DID from authenticated session.
         // The requester identity hash may differ from the DID (key_id = blake3(dil||kyber)
@@ -318,24 +352,25 @@ impl MessagingHandler {
         // Mark as online
         self.presence.set_online(&recipient_did).await;
 
-        // Collect pending deposits
-        let deliveries = self.deposits.collect_for_recipient(&recipient_did).await;
+        // Peek only — retain until explicit ack (MSG-R1)
+        let deliveries = self.deposits.peek_for_recipient(&recipient_did);
         info!(
-            "msg/receive collected {} deliveries for {}",
+            "msg/receive peeked {} deliveries for {}",
             deliveries.len(),
             recipient_did
         );
 
-        let mut all_envelopes: Vec<serde_json::Value> = Vec::new();
-        for delivery in &deliveries {
-            for env_bytes in &delivery.envelopes {
-                all_envelopes.push(json!({
-                    "sender_did": delivery.sender_did,
-                    "envelope_hex": hex::encode(env_bytes),
-                    "deposited_at": delivery.deposited_at,
-                }));
-            }
-        }
+        let all_envelopes: Vec<serde_json::Value> = deliveries
+            .iter()
+            .map(|d| {
+                json!({
+                    "message_id": d.message_id,
+                    "sender_did": d.sender_did,
+                    "envelope_hex": hex::encode(&d.envelope),
+                    "deposited_at": d.deposited_at,
+                })
+            })
+            .collect();
 
         json_response(json!({
             "status": "success",
@@ -395,6 +430,9 @@ impl ZhtpRequestHandler for MessagingHandler {
             }
             (ZhtpMethod::Get, "/api/v1/msg/receive") => {
                 Ok(self.handle_receive(&request).await?)
+            }
+            (ZhtpMethod::Post, "/api/v1/msg/ack") => {
+                Ok(self.handle_ack(&request).await?)
             }
             (ZhtpMethod::Post, "/api/v1/msg/presence/watch") => {
                 Ok(self.handle_presence_watch(&request).await?)

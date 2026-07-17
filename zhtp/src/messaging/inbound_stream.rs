@@ -6,7 +6,8 @@
 //!
 //! 1. Resolve the canonical recipient DID against the chain identity registry
 //!    (same logic as `handle_receive`).
-//! 2. Drain any existing deposits for this DID as the first batch of frames.
+//! 2. Peek existing deposits for this DID as the first batch of frames
+//!    (does not remove — client must POST `/api/v1/msg/ack`).
 //! 3. Register an mpsc subscriber and write each subsequent envelope as a
 //!    `[u32 BE length][envelope bytes]` frame.
 //! 4. On any write error (client disconnect, transport failure) we unregister
@@ -15,9 +16,8 @@
 //! Wire framing: each frame is `[4 bytes BE length][payload bytes]`. No
 //! sub-framing of envelopes; one frame == one bincode-serialized MessageEnvelope.
 //!
-//! The deposit store remains the offline-drain backstop. If the subscriber
-//! disconnects mid-stream, new envelopes from this point on will accumulate
-//! there until the client reopens.
+//! Deposits remain until client ack. Disconnect mid-stream does not lose
+//! already-peeked mail — it is still in the store.
 
 use anyhow::Result;
 use quinn::SendStream;
@@ -76,25 +76,23 @@ pub async fn run_inbound_stream(
 
     let provider = crate::runtime::messaging_provider::get_global_messaging_provider();
 
-    // 1. Drain existing deposits as the initial batch.
+    // 1. Peek existing deposits (MSG-R1: do not remove without client ack).
     if let Ok(deposits) = provider.get_deposits().await {
-        let deliveries = deposits.collect_for_recipient(&recipient_did).await;
+        let deliveries = deposits.peek_for_recipient(&recipient_did);
         let mut count = 0usize;
         for delivery in deliveries {
-            for envelope in delivery.envelopes {
-                if write_frame(&mut send, &envelope).await.is_err() {
-                    info!(
-                        "msg/inbound: client disconnected during initial drain for {}",
-                        recipient_did
-                    );
-                    return Ok(());
-                }
-                count += 1;
+            if write_frame(&mut send, &delivery.envelope).await.is_err() {
+                info!(
+                    "msg/inbound: client disconnected during initial peek for {}",
+                    recipient_did
+                );
+                return Ok(());
             }
+            count += 1;
         }
         if count > 0 {
             info!(
-                "msg/inbound: drained {} envelopes from deposit store for {}",
+                "msg/inbound: peeked {} envelopes from deposit store for {}",
                 count, recipient_did
             );
         }
