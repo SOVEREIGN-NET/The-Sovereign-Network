@@ -20,6 +20,22 @@ use crate::network_types::{get_mesh_status, get_network_statistics};
 /// Parse a history unix timestamp for chrono without panicking or wrapping.
 ///
 /// Returns `None` when the value does not fit `i64` or is outside chrono's range.
+/// Ensure a unix-second timestamp is safe for chrono and for storage in history.
+///
+/// Accepts only values that fit in `i64` and that `chrono::DateTime::from_timestamp`
+/// can represent (roughly 0 .. ~8.2e12). Module-private: not part of the crate API.
+fn validate_history_timestamp(ts: u64) -> Result<u64> {
+    let ts_i = i64::try_from(ts).map_err(|_| {
+        anyhow::anyhow!("transaction timestamp {ts} exceeds i64 range")
+    })?;
+    if chrono::DateTime::from_timestamp(ts_i, 0).is_none() {
+        return Err(anyhow::anyhow!(
+            "transaction timestamp {ts} is outside chrono representable range"
+        ));
+    }
+    Ok(ts)
+}
+
 fn parse_history_datetime(ts: u64) -> Option<chrono::DateTime<chrono::Utc>> {
     let ts_i = i64::try_from(ts).ok()?;
     chrono::DateTime::from_timestamp(ts_i, 0)
@@ -298,6 +314,10 @@ impl TransactionHistoryManager {
 
     /// Add transaction to history
     pub async fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        // Reject corrupt timestamps at ingest so analytics and other consumers
+        // never see non-chrono-representable values (see #2872 / #2870).
+        validate_history_timestamp(transaction.timestamp)?;
+
         // Get network conditions if enabled
         let network_conditions = if self.settings.enable_network_tracking {
             self.capture_network_conditions().await?
@@ -991,6 +1011,96 @@ mod tests {
         assert_eq!(manager.transactions.len(), 1);
         assert_eq!(manager.hash_index.len(), 1);
         assert_eq!(manager.internal_id_index.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_transaction_rejects_out_of_range_timestamp() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+
+        let mut tx =
+            create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+        tx.timestamp = u64::MAX;
+
+        let err = manager.add_transaction(tx).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("timestamp") || msg.contains("range") || msg.contains("chrono"),
+            "unexpected error: {msg}"
+        );
+        assert_eq!(manager.transactions.len(), 0);
+        assert!(manager.hash_index.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_transaction_accepts_valid_timestamp() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+        let tx =
+            create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+        assert!(validate_history_timestamp(tx.timestamp).is_ok());
+        manager.add_transaction(tx).await.unwrap();
+        assert_eq!(manager.transactions.len(), 1);
+    }
+
+    #[test]
+    fn validate_history_timestamp_bounds() {
+        assert!(validate_history_timestamp(0).is_ok());
+        assert!(validate_history_timestamp(1_700_000_000).is_ok()); // ~2023
+        assert!(validate_history_timestamp(u64::MAX).is_err());
+        // i64::MAX is out of chrono's practical from_timestamp range
+        assert!(validate_history_timestamp(i64::MAX as u64).is_err());
+    }
+
+    #[tokio::test]
+    async fn analytics_skips_invalid_legacy_timestamp_without_panic() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+        let mut tx =
+            create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+        tx.timestamp = 1_700_000_000;
+        manager.add_transaction(tx).await.unwrap();
+
+        // Simulate Deserialize legacy corrupt record
+        let bad =
+            create_payment_transaction([3u8; 32], [4u8; 32], 500, Priority::Normal).unwrap();
+        let record = TransactionRecord {
+            blockchain_tx_hash: bad.tx_id,
+            internal_tx_id: hex::encode(bad.tx_id),
+            transaction_type: bad.tx_type.clone(),
+            category: TransactionCategory::from_transaction_type(&bad.tx_type),
+            from_address: Some(bad.from),
+            to_address: Some(bad.to),
+            amount: bad.amount,
+            fees: bad.total_fee,
+            gas_used: None,
+            block_height: Some(0),
+            block_hash: None,
+            transaction_index: None,
+            status: TransactionStatus::Pending,
+            priority: Priority::Normal,
+            timestamp: u64::MAX,
+            confirmed_at: None,
+            finalized_at: None,
+            network_conditions: NetworkConditions::default(),
+            metadata: std::collections::HashMap::new(),
+            related_transactions: Vec::new(),
+        };
+        manager.transactions.push(record);
+
+        let analytics = manager.generate_analytics().await.unwrap();
+        assert_eq!(
+            analytics
+                .transaction_counts
+                .get(&TransactionCategory::Payment),
+            Some(&2)
+        );
+        let monthly: u64 = analytics
+            .monthly_trends
+            .values()
+            .map(|m| m.total_transactions)
+            .sum();
+        assert_eq!(monthly, 1);
     }
 
     #[tokio::test]

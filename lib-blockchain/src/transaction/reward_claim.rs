@@ -158,29 +158,41 @@ pub fn key_id_from_did(did: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+/// Convert a unix-second timestamp for chrono without silent `as i64` wrap (#2873).
+fn chrono_datetime_from_unix_ts(ts: u64) -> Result<chrono::DateTime<chrono::Utc>, String> {
+    let ts_i = i64::try_from(ts).map_err(|_| {
+        format!("timestamp {ts} exceeds i64 range")
+    })?;
+    chrono::DateTime::from_timestamp(ts_i, 0).ok_or_else(|| {
+        format!("timestamp {ts} is outside chrono representable range")
+    })
+}
+
 /// UTC date string `YYYY-MM-DD` from unix timestamp.
-pub fn utc_date_from_ts(ts: u64) -> String {
-    chrono::DateTime::from_timestamp(ts as i64, 0)
-        .map(|dt| dt.date_naive().format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| "1970-01-01".to_string())
+///
+/// Rejects out-of-range values instead of wrapping via `as i64` (which maps
+/// `u64::MAX` to `-1` → 1969-12-31).
+pub fn utc_date_from_ts(ts: u64) -> Result<String, String> {
+    Ok(chrono_datetime_from_unix_ts(ts)?
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string())
 }
 
 /// UTC ordinal day (days since CE) from unix timestamp.
-pub fn utc_day_ordinal_from_ts(ts: u64) -> i32 {
-    chrono::DateTime::from_timestamp(ts as i64, 0)
-        .map(|dt| dt.date_naive().num_days_from_ce())
-        .unwrap_or(0)
+pub fn utc_day_ordinal_from_ts(ts: u64) -> Result<i32, String> {
+    use chrono::Datelike;
+    Ok(chrono_datetime_from_unix_ts(ts)?
+        .date_naive()
+        .num_days_from_ce())
 }
 
 /// ISO week key `YYYY-Www` from unix timestamp.
-pub fn iso_week_from_ts(ts: u64) -> String {
+pub fn iso_week_from_ts(ts: u64) -> Result<String, String> {
     use chrono::Datelike;
-    chrono::DateTime::from_timestamp(ts as i64, 0)
-        .map(|dt| {
-            let iso = dt.date_naive().iso_week();
-            format!("{}-W{:02}", iso.year(), iso.week())
-        })
-        .unwrap_or_else(|| "1970-W01".to_string())
+    let dt = chrono_datetime_from_unix_ts(ts)?;
+    let iso = dt.date_naive().iso_week();
+    Ok(format!("{}-W{:02}", iso.year(), iso.week()))
 }
 
 pub const REWARD_KEY_SEP: u8 = 0x1f;
@@ -261,5 +273,22 @@ mod tests {
         let did = "did:zhtp:adf4cea328c55797ff06cdce1d0dc18329455b9a18d8e0b5bc05a8f10c969bf4";
         let err = validate_owner_identity_registered(store, did).unwrap_err();
         assert_eq!(err, "owner DID not registered");
+    }
+
+    #[test]
+    fn valid_timestamp_buckets() {
+        // 2024-01-15 12:00:00 UTC
+        let ts = 1_705_320_000u64;
+        assert_eq!(utc_date_from_ts(ts).unwrap(), "2024-01-15");
+        assert!(utc_day_ordinal_from_ts(ts).unwrap() > 0);
+        let week = iso_week_from_ts(ts).unwrap();
+        assert!(week.starts_with("2024-W"), "week={week}");
+    }
+
+    #[test]
+    fn rejects_u64_max_without_wrapping_to_1969() {
+        assert!(utc_date_from_ts(u64::MAX).is_err());
+        assert!(utc_day_ordinal_from_ts(u64::MAX).is_err());
+        assert!(iso_week_from_ts(u64::MAX).is_err());
     }
 }
