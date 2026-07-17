@@ -417,18 +417,25 @@ impl ZhtpClient {
         // is returned.
         let candidates: Vec<SocketAddr> = tokio::net::lookup_host(addr)
             .await
-            .with_context(|| format!("Failed to resolve address: {}", addr))?
+            .with_context(|| {
+                format!("Failed to resolve address: {} (stage=resolve)", addr)
+            })?
             .collect();
         let socket_addr: SocketAddr = candidates
             .iter()
             .find(|s| s.is_ipv4())
             .or_else(|| candidates.first())
             .copied()
-            .ok_or_else(|| anyhow!("Address '{}' resolved to no socket addresses", addr))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "Address '{}' resolved to no socket addresses (stage=resolve)",
+                    addr
+                )
+            })?;
 
         if self.trust_config.bootstrap_mode && !self.config.allow_bootstrap {
             return Err(anyhow!(
-                "Bootstrap mode requires ZhtpClientConfig::allow_bootstrap to be true"
+                "Bootstrap mode requires ZhtpClientConfig::allow_bootstrap to be true (stage=config)"
             ));
         }
 
@@ -436,10 +443,10 @@ impl ZhtpClient {
         let verifier = match self.trust_verifier {
             Some(ref v) => Arc::clone(v),
             None => {
-                let v = Arc::new(ZhtpTrustVerifier::new(
-                    addr.to_string(),
-                    self.trust_config.clone(),
-                )?);
+                let v = Arc::new(
+                    ZhtpTrustVerifier::new(addr.to_string(), self.trust_config.clone())
+                        .context("trust verifier init (stage=tls)")?,
+                );
                 self.trust_verifier = Some(Arc::clone(&v));
                 v
             }
@@ -449,28 +456,50 @@ impl ZhtpClient {
         // ZhtpClients, so we mustn't mutate its default config (that would
         // race against concurrent connects from other ZhtpClient instances).
         // `connect_with` applies the config to just this connection.
-        let client_config = Self::configure_client(verifier, self.config.session_alpn)?;
+        let client_config = Self::configure_client(verifier, self.config.session_alpn)
+            .context("client TLS/ALPN config (stage=tls)")?;
         let connection = self
             .endpoint
-            .connect_with(client_config, socket_addr, server_name)?
+            .connect_with(client_config, socket_addr, server_name)
+            .with_context(|| {
+                format!(
+                    "QUIC connect setup failed addr={} sni={} (stage=quic)",
+                    socket_addr, server_name
+                )
+            })?
             .await
-            .context("QUIC connection failed")?;
+            .with_context(|| {
+                format!(
+                    "QUIC connection failed addr={} sni={} (stage=quic)",
+                    socket_addr, server_name
+                )
+            })?;
 
-        // Perform UHP v2 handshake
+        // Perform UHP v2 handshake (canonical initiator — same as production
+        // gateways expect; capabilities from quic_uhp_capabilities()).
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
         )
         .await
-        .context("UHP v2 handshake failed")?;
+        .with_context(|| {
+            format!(
+                "UHP v2 handshake failed addr={} sni={} (stage=uhp_handshake)",
+                socket_addr, server_name
+            )
+        })?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
         // Verify node DID matches trust configuration and bind for TOFU anchor updates
         if let Some(ref verifier) = self.trust_verifier {
-            verifier.verify_node_did(&peer_did)?;
-            verifier.bind_node_did(&peer_did)?;
+            verifier
+                .verify_node_did(&peer_did)
+                .context("node DID trust check (stage=trust)")?;
+            verifier
+                .bind_node_did(&peer_did)
+                .context("node DID bind (stage=trust)")?;
         }
 
         // Derive V2 session keys
@@ -478,7 +507,7 @@ impl ZhtpClient {
             &handshake_result.session_key,
             &handshake_result.handshake_hash,
         )
-        .context("Failed to derive V2 session keys")?;
+        .context("Failed to derive V2 session keys (stage=session_keys)")?;
 
         Ok(AuthenticatedConnection {
             quic_conn: connection,

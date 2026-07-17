@@ -27,23 +27,17 @@
 //! `diff` against it.
 
 use lib_network::handshake::core::{handshake_as_initiator, handshake_as_responder};
-use lib_network::handshake::{HandshakeCapabilities, HandshakeContext, NonceCache, PqcCapability};
+use lib_network::handshake::{HandshakeCapabilities, HandshakeContext, NonceCache};
+use lib_network::protocols::quic_handshake::quic_uhp_capabilities;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tempfile::tempdir;
 use tokio::io::{duplex, AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 
-/// Build the same `HandshakeCapabilities` shape the QUIC adapter uses
-/// in production (see `lib-network/src/protocols/quic_handshake.rs`,
-/// `create_quic_capabilities`). Keep this in sync with the production
-/// constructor — that is the entire point of the test. If you change
-/// one, change the other and re-bless the hex.
+/// Production QUIC capabilities — single constructor (MSG-NODE-001).
 fn quic_capabilities_shape() -> HandshakeCapabilities {
-    let mut caps = HandshakeCapabilities::default();
-    caps.protocols = vec!["quic".to_string()];
-    caps.pqc_capability = PqcCapability::Kyber1024Dilithium5;
-    caps
+    quic_uhp_capabilities()
 }
 
 fn make_identity(device: &str) -> lib_identity::ZhtpIdentity {

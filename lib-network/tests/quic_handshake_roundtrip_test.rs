@@ -217,7 +217,5 @@ async fn quic_handshake_roundtrip_succeeds() {
     );
 }
 
-// (Earlier draft had a second test asserting `HandshakeCapabilities::default()`
-// shape — removed per review: the QUIC adapters use `create_quic_capabilities()`
-// internally, not the bare `Default` impl, so the assertion didn't actually
-// guard against capability drift on the QUIC path.)
+// Capability shape is pinned by `quic_uhp_capabilities()` +
+// `handshake_wire_bytes_test` (MSG-NODE-001).
