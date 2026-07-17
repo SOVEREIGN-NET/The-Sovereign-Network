@@ -2,8 +2,8 @@
 
 use crate::contracts::sovereign_asset::{
     project_from_token_contract, validate_governance_verifier, AssetAuthority, AssetIdSource,
-    AssetLaunchedEvent, AssetModuleFlags, CurveModuleHeader, GovernanceModuleHeader,
-    GovernanceModuleState, GovernanceVerifierKind, GovernanceVerifierState,
+    AssetLaunchedEvent, AssetModuleFlags, CurveModuleHeader, CurveModuleState, CurvePhase,
+    GovernanceModuleHeader, GovernanceModuleState, GovernanceVerifierKind, GovernanceVerifierState,
     PendingAuthorityTransfer, PendingBurnBpsUpdate, PendingRewardsPolicyUpdate,
     RewardsModuleHeader, RewardsModuleState, SovereignAsset, SupplyMode,
     AUTHORITY_TRANSFER_TIMELOCK_BLOCKS, GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT, MAX_TRANSFER_BURN_BPS,
@@ -510,6 +510,69 @@ fn apply_rewards_policy_now(
     state.nonce = state.nonce.saturating_add(1);
     mutator.put_rewards_policy_document(&policy_cfg.policy_hash, doc)?;
     mutator.put_rewards_module_state(asset_id, state)?;
+    Ok(())
+}
+
+/// Mirror global CBE economic state into `asset_curve/` for the canonical CBE
+/// asset id (SA-5 dual-write).
+///
+/// Canonical `BUY_CBE` / `SELL_CBE` wire still addresses the single protocol CBE
+/// curve (no per-tx `asset_id` yet). When a `CurveModuleState` row exists for
+/// `derive_cbe_token_id`, keep reserves/phase in lockstep so oracle graduation
+/// and `GET /api/v1/assets` curve headers stay consistent without reading the
+/// legacy global tree alone.
+///
+/// No-op when no curve module row exists (pure legacy CBE / pre-SA-5 chains).
+pub fn sync_curve_module_from_cbe_econ(
+    mutator: &StateMutator<'_>,
+    econ: &lib_types::BondingCurveEconomicState,
+) -> TxApplyResult<()> {
+    let cbe_id = crate::Blockchain::derive_cbe_token_id_pub();
+    let Some(existing) = mutator.get_curve_module_state(&cbe_id)? else {
+        return Ok(());
+    };
+
+    let phase = if econ.graduated {
+        CurvePhase::Graduated
+    } else {
+        // Preserve Amm if already migrated; otherwise stay on Curve.
+        match existing.phase {
+            CurvePhase::Amm => CurvePhase::Amm,
+            _ => CurvePhase::Curve,
+        }
+    };
+
+    let updated = CurveModuleState {
+        phase,
+        reserve_balance: econ.reserve_balance,
+        treasury_balance: econ.sov_treasury_cbe_balance,
+        threshold: existing.threshold,
+        sell_enabled: econ.sell_enabled,
+        amm_pool_id: existing.amm_pool_id,
+    };
+    mutator.put_curve_module_state(&cbe_id, &updated)?;
+    Ok(())
+}
+
+/// After economic-rules activation: reject CBE buy/sell when a sovereign CBE
+/// asset exists without the curve module flag (module gate for SA-5).
+pub fn require_cbe_curve_module_if_asset_present(
+    mutator: &StateMutator<'_>,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    use crate::contracts::sovereign_asset::economic_rules_active;
+
+    if !economic_rules_active(block_height) {
+        return Ok(());
+    }
+    let cbe_id = crate::Blockchain::derive_cbe_token_id_pub();
+    if let Some(asset) = mutator.get_sovereign_asset(&cbe_id)? {
+        if !asset.module_flags.has_curve() {
+            return Err(TxApplyError::InvalidType(
+                "CBE buy/sell rejected: sovereign asset present without curve module".into(),
+            ));
+        }
+    }
     Ok(())
 }
 

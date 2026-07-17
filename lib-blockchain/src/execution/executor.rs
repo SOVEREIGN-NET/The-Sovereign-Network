@@ -63,9 +63,9 @@ use super::sovereign_asset::{
     activate_pending_rewards_policies, apply_asset_authority_transfer,
     apply_asset_authority_transfer_cancel, apply_asset_burn_bps_update, apply_asset_launch,
     apply_asset_manifest_update, apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate,
-    apply_asset_rewards_policy_update,
-    apply_sovereign_token_transfer, require_governance_mint_signer, require_treasury_spend_signer,
-    AssetLaunchOutcome,
+    apply_asset_rewards_policy_update, apply_sovereign_token_transfer,
+    require_cbe_curve_module_if_asset_present, require_governance_mint_signer,
+    require_treasury_spend_signer, sync_curve_module_from_cbe_econ, AssetLaunchOutcome,
 };
 use crate::contracts::sovereign_asset::SupplyMode;
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
@@ -2149,6 +2149,15 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         payload: &[u8],
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
+        self.apply_canonical_bonding_curve_tx_at_height(mutator, payload, u64::MAX)
+    }
+
+    fn apply_canonical_bonding_curve_tx_at_height(
+        &self,
+        mutator: &StateMutator<'_>,
+        payload: &[u8],
+        block_height: u64,
+    ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
         // â”€â”€ 1. Parse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let curve_tx = decode_canonical_bonding_curve_tx(payload).map_err(|e| {
             TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}"))
@@ -2166,6 +2175,9 @@ impl BlockExecutor {
                 "Canonical curve tx: amount must be non-zero".to_string(),
             ));
         }
+
+        // SA-5: when a sovereign CBE asset exists post economic-rules, require curve module.
+        require_cbe_curve_module_if_asset_present(mutator, block_height)?;
 
         // â”€â”€ 3. Load global economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let econ = mutator.get_cbe_economic_state()?;
@@ -2359,6 +2371,9 @@ impl BlockExecutor {
             mutator.put_cbe_economic_state(&econ)?;
         }
 
+        // SA-5: dual-write reserves into asset_curve/ for CBE asset_id.
+        sync_curve_module_from_cbe_econ(mutator, &econ)?;
+
         Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
             token_id: crate::Blockchain::derive_cbe_token_id_pub(),
             buyer: sender,
@@ -2429,6 +2444,9 @@ impl BlockExecutor {
             &Address::new(sender),
             sov_out,
         )?;
+
+        // SA-5: dual-write reserves into asset_curve/ for CBE asset_id.
+        sync_curve_module_from_cbe_econ(mutator, &econ)?;
 
         Ok(CanonicalBondingCurveOutcome::Sell(
             BondingCurveSellOutcome {
@@ -2566,6 +2584,8 @@ impl BlockExecutor {
 
         // â”€â”€ 6. Persist economic state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         mutator.put_cbe_economic_state(&econ)?;
+        // SA-5: dual-write reserves into asset_curve/ for CBE asset_id.
+        sync_curve_module_from_cbe_econ(mutator, &econ)?;
 
         // â”€â”€ 7. Credit CBE tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
@@ -3355,6 +3375,7 @@ impl BlockExecutor {
         &self,
         mutator: &StateMutator<'_>,
         envelope: &CanonicalBondingCurveEnvelope,
+        block_height: u64,
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
         let signer_matches = envelope_signer_matches_sender(envelope).map_err(|e| {
             TxApplyError::InvalidType(format!("Invalid canonical curve envelope: {e}"))
@@ -3365,7 +3386,11 @@ impl BlockExecutor {
             ));
         }
 
-        self.apply_canonical_bonding_curve_tx(mutator, &envelope.payload)
+        self.apply_canonical_bonding_curve_tx_at_height(
+            mutator,
+            &envelope.payload,
+            block_height,
+        )
     }
 
     /// Apply a single transaction
@@ -3877,7 +3902,11 @@ impl BlockExecutor {
             TransactionType::BondingCurveGraduate => Ok(TxOutcome::BondingCurveGraduate),
             TransactionType::BondingCurveBuy => {
                 let envelope = extract_bonding_curve_envelope(tx, true)?;
-                match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
+                match self.apply_canonical_bonding_curve_envelope(
+                    mutator,
+                    &envelope,
+                    block_height,
+                )? {
                     CanonicalBondingCurveOutcome::Buy(outcome) => {
                         Ok(TxOutcome::BondingCurveBuy(outcome))
                     }
@@ -3888,7 +3917,11 @@ impl BlockExecutor {
             }
             TransactionType::BondingCurveSell => {
                 let envelope = extract_bonding_curve_envelope(tx, false)?;
-                match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
+                match self.apply_canonical_bonding_curve_envelope(
+                    mutator,
+                    &envelope,
+                    block_height,
+                )? {
                     CanonicalBondingCurveOutcome::Sell(outcome) => {
                         Ok(TxOutcome::BondingCurveSell(outcome))
                     }
@@ -6783,6 +6816,96 @@ mod tests {
     }
 
     #[test]
+    fn test_cbe_buy_dual_writes_asset_curve_module_state() {
+        use crate::contracts::bonding_curve::canonical::{GRAD_THRESHOLD, SCALE};
+        use crate::contracts::sovereign_asset::{CurveModuleState, CurvePhase};
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+        };
+        use lib_types::{
+            BondingCurveAccountState, BondingCurveBuyTx, BondingCurveEconomicState, Nonce48,
+        };
+
+        let store = create_test_store();
+        let cbe_id = crate::Blockchain::derive_cbe_token_id_pub();
+
+        store.begin_block(0).unwrap();
+        {
+            let sov_token_id =
+                crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = crate::storage::Address::new([0x33; 32]);
+            store
+                .set_token_balance(&sov_token_id, &addr, 100_000 * SCALE)
+                .unwrap();
+
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x33; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x33; 32],
+                    balance_cbe: 0,
+                    balance_sov: 0,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+            seed.put_cbe_economic_state(&BondingCurveEconomicState {
+                s_c: 0,
+                reserve_balance: 0,
+                sell_enabled: true,
+                ..Default::default()
+            })
+            .unwrap();
+            // SA-5: pre-seed curve module for CBE asset id (as AssetLaunch would).
+            seed.put_curve_module_state(
+                &cbe_id,
+                &CurveModuleState {
+                    phase: CurvePhase::Curve,
+                    reserve_balance: 0,
+                    treasury_balance: 0,
+                    threshold: GRAD_THRESHOLD,
+                    sell_enabled: true,
+                    amm_pool_id: None,
+                },
+            )
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+        let amount_in = 100 * SCALE;
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
+                action: BONDING_CURVE_BUY_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(0).unwrap(),
+                sender: [0x33; 32],
+                amount_in,
+                max_price: u128::MAX,
+                expected_s_c: 0,
+            }));
+
+        executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect("buy must succeed");
+        drop(mutator);
+        store.commit_block().unwrap();
+
+        let econ = store.get_cbe_economic_state().unwrap();
+        let curve = store
+            .get_curve_module_state(&cbe_id)
+            .unwrap()
+            .expect("curve module dual-write");
+        assert_eq!(curve.reserve_balance, econ.reserve_balance);
+        assert_eq!(curve.treasury_balance, econ.sov_treasury_cbe_balance);
+        assert_eq!(curve.sell_enabled, econ.sell_enabled);
+        assert!(curve.reserve_balance > 0, "buy must credit reserve");
+    }
+
+    #[test]
     fn test_canonical_bonding_curve_sell_executes_economic_computation() {
         use crate::contracts::bonding_curve::canonical::SCALE;
         use crate::execution::tx_apply::StateMutator;
@@ -7137,7 +7260,7 @@ mod tests {
         };
 
         let err = executor
-            .apply_canonical_bonding_curve_envelope(&mutator, &envelope)
+            .apply_canonical_bonding_curve_envelope(&mutator, &envelope, 0)
             .expect_err("mismatched envelope signer must be rejected");
         assert!(err
             .to_string()
