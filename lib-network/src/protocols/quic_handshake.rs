@@ -206,7 +206,7 @@ pub async fn handshake_as_initiator(
             "QUIC: starting UHP v2 handshake as initiator"
         );
 
-        let capabilities = create_quic_capabilities();
+        let capabilities = quic_uhp_capabilities();
         let result = crate::handshake::core::handshake_as_initiator(
             &mut stream,
             &ctx,
@@ -214,7 +214,7 @@ pub async fn handshake_as_initiator(
             capabilities,
         )
         .await
-        .context("UHP v2 handshake failed")?;
+        .context("UHP v2 handshake failed (stage=uhp_handshake)")?;
 
         stream.finish().await?;
 
@@ -346,13 +346,15 @@ pub async fn handshake_as_responder(
         );
 
         trace!(peer_addr = %conn.remote_address(), "QUIC responder: calling core::handshake_as_responder...");
-        let capabilities = create_quic_capabilities();
+        let capabilities = quic_uhp_capabilities();
         let result = crate::handshake::core::handshake_as_responder(
             &mut stream,
             &ctx,
             identity,
             capabilities,
-        ).await.context("UHP v2 handshake failed")?;
+        )
+        .await
+        .context("UHP v2 handshake failed (stage=uhp_handshake)")?;
         trace!(peer_addr = %conn.remote_address(), "QUIC responder: core handshake completed successfully");
 
         stream.finish().await?;
@@ -395,9 +397,14 @@ pub async fn handshake_as_responder(
 /// `lib-network/tests/handshake_wire_bytes_test.rs::capture_client_hello_bytes_for_diff`.
 /// Run that test with `--nocapture` to get the canonical hex dump and
 /// compare against an equivalent capture from any reimplementation.
+///
 /// Minimal QUIC capabilities — matches the mobile `quinn-ffi`
 /// `build_capabilities()` envelope that production gateways accept.
-fn create_quic_capabilities() -> HandshakeCapabilities {
+///
+/// Shared by initiator, responder, and external golden tests so there is
+/// exactly one constructor for the capabilities that enter the signed
+/// transcript (MSG-NODE-001).
+pub fn quic_uhp_capabilities() -> HandshakeCapabilities {
     let mut caps = HandshakeCapabilities::default();
     caps.protocols = vec!["quic".to_string()];
     caps.pqc_capability = PqcCapability::Kyber1024Dilithium5;
