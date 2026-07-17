@@ -1084,28 +1084,27 @@ impl ZhtpUnifiedServer {
                 }
             });
 
-            // Wire mesh relay receiver — incoming relayed messages either push to a
-            // live inbound subscriber or fall back to the deposit store.
+            // Wire mesh relay receiver — always deposit first (MSG-R2), then
+            // best-effort live push. Deposit stays until client ack.
             let deposits_relay = deposits.clone();
             let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
             tokio::spawn(async move {
                 let provider =
                     crate::runtime::messaging_provider::get_global_messaging_provider();
                 while let Some((recipient_did, envelope)) = relay_rx.recv().await {
-                    // Try live push first (MSG-R2 will deposit before push).
-                    if provider.try_push(&recipient_did, envelope.clone()).await {
-                        tracing::debug!(
-                            "Relay pushed to live subscriber for {}",
-                            recipient_did
-                        );
-                        continue;
-                    }
-                    // Fallback: deposit
+                    // MSG-R2: always deposit first, then best-effort live push.
                     let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
                         .map(|env| env.sender_did)
                         .unwrap_or_else(|_| "mesh_relay".to_string());
-                    if let Err(e) = deposits_relay.deposit_one(&sender, &recipient_did, envelope) {
+                    if let Err(e) = deposits_relay.deposit_one(&sender, &recipient_did, envelope.clone()) {
                         tracing::warn!("Failed to deposit relayed message: {}", e);
+                        continue;
+                    }
+                    if provider.try_push(&recipient_did, envelope).await {
+                        tracing::debug!(
+                            "Relay deposited + pushed to live subscriber for {}",
+                            recipient_did
+                        );
                     }
                 }
             });

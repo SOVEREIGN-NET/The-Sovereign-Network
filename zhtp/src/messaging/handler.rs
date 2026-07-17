@@ -140,7 +140,7 @@ impl MessagingHandler {
     }
 
     /// POST /api/v1/msg/send
-    /// Relay an encrypted envelope to the recipient via QUIC mesh.
+    /// Deposit first (durable), then best-effort live push + mesh relay.
     async fn handle_send(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: SendRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -155,26 +155,7 @@ impl MessagingHandler {
 
         let recipient_did = envelope.recipient_did.clone();
 
-        let messaging_provider =
-            crate::runtime::messaging_provider::get_global_messaging_provider();
-
-        // Check if recipient has a live inbound subscriber on this node — push it
-        // straight onto the stream. Skips the deposit-then-poll round trip.
-        if messaging_provider
-            .try_push(&recipient_did, envelope_bytes.clone())
-            .await
-        {
-            info!(
-                "Message pushed to live subscriber for {}",
-                &recipient_did[..16.min(recipient_did.len())]
-            );
-            return json_response(json!({
-                "status": "delivered",
-                "recipient_did": recipient_did,
-            }));
-        }
-
-        // Deposit when no live subscriber (MSG-R2 will deposit before push too).
+        // MSG-R2: always deposit first — live push is best-effort only.
         // Local store-full is not fatal: still mesh-relay so peers can deposit.
         if let Err(e) = self.deposits.deposit_one(
             &envelope.sender_did,
@@ -186,6 +167,13 @@ impl MessagingHandler {
                 "msg/send: local deposit failed — continuing mesh relay"
             );
         }
+
+        let messaging_provider =
+            crate::runtime::messaging_provider::get_global_messaging_provider();
+
+        let _pushed = messaging_provider
+            .try_push(&recipient_did, envelope_bytes.clone())
+            .await;
 
         // Also relay via mesh so all nodes have the message
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
