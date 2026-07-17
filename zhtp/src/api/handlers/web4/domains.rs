@@ -2352,6 +2352,7 @@ mod tests {
             version,
             updated_at: 1000,
             fee_tx_hash: String::new(),
+            asset_id: None,
         }
     }
 

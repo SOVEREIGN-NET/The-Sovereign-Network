@@ -536,12 +536,22 @@ impl AssetsHandler {
             .token_balance(&asset_id, &key_id)
             .map_err(|e| anyhow::anyhow!("balance lookup failed: {}", e))?;
 
+        // Dual-write token_id for clients migrating from /api/v1/token/* (SA-8).
+        let id = hex::encode(asset_id);
         create_json_response(json!({
-            "asset_id": hex::encode(asset_id),
+            "asset_id": id.clone(),
+            "token_id": id,
             "address": address,
             "balance": balance.to_string(),
             "symbol": asset.symbol,
         }))
+    }
+
+    /// GET /api/v1/assets/balances/{address} — bulk portfolio balances (wallet UX successor).
+    async fn handle_balances_for_address(&self, address: &str) -> Result<ZhtpResponse> {
+        let bc = self.blockchain.read().await;
+        let body = crate::api::handlers::token::build_portfolio_balances_json(&bc, address)?;
+        create_json_response(body)
     }
 
     /// GET /api/v1/assets/symbol/available/{symbol} — case-insensitive symbol uniqueness check.
@@ -566,17 +576,19 @@ impl AssetsHandler {
             }));
         }
 
-        if let Some(token) = bc
+                if let Some(token) = bc
             .iter_token_contract_metadata()
             .into_iter()
             .find(|t| t.symbol.to_ascii_uppercase() == symbol_upper)
         {
+            let id = hex::encode(token.token_id);
             return create_json_response(json!({
                 "symbol": symbol,
                 "available": false,
                 "reason": format!("Symbol already used by legacy token '{}'", token.name),
                 "existing_token": {
-                    "token_id": hex::encode(token.token_id),
+                    "token_id": id.clone(),
+                    "asset_id": id,
                     "name": token.name,
                     "symbol": token.symbol,
                 }
@@ -647,6 +659,10 @@ impl ZhtpRequestHandler for AssetsHandler {
                     ["symbol", "available", symbol] if !symbol.is_empty() => {
                         self.handle_symbol_available(symbol).await
                     }
+                    // Bulk portfolio (must be before [id] so "balances" is not treated as an asset id).
+                    ["balances", address] if !address.is_empty() => {
+                        self.handle_balances_for_address(address).await
+                    }
                     [id] => self.handle_get(id).await,
                     [id, "interface"] => self.handle_interface(id).await,
                     [id, "balances", address] => self.handle_balance(id, address).await,
@@ -705,6 +721,9 @@ mod tests {
             curve: None,
             rewards: None,
             governance: None,
+            dao_class: lib_blockchain::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
+            pending_burn_bps: None,
         }
     }
 
