@@ -1,13 +1,17 @@
 //! Canonical domain-update signing and Dilithium5 verification.
 //!
-//! Wire format matches zhtp-cli and lib-client:
-//!   `domain|expected_previous_manifest_cid|new_manifest_cid|timestamp`
+//! Wire format (with domain separation prefix):
+//!   `ZHTP-domain-update-v1\0domain|expected_previous_manifest_cid|new_manifest_cid|timestamp`
 
 use anyhow::{anyhow, Result};
 use lib_crypto::verify_signature;
 
 /// Hex-encoded Dilithium5 detached signatures are 4595 bytes → 9190 hex chars.
 pub const DILITHIUM5_HEX_SIGNATURE_LEN: usize = 9190;
+
+/// Domain separation prefix for domain update signatures.
+/// Mirrors the `ZHTP-identity-sig-v1\0` pattern used in identity attestations.
+pub const ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN: &[u8] = b"ZHTP-domain-update-v1\0";
 
 /// Returns true when a stored owner public key is present (full Dilithium5 size, non-zero).
 pub fn has_owner_signing_key(owner_dilithium_pk: &[u8]) -> bool {
@@ -23,18 +27,24 @@ fn owner_pk_array(owner_dilithium_pk: &[u8]) -> Result<[u8; 2592]> {
     Ok(arr)
 }
 
-/// Build the canonical domain-update signing message.
+/// Build the canonical domain-update signing message with domain separation prefix.
+///
+/// Format: `ZHTP-domain-update-v1\0domain|expected_previous_manifest_cid|new_manifest_cid|timestamp`
 pub fn domain_update_signing_message(
     domain: &str,
     expected_previous_manifest_cid: &str,
     new_manifest_cid: &str,
     timestamp: u64,
 ) -> Vec<u8> {
-    format!(
-        "{}|{}|{}|{}",
-        domain, expected_previous_manifest_cid, new_manifest_cid, timestamp
-    )
-    .into_bytes()
+    let mut message = ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN.to_vec();
+    message.extend_from_slice(
+        format!(
+            "{}|{}|{}|{}",
+            domain, expected_previous_manifest_cid, new_manifest_cid, timestamp
+        )
+        .as_bytes(),
+    );
+    message
 }
 
 /// Reject missing or malformed owner signatures before mutating domain state.
@@ -249,5 +259,67 @@ mod tests {
         )
         .expect("verify runs");
         assert!(!bad);
+    }
+
+    #[test]
+    fn domain_update_message_contains_prefix() {
+        let domain = "app.zhtp";
+        let prev = "bafkabc123";
+        let new_cid = "bafkdef456";
+        let timestamp = 1_700_000_000u64;
+
+        let message = domain_update_signing_message(domain, prev, new_cid, timestamp);
+
+        // Verify the prefix is present at the start of the message
+        assert!(
+            message.starts_with(ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN),
+            "Message must start with domain separation prefix"
+        );
+
+        // Verify the payload follows the prefix correctly
+        let payload = &message[ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN.len()..];
+        let expected_payload = format!(
+            "{}|{}|{}|{}",
+            domain, prev, new_cid, timestamp
+        );
+        assert_eq!(
+            payload,
+            expected_payload.as_bytes(),
+            "Payload after prefix must match pipe-delimited format"
+        );
+    }
+
+    #[test]
+    fn domain_update_signature_fails_without_prefix() {
+        // A signature created over the raw (unprefixed) message must fail verification
+        // against the canonical helper that expects the prefix.
+        let keypair = generate_keypair().expect("keypair");
+        let domain = "app.zhtp";
+        let prev = "bafkabc123";
+        let new_cid = "bafkdef456";
+        let timestamp = 1_700_000_000u64;
+
+        // Sign the OLD raw format (without prefix)
+        let raw_message = format!(
+            "{}|{}|{}|{}",
+            domain, prev, new_cid, timestamp
+        );
+        let sig = sign_message(&keypair, raw_message.as_bytes()).expect("sign");
+        let sig_hex = hex::encode(&sig.signature);
+
+        // Verify using the canonical helper (which expects the prefix) should FAIL
+        let ok = verify_domain_update_signature(
+            keypair.public_key.dilithium_pk.as_slice(),
+            domain,
+            prev,
+            new_cid,
+            timestamp,
+            &sig_hex,
+        )
+        .expect("verify runs");
+        assert!(
+            !ok,
+            "Signature over raw unprefixed message must fail verification with canonical helper"
+        );
     }
 }

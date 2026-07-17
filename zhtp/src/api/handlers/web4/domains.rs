@@ -1836,13 +1836,21 @@ impl Web4Handler {
         // - Web4Manifest CID = derived deterministically from DeployManifest, used for resolution
         // - The transform from DeployManifest → Web4Manifest is deterministic and auditable
         // - Both CIDs are stored: DeployManifest for audit, Web4Manifest for runtime
-        let signed_message = format!(
-            "{}|{}|{}|{}",
-            update_request.domain,
-            update_request.expected_previous_manifest_cid,
-            update_request.new_manifest_cid,
-            update_request.timestamp
-        );
+        // Reconstruct the signed message with domain separation prefix and verify
+        let signed_message = {
+            let mut msg = b"ZHTP-domain-update-v1\0".to_vec();
+            msg.extend_from_slice(
+                format!(
+                    "{}|{}|{}|{}",
+                    update_request.domain,
+                    update_request.expected_previous_manifest_cid,
+                    update_request.new_manifest_cid,
+                    update_request.timestamp
+                )
+                .as_bytes(),
+            );
+            msg
+        };
         let signature_bytes = hex::decode(&update_request.signature)
             .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
 
@@ -1852,7 +1860,7 @@ impl Web4Handler {
             .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
 
         let is_valid = lib_crypto::verify_signature(
-            signed_message.as_bytes(),
+            &signed_message,
             &signature_bytes,
             &owner_identity.public_key.as_bytes(),
         )
