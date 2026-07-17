@@ -125,9 +125,9 @@ pub fn apply_reward_claim(
         return reject_claim("signer is not authorized token creator");
     }
 
-    let date = utc_date_from_ts(block_timestamp);
-    let week = iso_week_from_ts(block_timestamp);
-    let today_ord = utc_day_ordinal_from_ts(block_timestamp);
+    let date = utc_date_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
+    let week = iso_week_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
+    let today_ord = utc_day_ordinal_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
     let token_id = &data.token_id;
 
     let mut streak_day = 1u32;

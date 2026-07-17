@@ -106,9 +106,9 @@ pub fn plan_reward_claim(
         Err(_) => return Err("owner_did_not_registered".into()),
     }
     let ts = claim_unix_ts();
-    let date = utc_date_from_ts(ts);
-    let week = iso_week_from_ts(ts);
-    let today_ord = utc_day_ordinal_from_ts(ts);
+    let date = utc_date_from_ts(ts)?;
+    let week = iso_week_from_ts(ts)?;
+    let today_ord = utc_day_ordinal_from_ts(ts)?;
 
     match spec.event {
         RewardEventKind::Welcome => {
