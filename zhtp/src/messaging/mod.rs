@@ -7,6 +7,7 @@ pub mod envelope;
 pub mod session;
 pub mod ratchet;
 pub mod deposit;
+pub mod did_resolve;
 pub mod presence;
 pub mod handler;
 pub mod inbound_stream;
