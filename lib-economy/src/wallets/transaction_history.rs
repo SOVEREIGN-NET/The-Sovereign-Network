@@ -16,6 +16,10 @@ use crate::wasm::logging::info;
 // integrations (avoiding blockchain circular dependency)
 use crate::network_types::{get_mesh_status, get_network_statistics};
 
+
+/// Parse a history unix timestamp for chrono without panicking or wrapping.
+///
+/// Returns `None` when the value does not fit `i64` or is outside chrono's range.
 /// Ensure a unix-second timestamp is safe for chrono and for storage in history.
 ///
 /// Accepts only values that fit in `i64` and that `chrono::DateTime::from_timestamp`
@@ -32,8 +36,6 @@ fn validate_history_timestamp(ts: u64) -> Result<u64> {
     Ok(ts)
 }
 
-/// Parse a stored history timestamp without panicking (defence for Deserialize
-/// / legacy records that never went through ingest validation).
 fn parse_history_datetime(ts: u64) -> Option<chrono::DateTime<chrono::Utc>> {
     let ts_i = i64::try_from(ts).ok()?;
     chrono::DateTime::from_timestamp(ts_i, 0)
@@ -181,6 +183,13 @@ pub struct TransactionAnalytics {
     pub daily_patterns: HashMap<u8, DailyActivityData>, // Hour of day -> activity
     /// Performance metrics
     pub performance_metrics: TransactionPerformanceMetrics,
+    /// Records counted in category/volume/failure stats but skipped for
+    /// `monthly_trends` / `daily_patterns` because the timestamp is not
+    /// chrono-representable. Lets callers reconcile
+    /// `sum(monthly_trends[*].total_transactions) + excluded_invalid_timestamps
+    /// == sum(transaction_counts[*])` (#2874).
+    #[serde(default)]
+    pub excluded_invalid_timestamps: u64,
 }
 
 /// Monthly transaction data for trend analysis
@@ -764,23 +773,25 @@ impl TransactionHistoryManager {
         let mut daily_patterns = HashMap::new();
         let mut failure_analysis = HashMap::new();
 
+        let mut excluded_invalid_timestamps = 0u64;
+
         // Process all transactions
         for tx in &self.transactions {
-            // Category counts and volumes (timestamp-independent)
+            // Category counts and volumes (always counted — timestamp-independent)
             *transaction_counts.entry(tx.category.clone()).or_insert(0) += 1;
             *volume_by_category
                 .entry(tx.category.clone())
                 .or_insert(0u128) += tx.amount;
             *fees_by_category.entry(tx.category.clone()).or_insert(0u128) += tx.fees;
 
-            // Failure analysis (timestamp-independent; keep even if ts is bad)
+            // Failure analysis (timestamp-independent)
             if let TransactionStatus::Failed { reason } = &tx.status {
                 *failure_analysis.entry(reason.clone()).or_insert(0) += 1;
             }
 
-            // Legacy / deserialized records may still hold out-of-range timestamps
-            // despite ingest validation (#2872). Never panic analytics on those.
+            // Time-series only when timestamp is chrono-representable (#2870 / #2874)
             let Some(dt) = parse_history_datetime(tx.timestamp) else {
+                excluded_invalid_timestamps = excluded_invalid_timestamps.saturating_add(1);
                 info!(
                     "skipping invalid timestamp {} for tx {} in analytics time-series",
                     tx.timestamp,
@@ -927,6 +938,7 @@ impl TransactionHistoryManager {
             monthly_trends,
             daily_patterns,
             performance_metrics,
+            excluded_invalid_timestamps,
         })
     }
 }
@@ -1146,6 +1158,82 @@ mod tests {
                 .volume_by_category
                 .get(&TransactionCategory::Payment),
             Some(&3000)
+        );
+    }
+
+    #[tokio::test]
+    async fn excluded_invalid_timestamps_surfaces_gap() {
+        let node_id = [1u8; 32];
+        let mut manager = TransactionHistoryManager::new(node_id);
+
+        // Valid tx
+        let mut good =
+            create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+        good.timestamp = 1_700_000_000; // ~2023, chrono-valid
+        manager.add_transaction(good).await.unwrap();
+
+        // Inject invalid timestamp record directly (bypasses ingest if any)
+        let mut bad =
+            create_payment_transaction([3u8; 32], [4u8; 32], 500, Priority::Normal).unwrap();
+        bad.timestamp = u64::MAX;
+        // Build record the same way add_transaction would, without validation.
+        let record = TransactionRecord {
+            blockchain_tx_hash: bad.tx_id,
+            internal_tx_id: hex::encode(bad.tx_id),
+            transaction_type: bad.tx_type.clone(),
+            category: TransactionCategory::from_transaction_type(&bad.tx_type),
+            from_address: Some(bad.from),
+            to_address: Some(bad.to),
+            amount: bad.amount,
+            fees: bad.total_fee,
+            gas_used: None,
+            block_height: Some(0),
+            block_hash: None,
+            transaction_index: None,
+            status: TransactionStatus::Failed {
+                reason: "bad_ts".into(),
+            },
+            priority: Priority::Normal,
+            timestamp: u64::MAX,
+            confirmed_at: None,
+            finalized_at: None,
+            network_conditions: NetworkConditions::default(),
+            metadata: std::collections::HashMap::new(),
+            related_transactions: Vec::new(),
+        };
+        let index = manager.transactions.len();
+        manager.hash_index.insert(record.blockchain_tx_hash, index);
+        manager
+            .internal_id_index
+            .insert(record.internal_tx_id.clone(), index);
+        manager.transactions.push(record);
+
+        let analytics = manager.generate_analytics().await.unwrap();
+
+        // Category totals include both
+        assert_eq!(
+            analytics
+                .transaction_counts
+                .get(&TransactionCategory::Payment),
+            Some(&2)
+        );
+        // Failure analysis includes the invalid-timestamp failed tx
+        assert_eq!(analytics.performance_metrics.failure_analysis.get("bad_ts"), Some(&1));
+        // Time series excludes the invalid one
+        assert_eq!(analytics.excluded_invalid_timestamps, 1);
+        let monthly_total: u64 = analytics
+            .monthly_trends
+            .values()
+            .map(|m| m.total_transactions)
+            .sum();
+        assert_eq!(monthly_total, 1);
+        assert_eq!(
+            monthly_total + analytics.excluded_invalid_timestamps,
+            analytics
+                .transaction_counts
+                .values()
+                .copied()
+                .sum::<u64>()
         );
     }
 }
