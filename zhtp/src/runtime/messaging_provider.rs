@@ -101,7 +101,10 @@ impl MessagingProvider {
 
     /// Attempt to push an envelope to the registered subscriber for this DID.
     /// Returns `true` if the push succeeded. `false` means no subscriber or
-    /// the subscriber's queue is full — caller should fall back to deposit.
+    /// the subscriber's queue is full.
+    ///
+    /// Callers must **deposit first** (MSG-R2). A successful push is not
+    /// delivery confirmation — the deposit remains until client ack.
     pub async fn try_push(&self, recipient_did: &str, envelope: Vec<u8>) -> bool {
         let subscribers = self.subscribers.read().await;
         if let Some(entry) = subscribers.get(recipient_did) {
