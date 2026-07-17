@@ -20,6 +20,7 @@ use crate::governance_proof::{
     PROPOSAL_TYPE_MANIFEST_UPDATE, PROPOSAL_TYPE_REWARDS_DELEGATE_ROTATE,
     PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
 };
+use crate::manifest_pin::{verify_manifest_pin, ManifestPinContext};
 use crate::transaction::asset_tx::{
     AssetAuthorityProof, AssetAuthorityTransferCancelPayloadV1,
     AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
@@ -64,6 +65,19 @@ pub fn apply_asset_launch(
             "AssetLaunch treasury_key_id must differ from creator".to_string(),
         ));
     }
+
+    verify_manifest_pin(
+        mutator.store(),
+        &payload.manifest_cid,
+        &payload.manifest_hash,
+        ManifestPinContext {
+            name: Some(&payload.name),
+            symbol: Some(&payload.symbol),
+            decimals: Some(payload.decimals),
+            asset_id: Some(&asset_id),
+        },
+        block_height,
+    )?;
 
     let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
     let creator_recipient = if creator_allocation > 0 {
@@ -298,9 +312,18 @@ pub fn apply_asset_manifest_update(
         block_height,
     )?;
 
-    if payload.manifest_cid == [0u8; 32] || payload.manifest_hash == [0u8; 32] {
-        return Err(TxApplyError::InvalidType("manifest fields required".into()));
-    }
+    verify_manifest_pin(
+        mutator.store(),
+        &payload.manifest_cid,
+        &payload.manifest_hash,
+        ManifestPinContext {
+            name: Some(&asset.name),
+            symbol: Some(&asset.symbol),
+            decimals: Some(asset.decimals),
+            asset_id: Some(&payload.asset_id),
+        },
+        block_height,
+    )?;
 
     asset.manifest_cid = Some(payload.manifest_cid);
     asset.manifest_hash = Some(payload.manifest_hash);

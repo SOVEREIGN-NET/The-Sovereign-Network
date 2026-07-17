@@ -183,6 +183,32 @@ pub fn economic_rules_active(block_height: u64) -> bool {
     block_height >= GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT
 }
 
+/// Block height at which manifest DHT pin verification becomes consensus-active (SA-7).
+///
+/// Before this height, `AssetLaunch` / `AssetManifestUpdate` accept hash/CID commits
+/// without a local pin lookup so replay stays deterministic.
+#[cfg(test)]
+pub const MANIFEST_PIN_GATE_ACTIVATION_HEIGHT: u64 = 0;
+#[cfg(not(test))]
+pub const MANIFEST_PIN_GATE_ACTIVATION_HEIGHT: u64 = 80_000;
+
+/// When the pin gate is active but content is not in the validator's local DHT cache,
+/// reject the tx if true (strict); allow best-effort if false (design doc §5).
+#[cfg(test)]
+pub const MANIFEST_PIN_STRICT_MODE: bool = true;
+#[cfg(not(test))]
+pub const MANIFEST_PIN_STRICT_MODE: bool = false;
+
+#[inline]
+pub fn manifest_pin_gate_active(block_height: u64) -> bool {
+    block_height >= MANIFEST_PIN_GATE_ACTIVATION_HEIGHT
+}
+
+#[inline]
+pub fn manifest_pin_strict_mode() -> bool {
+    MANIFEST_PIN_STRICT_MODE
+}
+
 /// Default multisig threshold: floor(N/2) + 1.
 pub fn default_governance_threshold(n: usize) -> u8 {
     ((n / 2) + 1) as u8
