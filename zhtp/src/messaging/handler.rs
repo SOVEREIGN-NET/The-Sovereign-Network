@@ -338,29 +338,28 @@ impl MessagingHandler {
             return Ok(error_resp(ZhtpStatus::BadRequest, "No valid envelopes"));
         }
 
-        // Optional verify each envelope when enabled
-        if verify_envelopes_enabled() {
-            for env_bytes in &envelopes {
-                let envelope: super::envelope::MessageEnvelope =
-                    match bincode::deserialize(env_bytes) {
-                        Ok(e) => e,
-                        Err(e) => {
-                            return Ok(error_resp(
-                                ZhtpStatus::BadRequest,
-                                &format!("Invalid envelope: {e}"),
-                            ));
-                        }
-                    };
-                if envelope.sender_did != req.sender_did {
-                    metrics().auth_rejects.fetch_add(1, Ordering::Relaxed);
+        // MSG-R8: every envelope's embedded sender must match the deposit sender
+        // (session-bound above). Optional Dilithium verify when env is set.
+        for env_bytes in &envelopes {
+            let envelope: super::envelope::MessageEnvelope = match bincode::deserialize(env_bytes)
+            {
+                Ok(e) => e,
+                Err(e) => {
                     return Ok(error_resp(
-                        ZhtpStatus::Forbidden,
-                        "envelope sender_did does not match deposit sender_did",
+                        ZhtpStatus::BadRequest,
+                        &format!("Invalid envelope: {e}"),
                     ));
                 }
-                if let Err(e) = self.maybe_verify_envelope(&envelope).await {
-                    return Ok(error_resp(ZhtpStatus::BadRequest, &e));
-                }
+            };
+            if envelope.sender_did != req.sender_did {
+                metrics().auth_rejects.fetch_add(1, Ordering::Relaxed);
+                return Ok(error_resp(
+                    ZhtpStatus::Forbidden,
+                    "envelope sender_did does not match deposit sender_did",
+                ));
+            }
+            if let Err(e) = self.maybe_verify_envelope(&envelope).await {
+                return Ok(error_resp(ZhtpStatus::BadRequest, &e));
             }
         }
 
@@ -512,9 +511,7 @@ impl MessagingHandler {
         json_response(json!({
             "status": "success",
             "metrics": snap,
-            "at_rest_encryption": std::env::var("ZHTP_MSG_AT_REST_KEY")
-                .map(|v| !v.trim().is_empty())
-                .unwrap_or(false),
+            "at_rest_encryption": self.deposits.at_rest_enabled(),
             "envelope_verify": verify_envelopes_enabled(),
         }))
     }

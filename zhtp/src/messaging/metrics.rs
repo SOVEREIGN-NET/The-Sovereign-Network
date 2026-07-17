@@ -5,13 +5,25 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
-/// Redact a DID for logs: keep scheme + first 8 hex chars of identity.
+/// Redact a DID for logs: keep scheme prefix + first 8 identity chars.
+///
+/// Example: `did:zhtp:abcdef012345…` → `did:zhtp:abcdef01…`
 pub fn redact_did(did: &str) -> String {
-    const KEEP: usize = 20; // "did:zhtp:" (9) + 8 hex + "…"
-    if did.len() <= KEEP {
+    const ID_KEEP: usize = 8;
+    if let Some(last_colon) = did.rfind(':') {
+        let scheme = &did[..=last_colon];
+        let identity = &did[last_colon + 1..];
+        if identity.chars().count() <= ID_KEEP {
+            return did.to_string();
+        }
+        let kept: String = identity.chars().take(ID_KEEP).collect();
+        return format!("{scheme}{kept}…");
+    }
+    if did.chars().count() <= ID_KEEP {
         return did.to_string();
     }
-    format!("{}…", &did[..KEEP.min(did.len())])
+    let kept: String = did.chars().take(ID_KEEP).collect();
+    format!("{kept}…")
 }
 
 #[derive(Debug, Default)]
@@ -71,4 +83,20 @@ static METRICS: OnceLock<MessagingMetrics> = OnceLock::new();
 
 pub fn metrics() -> &'static MessagingMetrics {
     METRICS.get_or_init(MessagingMetrics::default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_did;
+
+    #[test]
+    fn redact_keeps_scheme_and_eight_id_chars() {
+        let full = "did:zhtp:abcdef0123456789deadbeef";
+        assert_eq!(redact_did(full), "did:zhtp:abcdef01…");
+    }
+
+    #[test]
+    fn redact_short_did_unchanged() {
+        assert_eq!(redact_did("did:zhtp:abc"), "did:zhtp:abc");
+    }
 }

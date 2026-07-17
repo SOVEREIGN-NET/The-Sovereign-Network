@@ -33,11 +33,15 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use bincode::Options;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use super::metrics::{metrics, redact_did};
+
+/// Max bincode size when loading a single stored deposit (DoS guard).
+const MAX_STORED_DEPOSIT_BYTES: u64 = 512 * 1024;
 
 /// How long undelivered deposits are kept before GC purges them.
 const DEPOSIT_TTL: Duration = Duration::from_secs(48 * 3600); // 48 hours
@@ -97,7 +101,16 @@ fn load_at_rest_key() -> Option<[u8; 32]> {
     if raw.is_empty() {
         return None;
     }
-    let bytes = hex::decode(raw).ok()?;
+    let bytes = match hex::decode(raw) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "ZHTP_MSG_AT_REST_KEY is not valid hex — at-rest disabled"
+            );
+            return None;
+        }
+    };
     if bytes.len() != 32 {
         warn!(
             len = bytes.len(),
@@ -108,6 +121,25 @@ fn load_at_rest_key() -> Option<[u8; 32]> {
     let mut key = [0u8; 32];
     key.copy_from_slice(&bytes);
     Some(key)
+}
+
+/// Match `bincode::serialize` defaults (fixint) with a size limit for load-time DoS guard.
+fn deposit_bincode() -> impl Options {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(MAX_STORED_DEPOSIT_BYTES)
+}
+
+fn deserialize_stored(v: &[u8]) -> Result<StoredDeposit, String> {
+    deposit_bincode()
+        .deserialize(v)
+        .map_err(|e| format!("deserialize deposit: {e}"))
+}
+
+fn serialize_stored(stored: &StoredDeposit) -> Result<Vec<u8>, String> {
+    deposit_bincode()
+        .serialize(stored)
+        .map_err(|e| format!("serialize deposit: {e}"))
 }
 
 fn seal_blob(plain: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
@@ -185,6 +217,11 @@ impl DepositStore {
         Self::open(path)
     }
 
+    /// Whether envelope blobs are encrypted at rest with a loaded key.
+    pub fn at_rest_enabled(&self) -> bool {
+        self.at_rest_key.is_some()
+    }
+
     fn from_db(db: sled::Db, at_rest_key: Option<[u8; 32]>) -> Self {
         let deposits = db
             .open_tree(TREE_DEPOSITS)
@@ -215,7 +252,7 @@ impl DepositStore {
                 skipped += 1;
                 continue;
             };
-            let Ok(stored) = bincode::deserialize::<StoredDeposit>(&v) else {
+            let Ok(stored) = deserialize_stored(&v) else {
                 skipped += 1;
                 continue;
             };
@@ -274,7 +311,14 @@ impl DepositStore {
             return false;
         };
         if raw.len() != 8 {
-            return true;
+            // Corrupt entry — drop so delivery can recover.
+            let _ = self.tombstones.remove(message_id.as_bytes());
+            warn!(
+                message_id = %message_id,
+                len = raw.len(),
+                "corrupt tombstone removed"
+            );
+            return false;
         }
         let mut buf = [0u8; 8];
         buf.copy_from_slice(&raw);
@@ -303,7 +347,7 @@ impl DepositStore {
             recipient_did: delivery.recipient_did.clone(),
             at_rest,
         };
-        let bytes = bincode::serialize(&stored).map_err(|e| format!("serialize deposit: {e}"))?;
+        let bytes = serialize_stored(&stored)?;
         self.deposits
             .insert(delivery.message_id.as_bytes(), bytes)
             .map_err(|e| format!("sled insert: {e}"))?;

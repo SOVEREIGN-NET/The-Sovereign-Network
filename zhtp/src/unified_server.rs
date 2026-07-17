@@ -1106,10 +1106,23 @@ impl ZhtpUnifiedServer {
                     crate::messaging::metrics::metrics()
                         .mesh_relays_in
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
-                        .map(|env| env.sender_did)
-                        .unwrap_or_else(|_| "mesh_relay".to_string());
-                    if let Err(e) = deposits_relay.deposit_one(&sender, &recipient_did, envelope.clone()) {
+                    let sender = match bincode::deserialize::<
+                        crate::messaging::envelope::MessageEnvelope,
+                    >(&envelope)
+                    {
+                        Ok(env) => env.sender_did,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                recipient = %crate::messaging::metrics::redact_did(&recipient_did),
+                                "dropping invalid mesh-relayed envelope"
+                            );
+                            continue;
+                        }
+                    };
+                    if let Err(e) =
+                        deposits_relay.deposit_one(&sender, &recipient_did, envelope.clone())
+                    {
                         tracing::warn!("Failed to deposit relayed message: {}", e);
                         continue;
                     }
