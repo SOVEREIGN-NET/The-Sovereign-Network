@@ -504,6 +504,34 @@ pub fn decode_envelope(hex_str: &str) -> Result<MessageEnvelope> {
         .map_err(|e| ClientError::CryptoError(format!("Deserialize failed: {}", e)))
 }
 
+/// Stable node `message_id` for an envelope (hex blake3 of wire bytes).
+/// Matches server `message_id_for_envelope` — use for ack and client-side dedupe.
+pub fn message_id_for_envelope(envelope: &MessageEnvelope) -> Result<String> {
+    let bytes = bincode::serialize(envelope)
+        .map_err(|e| ClientError::CryptoError(format!("Serialize failed: {}", e)))?;
+    Ok(message_id_for_envelope_bytes(&bytes))
+}
+
+/// Stable node `message_id` from raw envelope bytes (hex blake3).
+pub fn message_id_for_envelope_bytes(envelope_bytes: &[u8]) -> String {
+    hex::encode(Blake3::hash(envelope_bytes))
+}
+
+/// JSON body for `POST /api/v1/msg/ack` after the client has persisted mail.
+///
+/// Delivery model (BUBL):
+/// - `POST /msg/send` returns `status`: `"queued"` | `"pushed"` (never `"delivered"`).
+/// - `GET /msg/receive` and inbound stream **peek** only; mail stays until ack.
+/// - Client must `POST /msg/ack` with these ids after durable local store.
+pub fn ack_request_body(message_ids: &[String]) -> Result<String> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        message_ids: &'a [String],
+    }
+    serde_json::to_string(&Body { message_ids })
+        .map_err(|e| ClientError::CryptoError(format!("ack body serialize: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

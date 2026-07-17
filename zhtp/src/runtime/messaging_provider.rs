@@ -113,6 +113,11 @@ impl MessagingProvider {
             false
         }
     }
+
+    /// Whether a live inbound stream is registered for this DID (MSG-R14).
+    pub async fn has_subscriber(&self, recipient_did: &str) -> bool {
+        self.subscribers.read().await.contains_key(recipient_did)
+    }
 }
 
 static GLOBAL_MESSAGING_PROVIDER: OnceLock<MessagingProvider> = OnceLock::new();

@@ -4,8 +4,9 @@
 //! All crypto happens client-side — the server relays opaque ciphertext.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -15,6 +16,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 use super::deposit::DepositStore;
+use super::metrics::{metrics, redact_did};
 use super::presence::PresenceTracker;
 
 pub struct MessagingHandler {
@@ -57,6 +59,12 @@ struct AckRequest {
     message_ids: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct CancelRequest {
+    /// Recipient DID for undelivered mail to cancel (caller must be sender).
+    recipient_did: String,
+}
+
 // ── Handler ────────────────────────────────────────────────────────
 
 fn json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -70,6 +78,17 @@ fn json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
 
 fn error_resp(status: ZhtpStatus, msg: &str) -> ZhtpResponse {
     ZhtpResponse::error(status, msg.to_string())
+}
+
+/// MSG-R9: when `ZHTP_MSG_VERIFY_ENVELOPES=1`, require a valid Dilithium
+/// signature on the envelope against the sender's on-chain public key.
+fn verify_envelopes_enabled() -> bool {
+    matches!(
+        std::env::var("ZHTP_MSG_VERIFY_ENVELOPES")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false),
+        true
+    )
 }
 
 impl MessagingHandler {
@@ -107,12 +126,6 @@ impl MessagingHandler {
             format!("did:zhtp:{}", req.recipient)
         };
 
-        // Get recipient's keys, sled-first (#58). The Dilithium key is the
-        // existence signal — `identity_public_key` is consensus-pinned, so it
-        // serves the durable key and refuses a metadata↔consensus drift. The
-        // Kyber key drives the encrypted-session error path. Both read durable
-        // `identity_metadata`, so a store-backed node still resolves the
-        // recipient after a restart (the in-memory registry is empty then).
         let dilithium_public_key = match blockchain.identity_public_key(&recipient_did) {
             Some(pk) => pk,
             None => return Ok(error_resp(ZhtpStatus::NotFound, "Recipient DID not found")),
@@ -127,7 +140,6 @@ impl MessagingHandler {
             }
         };
 
-        // Get username if available
         let username = blockchain.did_to_username.get(&recipient_did).cloned();
 
         json_response(json!({
@@ -137,6 +149,59 @@ impl MessagingHandler {
             "kyber_public_key": hex::encode(&kyber_public_key),
             "dilithium_public_key": hex::encode(&dilithium_public_key),
         }))
+    }
+
+    /// MSG-R8: authenticated caller DID must match claimed sender.
+    async fn bind_sender(
+        &self,
+        request: &ZhtpRequest,
+        claimed_sender: &str,
+    ) -> Result<String, String> {
+        let caller = self.resolve_caller_did(request).await?;
+        if caller != claimed_sender {
+            metrics().auth_rejects.fetch_add(1, Ordering::Relaxed);
+            return Err(format!(
+                "sender_did does not match authenticated session (claimed {}, session {})",
+                redact_did(claimed_sender),
+                redact_did(&caller)
+            ));
+        }
+        Ok(caller)
+    }
+
+    /// MSG-R9: optional Dilithium envelope verify against on-chain sender key.
+    async fn maybe_verify_envelope(
+        &self,
+        envelope: &super::envelope::MessageEnvelope,
+    ) -> Result<(), String> {
+        if !verify_envelopes_enabled() {
+            return Ok(());
+        }
+        if envelope.signature.is_empty() {
+            metrics().verify_rejects.fetch_add(1, Ordering::Relaxed);
+            return Err("envelope signature required (ZHTP_MSG_VERIFY_ENVELOPES)".to_string());
+        }
+        let blockchain = self.blockchain.read().await;
+        let pk = blockchain
+            .identity_public_key(&envelope.sender_did)
+            .ok_or_else(|| {
+                metrics().verify_rejects.fetch_add(1, Ordering::Relaxed);
+                format!(
+                    "sender DID not registered: {}",
+                    redact_did(&envelope.sender_did)
+                )
+            })?;
+        match envelope.verify_signature(&pk) {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                metrics().verify_rejects.fetch_add(1, Ordering::Relaxed);
+                Err("envelope signature invalid".to_string())
+            }
+            Err(e) => {
+                metrics().verify_rejects.fetch_add(1, Ordering::Relaxed);
+                Err(format!("envelope signature verify error: {e}"))
+            }
+        }
     }
 
     /// POST /api/v1/msg/send
@@ -149,16 +214,22 @@ impl MessagingHandler {
         let envelope_bytes = hex::decode(&req.envelope_hex)
             .map_err(|_| anyhow::anyhow!("Invalid hex in envelope"))?;
 
-        // Deserialize just enough to get the recipient DID
         let envelope: super::envelope::MessageEnvelope =
             bincode::deserialize(&envelope_bytes)
                 .map_err(|e| anyhow::anyhow!("Invalid envelope: {}", e))?;
 
+        // MSG-R8: bind sender to session
+        if let Err(e) = self.bind_sender(request, &envelope.sender_did).await {
+            return Ok(error_resp(ZhtpStatus::Forbidden, &e));
+        }
+
+        if let Err(e) = self.maybe_verify_envelope(&envelope).await {
+            return Ok(error_resp(ZhtpStatus::BadRequest, &e));
+        }
+
         let recipient_did = envelope.recipient_did.clone();
         let message_id = super::deposit::message_id_for_envelope(&envelope_bytes);
 
-        // MSG-R2 / R4: deposit first (durable on this node), then best-effort push.
-        // Local store-full is not fatal — still mesh-relay so peers can deposit.
         if let Err(e) = self.deposits.deposit_one(
             &envelope.sender_did,
             &recipient_did,
@@ -174,35 +245,68 @@ impl MessagingHandler {
         let messaging_provider =
             crate::runtime::messaging_provider::get_global_messaging_provider();
 
-        // Best-effort live push; deposit remains until client acks.
         let pushed = messaging_provider
             .try_push(&recipient_did, envelope_bytes.clone())
             .await;
+        if pushed {
+            metrics().live_pushes.fetch_add(1, Ordering::Relaxed);
+        }
 
-        // Also relay via mesh so peer nodes can deposit / push
-        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+        // MSG-R14: presence-directed mesh — skip flood when recipient is
+        // online on this node (live subscriber or presence tracker).
+        let local_online = pushed
+            || self.presence.is_online(&recipient_did).await
+            || messaging_provider.has_subscriber(&recipient_did).await;
+
+        if !local_online {
+            self.mesh_relay(&recipient_did, envelope_bytes).await;
+        } else {
+            info!(
+                message_id = %message_id,
+                recipient = %redact_did(&recipient_did),
+                "msg/send: recipient local — skipping mesh flood"
+            );
+        }
+
+        let status = if pushed { "pushed" } else { "queued" };
+        info!(
+            message_id = %message_id,
+            status,
+            recipient = %redact_did(&recipient_did),
+            "msg/send"
+        );
+        json_response(json!({
+            "status": status,
+            "message_id": message_id,
+            "recipient_did": recipient_did,
+        }))
+    }
+
+    async fn mesh_relay(&self, recipient_did: &str, envelope_bytes: Vec<u8>) {
+        if let Ok(mesh_router) =
+            crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
             let quic_guard = mesh_router.quic_protocol.read().await;
             if let Some(ref qp) = *quic_guard {
                 let mesh_msg = lib_network::types::mesh_message::ZhtpMeshMessage::MessageRelay {
-                    recipient_did: recipient_did.clone(),
+                    recipient_did: recipient_did.to_string(),
                     envelope: envelope_bytes,
                 };
                 let peer_ids = qp.connected_peer_ids();
                 info!(
-                    "msg/send: relaying to {} mesh peers for recipient {}",
-                    peer_ids.len(),
-                    recipient_did
+                    peers = peer_ids.len(),
+                    recipient = %redact_did(recipient_did),
+                    "msg/send: mesh relay"
                 );
                 for peer_id in &peer_ids {
                     match qp.send_to_peer(peer_id, mesh_msg.clone()).await {
-                        Ok(_) => info!(
-                            "  relay -> peer {} OK",
-                            hex::encode(&peer_id[..8.min(peer_id.len())])
-                        ),
-                        Err(e) => info!(
-                            "  relay -> peer {} FAILED: {}",
-                            hex::encode(&peer_id[..8.min(peer_id.len())]),
-                            e
+                        Ok(_) => {
+                            metrics().mesh_relays_out.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => warn!(
+                            peer = %hex::encode(&peer_id[..8.min(peer_id.len())]),
+                            error = %e,
+                            "mesh relay failed"
                         ),
                     }
                 }
@@ -212,19 +316,6 @@ impl MessagingHandler {
         } else {
             info!("msg/send: mesh router unavailable — no mesh relay");
         }
-
-        let status = if pushed { "pushed" } else { "queued" };
-        info!(
-            message_id = %message_id,
-            status,
-            "msg/send for {}",
-            &recipient_did[..16.min(recipient_did.len())]
-        );
-        json_response(json!({
-            "status": status,
-            "message_id": message_id,
-            "recipient_did": recipient_did,
-        }))
     }
 
     /// POST /api/v1/msg/deposit
@@ -232,6 +323,10 @@ impl MessagingHandler {
     async fn handle_deposit(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: DepositRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        if let Err(e) = self.bind_sender(request, &req.sender_did).await {
+            return Ok(error_resp(ZhtpStatus::Forbidden, &e));
+        }
 
         let envelopes: Vec<Vec<u8>> = req
             .envelopes_hex
@@ -241,6 +336,32 @@ impl MessagingHandler {
 
         if envelopes.is_empty() {
             return Ok(error_resp(ZhtpStatus::BadRequest, "No valid envelopes"));
+        }
+
+        // Optional verify each envelope when enabled
+        if verify_envelopes_enabled() {
+            for env_bytes in &envelopes {
+                let envelope: super::envelope::MessageEnvelope =
+                    match bincode::deserialize(env_bytes) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            return Ok(error_resp(
+                                ZhtpStatus::BadRequest,
+                                &format!("Invalid envelope: {e}"),
+                            ));
+                        }
+                    };
+                if envelope.sender_did != req.sender_did {
+                    metrics().auth_rejects.fetch_add(1, Ordering::Relaxed);
+                    return Ok(error_resp(
+                        ZhtpStatus::Forbidden,
+                        "envelope sender_did does not match deposit sender_did",
+                    ));
+                }
+                if let Err(e) = self.maybe_verify_envelope(&envelope).await {
+                    return Ok(error_resp(ZhtpStatus::BadRequest, &e));
+                }
+            }
         }
 
         match self
@@ -285,6 +406,30 @@ impl MessagingHandler {
         }))
     }
 
+    /// POST /api/v1/msg/cancel (MSG-R11)
+    /// Sender cancels undelivered mail to a recipient on this node.
+    async fn handle_cancel(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let req: CancelRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        let sender_did = match self.resolve_caller_did(request).await {
+            Ok(d) => d,
+            Err(e) => return Ok(error_resp(ZhtpStatus::Unauthorized, &e)),
+        };
+
+        if req.recipient_did.is_empty() {
+            return Ok(error_resp(ZhtpStatus::BadRequest, "recipient_did required"));
+        }
+
+        let cancelled = self.deposits.cancel(&sender_did, &req.recipient_did);
+        json_response(json!({
+            "status": "success",
+            "cancelled": cancelled,
+            "sender_did": sender_did,
+            "recipient_did": req.recipient_did,
+        }))
+    }
+
     /// GET /api/v1/msg/receive
     /// Peek pending messages (does not remove — client must POST /api/v1/msg/ack).
     async fn handle_receive(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
@@ -293,26 +438,18 @@ impl MessagingHandler {
             Err(e) => return Ok(error_resp(ZhtpStatus::Unauthorized, &e)),
         };
 
-        let requester_key_id = request
-            .requester
-            .as_ref()
-            .map(|id| hex::encode(&id.0))
-            .unwrap_or_default();
-
         info!(
-            "msg/receive lookup: requester_key_id={} -> recipient_did={}",
-            requester_key_id, recipient_did
+            recipient = %redact_did(&recipient_did),
+            "msg/receive lookup"
         );
 
-        // Mark as online
         self.presence.set_online(&recipient_did).await;
 
-        // Peek only — retain until explicit ack (MSG-R1)
         let deliveries = self.deposits.peek_for_recipient(&recipient_did);
         info!(
-            "msg/receive peeked {} deliveries for {}",
-            deliveries.len(),
-            recipient_did
+            count = deliveries.len(),
+            recipient = %redact_did(&recipient_did),
+            "msg/receive peeked"
         );
 
         let all_envelopes: Vec<serde_json::Value> = deliveries
@@ -334,17 +471,26 @@ impl MessagingHandler {
         }))
     }
 
-    /// GET /api/v1/msg/presence/watch
-    /// Subscribe to presence changes for specific DIDs.
+    /// POST /api/v1/msg/presence/watch
     async fn handle_presence_watch(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: PresenceWatchRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        // Bind watcher to session when possible
+        if let Ok(caller) = self.resolve_caller_did(request).await {
+            if caller != req.watcher_did {
+                metrics().auth_rejects.fetch_add(1, Ordering::Relaxed);
+                return Ok(error_resp(
+                    ZhtpStatus::Forbidden,
+                    "watcher_did does not match authenticated session",
+                ));
+            }
+        }
 
         for target in &req.target_dids {
             self.presence.watch(&req.watcher_did, target).await;
         }
 
-        // Return current status of watched DIDs
         let mut statuses = Vec::new();
         for target in &req.target_dids {
             statuses.push(json!({
@@ -356,6 +502,20 @@ impl MessagingHandler {
         json_response(json!({
             "status": "success",
             "watching": statuses,
+        }))
+    }
+
+    /// GET /api/v1/msg/stats (MSG-R12) — operator queue depth + counters.
+    async fn handle_stats(&self, _request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let mut snap = metrics().snapshot();
+        snap.pending = self.deposits.total_pending() as u64;
+        json_response(json!({
+            "status": "success",
+            "metrics": snap,
+            "at_rest_encryption": std::env::var("ZHTP_MSG_AT_REST_KEY")
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false),
+            "envelope_verify": verify_envelopes_enabled(),
         }))
     }
 }
@@ -389,8 +549,14 @@ impl ZhtpRequestHandler for MessagingHandler {
             (ZhtpMethod::Post, "/api/v1/msg/ack") => {
                 Ok(self.handle_ack(&request).await?)
             }
+            (ZhtpMethod::Post, "/api/v1/msg/cancel") => {
+                Ok(self.handle_cancel(&request).await?)
+            }
             (ZhtpMethod::Post, "/api/v1/msg/presence/watch") => {
                 Ok(self.handle_presence_watch(&request).await?)
+            }
+            (ZhtpMethod::Get, "/api/v1/msg/stats") => {
+                Ok(self.handle_stats(&request).await?)
             }
             _ => Ok(error_resp(ZhtpStatus::NotFound, "Not found")),
         }

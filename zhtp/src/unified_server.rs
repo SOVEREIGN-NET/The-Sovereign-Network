@@ -1062,7 +1062,17 @@ impl ZhtpUnifiedServer {
                     // Fallback: create a placeholder — will be replaced when blockchain is ready
                     Arc::new(tokio::sync::RwLock::new(lib_blockchain::Blockchain::default()))
                 });
-            let deposits = Arc::new(crate::messaging::deposit::DepositStore::new());
+            // MSG-R5: durable sled under node data dir (fallback to memory).
+            let deposits = match crate::messaging::deposit::DepositStore::open_default() {
+                Ok(store) => Arc::new(store),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to open durable messaging deposits: {}. Using in-memory store.",
+                        e
+                    );
+                    Arc::new(crate::messaging::deposit::DepositStore::new())
+                }
+            };
             let presence = Arc::new(crate::messaging::presence::PresenceTracker::new());
 
             // Publish deposits to the global messaging provider so the QUIC handler
@@ -1086,13 +1096,16 @@ impl ZhtpUnifiedServer {
 
             // Wire mesh relay receiver — always deposit first (MSG-R2), then
             // best-effort live push. Deposit stays until client ack.
+            // Dedupe + tombstones (MSG-R6 / R10) drop already-acked re-relays.
             let deposits_relay = deposits.clone();
             let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(256);
             tokio::spawn(async move {
                 let provider =
                     crate::runtime::messaging_provider::get_global_messaging_provider();
                 while let Some((recipient_did, envelope)) = relay_rx.recv().await {
-                    // MSG-R2: always deposit first, then best-effort live push.
+                    crate::messaging::metrics::metrics()
+                        .mesh_relays_in
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let sender = bincode::deserialize::<crate::messaging::envelope::MessageEnvelope>(&envelope)
                         .map(|env| env.sender_did)
                         .unwrap_or_else(|_| "mesh_relay".to_string());
@@ -1101,9 +1114,12 @@ impl ZhtpUnifiedServer {
                         continue;
                     }
                     if provider.try_push(&recipient_did, envelope).await {
+                        crate::messaging::metrics::metrics()
+                            .live_pushes
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         tracing::debug!(
-                            "Relay deposited + pushed to live subscriber for {}",
-                            recipient_did
+                            "Relay deposited + pushed for {}",
+                            crate::messaging::metrics::redact_did(&recipient_did)
                         );
                     }
                 }
