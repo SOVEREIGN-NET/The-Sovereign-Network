@@ -750,25 +750,10 @@ fn verify_authority_proof(
                 TxApplyError::InvalidType("governance action message hash required".into())
             })?;
 
-            match verifier {
-                GovernanceVerifierState::Single { .. } => {
-                    if matches!(gov_proof, ApprovalProof::Multisig { .. }) {
-                        verify_governance_multisig_proof(
-                            mutator,
-                            verifier,
-                            gov_proof,
-                            &message_hash,
-                        )?;
-                    }
-                    Ok(())
-                }
-                GovernanceVerifierState::Multisig { .. } => verify_governance_multisig_proof(
-                    mutator,
-                    verifier,
-                    gov_proof,
-                    &message_hash,
-                ),
-            }
+            // Always verify Dilithium multisig proof for both Single and Multisig
+            // verifiers. Single must not accept non-Multisig / empty proofs.
+            verify_governance_multisig_proof(mutator, verifier, gov_proof, &message_hash)
+
         }
         (AssetAuthority::Creator { .. }, AssetAuthorityProof::Governance(_)) => Err(
             TxApplyError::InvalidType("governance proof invalid while authority is Creator".into()),

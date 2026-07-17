@@ -496,16 +496,15 @@ impl Web4Handler {
         );
 
         // Store blob in content-addressed storage
-        let content_bytes = request.body.clone();
         let content_id = self
             .domain_registry
-            .store_content_by_cid(content_bytes.clone())
+            .store_content_by_cid(request.body.clone())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
 
         crate::runtime::manifest_pin_bridge::mirror_hex_cid_content_to_consensus_pin_store(
             &content_id,
-            &content_bytes,
+            &request.body,
         )
         .await;
 
@@ -569,16 +568,15 @@ impl Web4Handler {
         );
 
         // Store manifest in content-addressed storage
-        let manifest_bytes = request.body.clone();
         let manifest_cid = self
             .domain_registry
-            .store_content_by_cid(manifest_bytes.clone())
+            .store_content_by_cid(request.body.clone())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
 
         crate::runtime::manifest_pin_bridge::mirror_hex_cid_content_to_consensus_pin_store(
             &manifest_cid,
-            &manifest_bytes,
+            &request.body,
         )
         .await;
 

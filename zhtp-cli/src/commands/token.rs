@@ -567,8 +567,10 @@ pub fn build_governance_launch_config(
 /// Pin manifest JSON to the validator DHT + consensus `dht_pins` cache before `AssetLaunch`.
 async fn pin_manifest_for_launch(cli: &ZhtpCli, manifest_bytes: &[u8]) -> CliResult<()> {
     let client = connect_default(&cli.server).await?;
+    // Prefer the dedicated manifest endpoint so the node validates JSON shape.
+    const ENDPOINT: &str = "/api/v1/web4/content/manifest";
     let request = ZhtpRequest::post(
-        "/api/v1/web4/content/blob".to_string(),
+        ENDPOINT.to_string(),
         manifest_bytes.to_vec(),
         "application/json".to_string(),
         Some(client.identity().id.clone()),
@@ -578,13 +580,13 @@ async fn pin_manifest_for_launch(cli: &ZhtpCli, manifest_bytes: &[u8]) -> CliRes
         .request(request)
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/web4/content/blob".to_string(),
+            endpoint: ENDPOINT.to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
     if !response.status.is_success() {
         return Err(CliError::ApiCallFailed {
-            endpoint: "/api/v1/web4/content/blob".to_string(),
+            endpoint: ENDPOINT.to_string(),
             status: response.status.code(),
             reason: response.status_message.clone(),
         });

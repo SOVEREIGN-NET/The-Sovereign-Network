@@ -183,29 +183,86 @@ pub fn economic_rules_active(block_height: u64) -> bool {
     block_height >= GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT
 }
 
-/// Block height at which manifest DHT pin verification becomes consensus-active (SA-7).
+/// Block height at which on-chain manifest CID/hash fields become required (SA-7).
 ///
-/// Before this height, `AssetLaunch` / `AssetManifestUpdate` accept hash/CID commits
-/// without a local pin lookup so replay stays deterministic.
-#[cfg(test)]
-pub const MANIFEST_PIN_GATE_ACTIVATION_HEIGHT: u64 = 0;
-#[cfg(not(test))]
+/// Before this height, `AssetLaunch` / `AssetManifestUpdate` accept zeroed hash/CID
+/// commits so historical replay stays deterministic. After activation, only the
+/// non-zero field check is consensus-enforced — local DHT pin cache is advisory.
 pub const MANIFEST_PIN_GATE_ACTIVATION_HEIGHT: u64 = 80_000;
 
-/// When the pin gate is active but content is not in the validator's local DHT cache,
-/// reject the tx if true (strict); allow best-effort if false (design doc §5).
-#[cfg(test)]
-pub const MANIFEST_PIN_STRICT_MODE: bool = true;
-#[cfg(not(test))]
+/// Historical name for optional **admission** strictness (mempool / operator UX).
+/// Consensus apply never rejects on local pin presence; see `manifest_pin`.
 pub const MANIFEST_PIN_STRICT_MODE: bool = false;
+
+#[cfg(test)]
+pub mod manifest_pin_test_overrides {
+    use std::cell::Cell;
+
+    thread_local! {
+        static GATE_HEIGHT: Cell<Option<u64>> = const { Cell::new(None) };
+        static STRICT: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    pub fn set_gate_height(height: Option<u64>) {
+        GATE_HEIGHT.with(|c| c.set(height));
+    }
+
+    pub fn set_strict(strict: Option<bool>) {
+        STRICT.with(|c| c.set(strict));
+    }
+
+    pub fn gate_height() -> Option<u64> {
+        GATE_HEIGHT.with(|c| c.get())
+    }
+
+    pub fn strict() -> Option<bool> {
+        STRICT.with(|c| c.get())
+    }
+
+    /// RAII clear of overrides (use as `_guard` in tests).
+    pub struct Guard;
+    impl Guard {
+        pub fn new() -> Self {
+            set_gate_height(None);
+            set_strict(None);
+            Self
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            set_gate_height(None);
+            set_strict(None);
+        }
+    }
+}
 
 #[inline]
 pub fn manifest_pin_gate_active(block_height: u64) -> bool {
-    block_height >= MANIFEST_PIN_GATE_ACTIVATION_HEIGHT
+    let activation = {
+        #[cfg(test)]
+        {
+            if let Some(h) = manifest_pin_test_overrides::gate_height() {
+                h
+            } else {
+                MANIFEST_PIN_GATE_ACTIVATION_HEIGHT
+            }
+        }
+        #[cfg(not(test))]
+        {
+            MANIFEST_PIN_GATE_ACTIVATION_HEIGHT
+        }
+    };
+    block_height >= activation
 }
 
 #[inline]
 pub fn manifest_pin_strict_mode() -> bool {
+    #[cfg(test)]
+    {
+        if let Some(s) = manifest_pin_test_overrides::strict() {
+            return s;
+        }
+    }
     MANIFEST_PIN_STRICT_MODE
 }
 
