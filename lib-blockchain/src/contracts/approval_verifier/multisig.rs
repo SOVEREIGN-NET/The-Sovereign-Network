@@ -131,6 +131,7 @@ impl IssuanceApprovalVerifier for MultisigVerifier {
                 signers,
                 threshold,
                 message_hash,
+                raw_signatures: _,
             } => (signatures, signers, *threshold, message_hash),
             _ => {
                 return Err(VerificationError::ProofTypeMismatch {
@@ -271,6 +272,7 @@ mod tests {
             signers: vec![[1u8; 32]],
             threshold: 3, // But needs 3
             message_hash: request.compute_hash(),
+            raw_signatures: vec![],
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [3u8; 32]);
@@ -290,6 +292,7 @@ mod tests {
             signers: vec![signer, signer], // Duplicate!
             threshold: 2,
             message_hash: request.compute_hash(),
+            raw_signatures: vec![],
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [3u8; 32]);
@@ -308,6 +311,7 @@ mod tests {
             signers: vec![[1u8; 32], [2u8; 32]],
             threshold: 2,
             message_hash: request.compute_hash(),
+            raw_signatures: vec![],
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [3u8; 32]);
@@ -330,6 +334,7 @@ mod tests {
             signers: vec![[1u8; 32], [2u8; 32]], // [2u8; 32] not authorized
             threshold: 2,
             message_hash: request.compute_hash(),
+            raw_signatures: vec![],
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, dao_id);
@@ -348,6 +353,7 @@ mod tests {
             signers: vec![[1u8; 32], [2u8; 32]],
             threshold: 2,
             message_hash: [0u8; 32], // Wrong hash!
+            raw_signatures: vec![],
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [3u8; 32]);

@@ -94,7 +94,8 @@ pub use contract_execution::{
 pub use fee::{required_token_creation_fee, TxFeeConfig, DEFAULT_TOKEN_CREATION_FEE};
 pub use asset_tx::{
     build_dao_launch_manifest, build_dao_launch_manifest_bytes, manifest_cid_hash_from_bytes,
-    AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
+    AssetAuthorityProof, AssetAuthorityTransferCancelPayloadV1,
+    AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
     AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
     AssetRewardsPolicyUpdatePayloadV1, RewardsPolicyUpdateConfig,
     AssetUpgradeModule, CurveLaunchConfig, GovernanceLaunchConfig, RewardsLaunchConfig,

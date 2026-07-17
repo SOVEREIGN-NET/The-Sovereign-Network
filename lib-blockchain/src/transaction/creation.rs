@@ -761,6 +761,7 @@ pub mod utils {
             | TransactionType::AssetModuleUpgrade
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetAuthorityTransferCancel
             | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::AssetRewardsPolicyUpdate
             | TransactionType::AssetBurnBpsUpdate

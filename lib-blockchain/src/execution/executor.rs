@@ -43,7 +43,8 @@ use crate::storage::{
 };
 use crate::transaction::{
     asset_tx::{
-        AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
+        AssetAuthorityTransferCancelPayloadV1, AssetAuthorityTransferPayloadV1,
+        AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
         AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
         AssetBurnBpsUpdatePayloadV1, AssetRewardsPolicyUpdatePayloadV1,
     },
@@ -59,9 +60,10 @@ use super::errors::{BlockApplyError, BlockApplyResult, TxApplyError};
 use super::mint_and_allocate::mint_and_allocate;
 use super::sovereign_asset::{
     activate_pending_authority_transfers, activate_pending_burn_bps,
-    activate_pending_rewards_policies, apply_asset_authority_transfer, apply_asset_burn_bps_update,
-    apply_asset_launch, apply_asset_manifest_update, apply_asset_module_upgrade,
-    apply_asset_rewards_delegate_rotate, apply_asset_rewards_policy_update,
+    activate_pending_rewards_policies, apply_asset_authority_transfer,
+    apply_asset_authority_transfer_cancel, apply_asset_burn_bps_update, apply_asset_launch,
+    apply_asset_manifest_update, apply_asset_module_upgrade, apply_asset_rewards_delegate_rotate,
+    apply_asset_rewards_policy_update,
     apply_sovereign_token_transfer, require_governance_mint_signer, require_treasury_spend_signer,
     AssetLaunchOutcome,
 };
@@ -1151,6 +1153,7 @@ impl BlockExecutor {
             TransactionType::AssetModuleUpgrade => {}
             TransactionType::AssetManifestUpdate => {}
             TransactionType::AssetAuthorityTransfer => {}
+            TransactionType::AssetAuthorityTransferCancel => {}
             TransactionType::AssetRewardsDelegateRotate => {}
             TransactionType::AssetRewardsPolicyUpdate => {}
             TransactionType::AssetBurnBpsUpdate => {}
@@ -1449,6 +1452,19 @@ impl BlockExecutor {
                 AssetAuthorityTransferPayloadV1::decode_memo(&tx.memo).map_err(|e| {
                     TxApplyError::InvalidType(format!(
                         "AssetAuthorityTransfer requires canonical memo payload: {e}"
+                    ))
+                })?;
+            }
+            TransactionType::AssetAuthorityTransferCancel => {
+                if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
+                    return Err(TxApplyError::InvalidType(
+                        "AssetAuthorityTransferCancel must not have UTXO inputs or outputs"
+                            .to_string(),
+                    ));
+                }
+                AssetAuthorityTransferCancelPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "AssetAuthorityTransferCancel requires canonical memo payload: {e}"
                     ))
                 })?;
             }
@@ -3712,7 +3728,7 @@ impl BlockExecutor {
                     ))
                 })?;
                 let signer = tx.signature.public_key.key_id;
-                apply_asset_manifest_update(mutator, signer, &payload)?;
+                apply_asset_manifest_update(mutator, signer, &payload, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::AssetRewardsDelegateRotate => {
@@ -3723,7 +3739,7 @@ impl BlockExecutor {
                         ))
                     })?;
                 let signer = tx.signature.public_key.key_id;
-                apply_asset_rewards_delegate_rotate(mutator, signer, &payload)?;
+                apply_asset_rewards_delegate_rotate(mutator, signer, &payload, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::AssetRewardsPolicyUpdate => {
@@ -3755,6 +3771,17 @@ impl BlockExecutor {
                 })?;
                 let signer = tx.signature.public_key.key_id;
                 apply_asset_authority_transfer(mutator, signer, &payload, block_height)?;
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::AssetAuthorityTransferCancel => {
+                let payload =
+                    AssetAuthorityTransferCancelPayloadV1::decode_memo(&tx.memo).map_err(|e| {
+                        TxApplyError::InvalidType(format!(
+                            "AssetAuthorityTransferCancel requires canonical memo payload: {e}"
+                        ))
+                    })?;
+                let signer = tx.signature.public_key.key_id;
+                apply_asset_authority_transfer_cancel(mutator, signer, &payload, block_height)?;
                 Ok(TxOutcome::LegacySystem)
             }
             TransactionType::ContractDeployment => {

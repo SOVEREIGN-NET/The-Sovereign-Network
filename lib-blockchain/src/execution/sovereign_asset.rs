@@ -13,8 +13,16 @@ use crate::execution::mint_and_allocate::mint_and_allocate;
 use crate::execution::tx_apply::StateMutator;
 use crate::execution::{TxApplyError, TxApplyResult};
 use crate::storage::{Address, AddressExt, TokenId};
+use crate::contracts::approval_verifier::ApprovalProof;
+use crate::governance_proof::{
+    governance_action_message_hash, verify_governance_multisig_proof,
+    PROPOSAL_TYPE_AUTHORITY_TRANSFER, PROPOSAL_TYPE_BURN_BPS_UPDATE,
+    PROPOSAL_TYPE_MANIFEST_UPDATE, PROPOSAL_TYPE_REWARDS_DELEGATE_ROTATE,
+    PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
+};
 use crate::transaction::asset_tx::{
-    AssetAuthorityProof, AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
+    AssetAuthorityProof, AssetAuthorityTransferCancelPayloadV1,
+    AssetAuthorityTransferPayloadV1, AssetLaunchPayloadV1,
     AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
     AssetBurnBpsUpdatePayloadV1, AssetRewardsDelegateRotatePayloadV1,
     AssetRewardsPolicyUpdatePayloadV1, AssetUpgradeModule, GovernanceLaunchConfig,
@@ -270,12 +278,25 @@ pub fn apply_asset_manifest_update(
     mutator: &StateMutator<'_>,
     signer_key_id: [u8; 32],
     payload: &AssetManifestUpdatePayloadV1,
+    block_height: u64,
 ) -> TxApplyResult<()> {
     let mut asset = mutator
         .get_sovereign_asset(&payload.asset_id)?
         .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
 
-    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+    let msg = governance_action_message_hash(
+        &payload.asset_id,
+        PROPOSAL_TYPE_MANIFEST_UPDATE,
+        &payload.manifest_hash,
+    );
+    verify_authority_proof(
+        mutator,
+        &asset,
+        signer_key_id,
+        &payload.authority_proof,
+        Some(msg),
+        block_height,
+    )?;
 
     if payload.manifest_cid == [0u8; 32] || payload.manifest_hash == [0u8; 32] {
         return Err(TxApplyError::InvalidType("manifest fields required".into()));
@@ -300,7 +321,19 @@ pub fn apply_asset_rewards_policy_update(
     if !asset.module_flags.has_rewards() {
         return Err(TxApplyError::InvalidType("rewards module not enabled".into()));
     }
-    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+    let msg = governance_action_message_hash(
+        &payload.asset_id,
+        PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
+        &payload.policy.policy_hash,
+    );
+    verify_authority_proof(
+        mutator,
+        &asset,
+        signer_key_id,
+        &payload.authority_proof,
+        Some(msg),
+        block_height,
+    )?;
 
     let doc = payload
         .policy
@@ -461,6 +494,7 @@ pub fn apply_asset_rewards_delegate_rotate(
     mutator: &StateMutator<'_>,
     signer_key_id: [u8; 32],
     payload: &AssetRewardsDelegateRotatePayloadV1,
+    block_height: u64,
 ) -> TxApplyResult<()> {
     let asset = mutator
         .get_sovereign_asset(&payload.asset_id)?
@@ -469,7 +503,19 @@ pub fn apply_asset_rewards_delegate_rotate(
     if !asset.module_flags.has_rewards() {
         return Err(TxApplyError::InvalidType("rewards module not enabled".into()));
     }
-    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+    let msg = governance_action_message_hash(
+        &payload.asset_id,
+        PROPOSAL_TYPE_REWARDS_DELEGATE_ROTATE,
+        &payload.new_delegate_key_id,
+    );
+    verify_authority_proof(
+        mutator,
+        &asset,
+        signer_key_id,
+        &payload.authority_proof,
+        Some(msg),
+        block_height,
+    )?;
 
     if payload.new_delegate_key_id == [0u8; 32] {
         return Err(TxApplyError::InvalidType("new delegate must be non-zero".into()));
@@ -589,7 +635,23 @@ pub fn apply_asset_authority_transfer(
         .get_sovereign_asset(&payload.asset_id)?
         .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
 
-    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+    let verifier_hash = lib_crypto::hash_blake3(
+        &bincode::serialize(&payload.new_verifier)
+            .map_err(|e| TxApplyError::InvalidType(format!("serialize verifier: {e}")))?,
+    );
+    let msg = governance_action_message_hash(
+        &payload.asset_id,
+        PROPOSAL_TYPE_AUTHORITY_TRANSFER,
+        &verifier_hash,
+    );
+    verify_authority_proof(
+        mutator,
+        &asset,
+        signer_key_id,
+        &payload.authority_proof,
+        Some(msg),
+        block_height,
+    )?;
     validate_governance_verifier(&payload.new_verifier)
         .map_err(|e| TxApplyError::InvalidType(e))?;
 
@@ -636,6 +698,8 @@ fn verify_authority_proof(
     asset: &SovereignAsset,
     signer_key_id: [u8; 32],
     proof: &AssetAuthorityProof,
+    expected_message_hash: Option<[u8; 32]>,
+    block_height: u64,
 ) -> TxApplyResult<()> {
     match (&asset.authority, proof) {
         (AssetAuthority::Creator { key_id }, AssetAuthorityProof::CreatorSig) if *key_id == signer_key_id => {
@@ -644,7 +708,7 @@ fn verify_authority_proof(
         (AssetAuthority::Creator { .. }, AssetAuthorityProof::CreatorSig) => {
             Err(TxApplyError::InvalidType("creator signature mismatch".into()))
         }
-        (AssetAuthority::Governance { module_ref }, AssetAuthorityProof::Governance(_)) => {
+        (AssetAuthority::Governance { module_ref }, AssetAuthorityProof::Governance(gov_proof)) => {
             let gov = mutator
                 .get_governance_module_state(module_ref)?
                 .ok_or_else(|| TxApplyError::InvalidType("governance state missing".into()))?;
@@ -652,16 +716,84 @@ fn verify_authority_proof(
                 .verifier
                 .as_ref()
                 .ok_or_else(|| TxApplyError::InvalidType("governance verifier missing".into()))?;
-            if verifier_contains(verifier, signer_key_id) {
-                Ok(())
-            } else {
-                Err(TxApplyError::InvalidType(
+
+            if !verifier_contains(verifier, signer_key_id) {
+                return Err(TxApplyError::InvalidType(
                     "governance signer not authorized".into(),
-                ))
+                ));
+            }
+
+            let message_hash = expected_message_hash.ok_or_else(|| {
+                TxApplyError::InvalidType("governance action message hash required".into())
+            })?;
+
+            match verifier {
+                GovernanceVerifierState::Single { .. } => {
+                    if matches!(gov_proof, ApprovalProof::Multisig { .. }) {
+                        verify_governance_multisig_proof(
+                            mutator,
+                            verifier,
+                            gov_proof,
+                            &message_hash,
+                        )?;
+                    }
+                    Ok(())
+                }
+                GovernanceVerifierState::Multisig { .. } => verify_governance_multisig_proof(
+                    mutator,
+                    verifier,
+                    gov_proof,
+                    &message_hash,
+                ),
             }
         }
-        _ => Err(TxApplyError::InvalidType("invalid authority proof".into())),
+        (AssetAuthority::Creator { .. }, AssetAuthorityProof::Governance(_)) => Err(
+            TxApplyError::InvalidType("governance proof invalid while authority is Creator".into()),
+        ),
+        (AssetAuthority::Governance { .. }, AssetAuthorityProof::CreatorSig) => Err(
+            TxApplyError::InvalidType("creator proof invalid while authority is Governance".into()),
+        ),
     }
+}
+
+/// Cancel a queued creator → governance authority transfer before `effective_height`.
+pub fn apply_asset_authority_transfer_cancel(
+    mutator: &StateMutator<'_>,
+    signer_key_id: [u8; 32],
+    payload: &AssetAuthorityTransferCancelPayloadV1,
+    block_height: u64,
+) -> TxApplyResult<()> {
+    let asset = mutator
+        .get_sovereign_asset(&payload.asset_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
+
+    let AssetAuthority::Creator { key_id } = asset.authority else {
+        return Err(TxApplyError::InvalidType(
+            "only Creator authority may cancel a pending transfer".into(),
+        ));
+    };
+    if key_id != signer_key_id {
+        return Err(TxApplyError::InvalidType("creator signature mismatch".into()));
+    }
+
+    let mut gov_state = mutator
+        .get_governance_module_state(&payload.asset_id)?
+        .ok_or_else(|| TxApplyError::InvalidType("governance state missing".into()))?;
+
+    let Some(pending) = gov_state.pending_transfer.clone() else {
+        return Err(TxApplyError::InvalidType(
+            "no pending authority transfer to cancel".into(),
+        ));
+    };
+    if pending.effective_height <= block_height {
+        return Err(TxApplyError::InvalidType(
+            "pending authority transfer already effective; cannot cancel".into(),
+        ));
+    }
+
+    gov_state.pending_transfer = None;
+    mutator.put_governance_module_state(&payload.asset_id, &gov_state)?;
+    Ok(())
 }
 
 fn verifier_contains(verifier: &GovernanceVerifierState, key_id: [u8; 32]) -> bool {
@@ -731,7 +863,24 @@ pub fn apply_asset_burn_bps_update(
         .get_sovereign_asset(&payload.asset_id)?
         .ok_or_else(|| TxApplyError::InvalidType("asset not found".to_string()))?;
 
-    verify_authority_proof(mutator, &asset, signer_key_id, &payload.authority_proof)?;
+    let burn_hash = {
+        let mut buf = [0u8; 32];
+        buf[..2].copy_from_slice(&payload.new_burn_bps.to_le_bytes());
+        lib_crypto::hash_blake3(&buf)
+    };
+    let msg = governance_action_message_hash(
+        &payload.asset_id,
+        PROPOSAL_TYPE_BURN_BPS_UPDATE,
+        &burn_hash,
+    );
+    verify_authority_proof(
+        mutator,
+        &asset,
+        signer_key_id,
+        &payload.authority_proof,
+        Some(msg),
+        block_height,
+    )?;
 
     asset.pending_burn_bps = Some(PendingBurnBpsUpdate {
         new_burn_bps: payload.new_burn_bps,
@@ -815,6 +964,7 @@ mod activate_pending_tests {
     use crate::contracts::sovereign_asset::{
         AssetIdSource, GovernanceVerifierKind, PendingRewardsPolicyUpdate,
     };
+    use crate::transaction::asset_tx::AssetAuthorityTransferCancelPayloadV1;
     use crate::rewards_policy::policy_hash;
     use crate::storage::{BlockchainStore, SledStore};
     use std::sync::Arc;
@@ -1058,6 +1208,32 @@ mod activate_pending_tests {
                 threshold: 1,
             })
         );
+    }
+
+    #[test]
+    fn creator_cancels_pending_authority_transfer_before_effective_height() {
+        let store = fresh_store();
+        let mut session = BlockSession::new(store.as_ref());
+        let asset_id = key(0x06);
+        let creator = key(0xCC);
+        seed_pending_creator_transfer(
+            &mut session,
+            asset_id,
+            creator,
+            single_verifier(0xBB),
+            5,
+        );
+
+        session.apply(|mutator, height| {
+            let payload = AssetAuthorityTransferCancelPayloadV1 { asset_id };
+            apply_asset_authority_transfer_cancel(mutator, creator, &payload, height).unwrap();
+        });
+
+        let mutator = StateMutator::new(store.as_ref());
+        let asset = mutator.get_sovereign_asset(&asset_id).unwrap().unwrap();
+        assert!(matches!(asset.authority, AssetAuthority::Creator { .. }));
+        let gov = mutator.get_governance_module_state(&asset_id).unwrap().unwrap();
+        assert!(gov.pending_transfer.is_none());
     }
 
     #[test]

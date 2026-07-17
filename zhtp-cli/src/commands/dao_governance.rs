@@ -13,8 +13,11 @@ use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
 use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_blockchain::contracts::approval_verifier::traits::Signature64;
 use lib_blockchain::contracts::approval_verifier::ApprovalProof;
+use lib_blockchain::governance_proof::{
+    governance_action_message_hash, signature64_from_dilithium,
+    PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
+};
 use lib_blockchain::transaction::asset_tx::{
     AssetAuthorityProof, AssetRewardsPolicyUpdatePayloadV1, RewardsPolicyUpdateConfig,
 };
@@ -26,7 +29,6 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const PROPOSAL_SCHEMA: &str = "zhtp/governance-proposal/v1";
-const PROPOSAL_TYPE_REWARDS_POLICY_UPDATE: &str = "rewards_policy_update";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceApproval {
@@ -67,15 +69,7 @@ pub fn governance_message_hash(
     proposal_type: &str,
     policy_hash: &[u8; 32],
 ) -> [u8; 32] {
-    lib_crypto::hash_blake3(
-        &[
-            b"zhtp/governance-proposal/v1\0",
-            proposal_type.as_bytes(),
-            asset_id.as_slice(),
-            policy_hash.as_slice(),
-        ]
-        .concat(),
-    )
+    governance_action_message_hash(asset_id, proposal_type, policy_hash)
 }
 
 pub fn build_rewards_policy_update_proposal(
@@ -92,7 +86,7 @@ pub fn build_rewards_policy_update_proposal(
     let bundle = build_rewards_policy_bundle(&policy)
         .map_err(|e| CliError::ConfigError(format!("rewards policy: {e}")))?;
 
-    let message_hash = governance_message_hash(
+    let message_hash = governance_action_message_hash(
         &asset_id_bytes,
         PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
         &bundle.policy_hash,
@@ -125,15 +119,6 @@ fn parse_governance_approval_pairs(raw: &[String]) -> CliResult<Vec<([u8; 32], V
             Ok((key_id, sig))
         })
         .collect()
-}
-
-fn signature64_from_dilithium(sig: &[u8]) -> Signature64 {
-    let h1 = lib_crypto::hash_blake3(sig);
-    let h2 = lib_crypto::hash_blake3(&[h1.as_slice(), b"sig64"].concat());
-    let mut out = [0u8; 64];
-    out[..32].copy_from_slice(&h1);
-    out[32..].copy_from_slice(&h2);
-    Signature64::new(out)
 }
 
 fn merge_approvals(
@@ -217,11 +202,13 @@ fn build_policy_update_tx(
         }
         let mut signers = Vec::new();
         let mut signatures = Vec::new();
+        let mut raw_signatures = Vec::new();
         for approval in &proposal.approvals {
             let key_id = parse_hex_32("signer", &approval.signer_key_id)?;
             let sig_bytes = hex::decode(&approval.signature_hex)
                 .map_err(|e| CliError::ConfigError(format!("invalid approval sig: {e}")))?;
             signers.push(key_id);
+            raw_signatures.push(sig_bytes.clone());
             signatures.push(signature64_from_dilithium(&sig_bytes));
         }
         AssetAuthorityProof::Governance(ApprovalProof::Multisig {
@@ -229,6 +216,7 @@ fn build_policy_update_tx(
             signers,
             threshold: proposal.threshold,
             message_hash,
+            raw_signatures,
         })
     } else {
         AssetAuthorityProof::CreatorSig

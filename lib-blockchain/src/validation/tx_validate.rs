@@ -59,6 +59,7 @@ const PHASE2_ALLOWED_TYPES: &[TransactionType] = &[
     TransactionType::AssetModuleUpgrade,
     TransactionType::AssetManifestUpdate,
     TransactionType::AssetAuthorityTransfer,
+    TransactionType::AssetAuthorityTransferCancel,
     TransactionType::AssetRewardsDelegateRotate,
     TransactionType::AssetRewardsPolicyUpdate,
     TransactionType::AssetBurnBpsUpdate,

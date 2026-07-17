@@ -239,6 +239,7 @@ mod tests {
             signers: vec![],
             threshold: 2,
             message_hash: [0u8; 32],
+            raw_signatures: vec![],
         };
 
         let result = verifier.verify_issuance_approval(&request, &wrong_proof, [3u8; 32]);

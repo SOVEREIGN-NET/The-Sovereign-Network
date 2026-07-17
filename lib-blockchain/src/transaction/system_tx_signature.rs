@@ -47,6 +47,7 @@ pub fn system_tx_signature_policy(ty: TransactionType) -> SystemTxSignaturePolic
         | TransactionType::AssetModuleUpgrade
         | TransactionType::AssetManifestUpdate
         | TransactionType::AssetAuthorityTransfer
+        | TransactionType::AssetAuthorityTransferCancel
         | TransactionType::AssetRewardsDelegateRotate
         | TransactionType::AssetRewardsPolicyUpdate
         | TransactionType::AssetBurnBpsUpdate

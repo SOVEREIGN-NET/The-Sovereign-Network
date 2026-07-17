@@ -312,6 +312,7 @@ impl TransactionValidator {
                 | TransactionType::AssetModuleUpgrade
                 | TransactionType::AssetManifestUpdate
                 | TransactionType::AssetAuthorityTransfer
+                | TransactionType::AssetAuthorityTransferCancel
                 | TransactionType::AssetRewardsDelegateRotate
                 | TransactionType::AssetRewardsPolicyUpdate
                 | TransactionType::AssetBurnBpsUpdate
@@ -505,6 +506,15 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidInputs);
                 }
                 crate::transaction::asset_tx::AssetAuthorityTransferPayloadV1::decode_memo(
+                    &transaction.memo,
+                )
+                .map_err(|_| ValidationError::InvalidMemo)?;
+            }
+            TransactionType::AssetAuthorityTransferCancel => {
+                if !transaction.inputs.is_empty() || !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                crate::transaction::asset_tx::AssetAuthorityTransferCancelPayloadV1::decode_memo(
                     &transaction.memo,
                 )
                 .map_err(|_| ValidationError::InvalidMemo)?;
@@ -865,6 +875,7 @@ impl TransactionValidator {
             | TransactionType::AssetModuleUpgrade
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetAuthorityTransferCancel
             | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::AssetRewardsPolicyUpdate
             | TransactionType::AssetBurnBpsUpdate => {
@@ -1868,6 +1879,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                 | TransactionType::AssetModuleUpgrade
                 | TransactionType::AssetManifestUpdate
                 | TransactionType::AssetAuthorityTransfer
+                | TransactionType::AssetAuthorityTransferCancel
                 | TransactionType::AssetRewardsDelegateRotate
                 | TransactionType::AssetRewardsPolicyUpdate
                 | TransactionType::AssetBurnBpsUpdate
@@ -2452,6 +2464,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             | TransactionType::AssetModuleUpgrade
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetAuthorityTransferCancel
             | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::AssetRewardsPolicyUpdate
             | TransactionType::AssetBurnBpsUpdate
@@ -3616,6 +3629,7 @@ pub mod utils {
             | TransactionType::AssetModuleUpgrade
             | TransactionType::AssetManifestUpdate
             | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetAuthorityTransferCancel
             | TransactionType::AssetRewardsDelegateRotate
             | TransactionType::AssetRewardsPolicyUpdate
             | TransactionType::AssetBurnBpsUpdate
