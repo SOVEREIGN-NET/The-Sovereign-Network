@@ -125,6 +125,12 @@ pub fn apply_reward_claim(
         return reject_claim("signer is not authorized token creator");
     }
 
+    // Day/week bucketing rejects chrono-unrepresentable timestamps. On the apply
+    // path this is defence-in-depth only: `block_validate::validate_timestamp`
+    // already bounds `block_timestamp` to `now + max_future_timestamp` (default
+    // 2h) and enforces monotonicity, so a validated block cannot reach the
+    // ~8.2e12 chrono ceiling. Safety is therefore coupled to that config staying
+    // far below chrono's range — not to these helpers being infallible.
     let date = utc_date_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
     let week = iso_week_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
     let today_ord = utc_day_ordinal_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
