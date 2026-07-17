@@ -169,3 +169,101 @@ fn cbe_graduation_skips_already_graduated() {
         "Already graduated tokens should skip oracle gate"
     );
 }
+
+/// Dual-state fixture: legacy bonding-curve row and sovereign curve module disagree on reserve.
+/// Post economic-rules activation the curve-module reserve wins; pre-activation uses legacy.
+#[test]
+fn resolve_reserve_prefers_curve_module_after_activation_when_dual_state() {
+    use crate::contracts::sovereign_asset::{
+        AssetAuthority, AssetIdSource, AssetModuleFlags, CurveModuleState, CurvePhase, DaoClass,
+        SovereignAsset, SupplyMode,
+    };
+    use crate::storage::{SledStore, TokenId};
+    use std::sync::Arc;
+
+    let store = Arc::new(SledStore::open_temporary().unwrap());
+    let token_id = [0xCBu8; 32];
+    let legacy_reserve = 111u128;
+    let curve_reserve = 999u128;
+
+    let mut legacy = create_test_cbe_token(legacy_reserve);
+    legacy.token_id = token_id;
+
+    let asset = SovereignAsset {
+        asset_id: token_id,
+        id_source: AssetIdSource::LaunchTx,
+        name: "CBE Equity".to_string(),
+        symbol: CBE_SYMBOL.to_string(),
+        decimals: 18,
+        creator_key_id: [0x01; 32],
+        creator_did: None,
+        treasury_key_id: Some([0x02; 32]),
+        launched_at_height: Some(1),
+        supply_mode: SupplyMode::Elastic,
+        max_supply: u128::MAX,
+        total_supply: 0,
+        manifest_cid: None,
+        manifest_hash: None,
+        schema_version: 1,
+        authority: AssetAuthority::Creator {
+            key_id: [0x01; 32],
+        },
+        module_flags: AssetModuleFlags(AssetModuleFlags::CURVE),
+        curve: None,
+        rewards: None,
+        governance: None,
+        dao_class: DaoClass::Fp,
+        burn_bps: 0,
+        pending_burn_bps: None,
+    };
+
+    store.begin_block(0).expect("begin");
+    store
+        .put_bonding_curve_token(&TokenId::new(token_id), &legacy)
+        .expect("seed legacy token");
+    store.put_sovereign_asset(&asset).expect("seed asset");
+    store
+        .put_curve_module_state(
+            &token_id,
+            &CurveModuleState {
+                phase: CurvePhase::Curve,
+                reserve_balance: curve_reserve,
+                treasury_balance: 0,
+                threshold: 1,
+                sell_enabled: true,
+                amm_pool_id: None,
+            },
+        )
+        .expect("seed curve state");
+    store.commit_block().expect("commit");
+
+    let bc = Blockchain::new_with_store(store).expect("blockchain with store");
+
+    // In unit tests GOVERNANCE_TIMELOCK_ACTIVATION_HEIGHT is 0, so height 0 is active.
+    let post = bc
+        .resolve_cbe_graduation_reserve(token_id, 0)
+        .expect("resolve post-activation")
+        .expect("reserve present");
+    assert_eq!(
+        post, curve_reserve,
+        "post-activation must use curve-module reserve when dual state exists"
+    );
+
+    // Curve-flagged asset without curve side-table row → fall through to legacy.
+    let store2 = Arc::new(SledStore::open_temporary().unwrap());
+    store2.begin_block(0).expect("begin");
+    store2
+        .put_bonding_curve_token(&TokenId::new(token_id), &legacy)
+        .expect("seed legacy");
+    store2.put_sovereign_asset(&asset).expect("seed asset without curve state");
+    store2.commit_block().expect("commit");
+    let bc2 = Blockchain::new_with_store(store2).expect("bc2");
+    let fallback = bc2
+        .resolve_cbe_graduation_reserve(token_id, 0)
+        .expect("resolve fallback")
+        .expect("legacy reserve");
+    assert_eq!(
+        fallback, legacy_reserve,
+        "missing curve side-table must fall through to legacy, not hard-fail"
+    );
+}

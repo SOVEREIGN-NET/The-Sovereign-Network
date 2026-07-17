@@ -3869,9 +3869,10 @@ impl BlockExecutor {
             }
 
             // Bonding curve types
-            // BondingCurveDeploy and BondingCurveGraduate are wire-format legacy variants
-            // retained for backward compatibility. There is only one CBE curve, initialized
-            // at genesis; user-deployed curves are not supported. No-op in the executor.
+            // BondingCurveDeploy is retired (SA-5): CBE curve state lives in asset_curve/
+            // via AssetLaunch with `curve: Some(CurveLaunchConfig)`. BondingCurveDeploy and
+            // BondingCurveGraduate are wire-format legacy variants retained for replay.
+            // User-deployed curves are not supported. No-op in the executor.
             TransactionType::BondingCurveDeploy => Ok(TxOutcome::BondingCurveDeploy),
             TransactionType::BondingCurveGraduate => Ok(TxOutcome::BondingCurveGraduate),
             TransactionType::BondingCurveBuy => {
@@ -5548,6 +5549,103 @@ mod tests {
         );
         let reward_ids = store.list_rewards_module_asset_ids().expect("ids");
         assert_eq!(reward_ids, vec![asset_id]);
+    }
+
+    #[test]
+    fn test_asset_launch_curve_module_discoverable_without_bonding_curve_token() {
+        use crate::contracts::bonding_curve::canonical::GRAD_THRESHOLD;
+        use crate::contracts::sovereign_asset::{AssetModuleFlags, CurveModuleState, CurvePhase, SupplyMode};
+        use crate::transaction::asset_tx::{
+            build_dao_launch_manifest_bytes, manifest_cid_hash_from_bytes, AssetLaunchPayloadV1,
+            CurveLaunchConfig,
+        };
+
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let manifest_bytes = build_dao_launch_manifest_bytes("CBE Equity", "CBE", 18);
+        let (manifest_cid, manifest_hash) =
+            manifest_cid_hash_from_bytes(&manifest_bytes, Some(("CBE Equity", "CBE", 18)))
+                .expect("manifest cid/hash");
+        store
+            .put_dht_pin_content_direct(&manifest_cid, &manifest_bytes)
+            .expect("seed manifest pin");
+
+        let payload = AssetLaunchPayloadV1 {
+            name: "CBE Equity".to_string(),
+            symbol: "CBE".to_string(),
+            decimals: 18,
+            initial_supply: 1_000,
+            treasury_key_id: [0xAA; 32],
+            treasury_bps: 2_000,
+            supply_mode: SupplyMode::Elastic,
+            manifest_cid,
+            manifest_hash,
+            curve: Some(CurveLaunchConfig {
+                threshold: GRAD_THRESHOLD,
+                sell_enabled: true,
+            }),
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+            dao_class: crate::contracts::sovereign_asset::DaoClass::Fp,
+            burn_bps: 0,
+        };
+        let memo = payload.encode_memo().expect("memo");
+        let tx = Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::AssetLaunch,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: create_dummy_signature(),
+            memo,
+            payload: crate::transaction::TransactionPayload::None,
+        };
+        let asset_id = hash_transaction(&tx).as_array();
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+        executor.apply_block(&block1).expect("curve launch");
+
+        let token_id = TokenId::new(asset_id);
+        assert!(
+            store
+                .get_bonding_curve_token(&token_id)
+                .expect("read")
+                .is_none(),
+            "curve AssetLaunch must not require bonding_curve_tokens row"
+        );
+
+        let asset = store
+            .get_sovereign_asset(&asset_id)
+            .expect("read asset")
+            .expect("asset exists");
+        assert!(asset.module_flags.has_curve());
+        assert_eq!(
+            asset.module_bitmask() & AssetModuleFlags::CURVE,
+            AssetModuleFlags::CURVE
+        );
+
+        let curve_state = store
+            .get_curve_module_state(&asset_id)
+            .expect("read curve state")
+            .expect("curve state exists");
+        assert_eq!(
+            curve_state,
+            CurveModuleState {
+                phase: CurvePhase::Curve,
+                reserve_balance: 0,
+                treasury_balance: 0,
+                threshold: GRAD_THRESHOLD,
+                sell_enabled: true,
+                amm_pool_id: None,
+            }
+        );
+
+        let curve_ids = store.list_curve_module_asset_ids().expect("ids");
+        assert_eq!(curve_ids, vec![asset_id]);
     }
 
     #[test]

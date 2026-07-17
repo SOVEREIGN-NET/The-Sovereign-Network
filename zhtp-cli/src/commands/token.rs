@@ -37,14 +37,14 @@ use std::path::{Path, PathBuf};
 // PURE LOGIC - Path builders and validation
 // ============================================================================
 
-/// Build token info path
+/// Build asset info path (SA-8: migrated from `/api/v1/token/{id}`).
 pub fn build_info_path(token_id: &str) -> String {
-    format!("/api/v1/token/{}", token_id)
+    format!("/api/v1/assets/{}", token_id)
 }
 
-/// Build balance path
+/// Build asset balance path (SA-8: migrated from `/api/v1/token/{id}/balance/{address}`).
 pub fn build_balance_path(token_id: &str, address: &str) -> String {
-    format!("/api/v1/token/{}/balance/{}", token_id, address)
+    format!("/api/v1/assets/{}/balances/{}", token_id, address)
 }
 
 fn default_keystore_path() -> CliResult<PathBuf> {
@@ -899,7 +899,7 @@ async fn handle_burn<O: Output>(
 
 /// Handle token info query
 async fn handle_info<O: Output>(cli: &ZhtpCli, output: &O, token_id: &str) -> CliResult<()> {
-    output.info(&format!("Fetching token info for: {}", token_id))?;
+    output.info(&format!("Fetching asset info for: {}", token_id))?;
 
     let client = connect_default(&cli.server).await?;
 
@@ -973,28 +973,28 @@ async fn handle_balance<O: Output>(
 
 /// Handle token list
 async fn handle_list<O: Output>(cli: &ZhtpCli, output: &O) -> CliResult<()> {
-    output.info("Listing all tokens...")?;
+    output.info("Listing sovereign assets...")?;
 
     let client = connect_default(&cli.server).await?;
 
     let response = client
-        .get("/api/v1/token/list")
+        .get("/api/v1/assets")
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/list".to_string(),
+            endpoint: "/api/v1/assets".to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
 
     let response_json: serde_json::Value =
         ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/list".to_string(),
+            endpoint: "/api/v1/assets".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
 
     if let Some(count) = response_json.get("count").and_then(|v| v.as_u64()) {
-        output.info(&format!("Found {} token(s)", count))?;
+        output.info(&format!("Found {} asset(s)", count))?;
     }
 
     let formatted = format_output(&response_json, &cli.format)?;
@@ -1083,7 +1083,7 @@ mod tests {
     fn test_build_info_path() {
         let token_id = "abc123def456";
         let path = build_info_path(token_id);
-        assert_eq!(path, "/api/v1/token/abc123def456");
+        assert_eq!(path, "/api/v1/assets/abc123def456");
     }
 
     #[test]
@@ -1091,7 +1091,7 @@ mod tests {
         let token_id = "abc123";
         let address = "0xdef456";
         let path = build_balance_path(token_id, address);
-        assert_eq!(path, "/api/v1/token/abc123/balance/0xdef456");
+        assert_eq!(path, "/api/v1/assets/abc123/balances/0xdef456");
     }
 
     #[test]

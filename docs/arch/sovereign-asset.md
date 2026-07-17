@@ -500,7 +500,7 @@ Deprecate special-casing in `/api/v1/token/list` (projection shim during migrati
 | **SA-5** | [#2785](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2785) | `CurveModule` as sub-state of asset | Retire standalone `BondingCurveToken` writes |
 | **SA-6** | [#2786](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2786) | `AssetModuleUpgrade` + `GovernanceModule` | Manifest updates; single + multisig |
 | **SA-7** | [#2787](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2787) | `AssetManifestUpdate` + DHT pin validation | Full shareability gate |
-| **SA-8** | [#2788](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2788) | Remove legacy read paths / deprecate `/api/v1/token/*` | After testnet re-launch |
+| **SA-8** | [#2788](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2788) | Soft-deprecate `/api/v1/token/*` reads (headers + dual `token_id`/`asset_id`; keep bulk balances); hard 410 only after mobile ships successors | Progressive; never break mobile hot paths |
 
 **Epic:** [#2780](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2780)
 

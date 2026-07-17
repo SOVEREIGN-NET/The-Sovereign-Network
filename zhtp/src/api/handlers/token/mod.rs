@@ -1,7 +1,14 @@
 //! Token Handler Module
 //!
-//! Complete token management API for custom token creation, minting, and transfer.
-//! Enables users to create their own tokens on the ZHTP blockchain.
+//! Token mint/transfer/burn/nonce plus legacy read/discovery paths used by mobile.
+//!
+//! # SA-8 progressive deprecation
+//!
+//! Prefer `/api/v1/assets/*` for new clients. Legacy `/api/v1/token/*` **reads and create**
+//! remain live (200) with `Deprecation` / `Sunset` / `Link` headers until a shipped mobile
+//! release no longer depends on them. Do **not** return 410 Gone on these hot wallet paths —
+//! mobile portfolio/send/receive still call them. Hard removal requires a coordinated mobile
+//! ship first.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -17,11 +24,13 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 
 // Blockchain imports
 use lib_blockchain::contracts::sovereign_asset::{AssetIdSource, SovereignAsset};
-use lib_blockchain::contracts::utils::generate_custom_token_id;
 use lib_blockchain::transaction::Transaction;
 use lib_blockchain::types::transaction_type::TransactionType;
 use lib_blockchain::{Blockchain, BlockchainQuery};
 use lib_crypto::types::keys::PublicKey;
+
+/// Soft sunset for legacy token routes (RFC 8594). Extend if mobile has not migrated.
+const TOKEN_API_SUNSET: &str = "Tue, 01 Dec 2026 00:00:00 GMT";
 
 /// Helper function to create JSON responses
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -35,6 +44,220 @@ fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
 
 fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
     ZhtpResponse::error(status, message)
+}
+
+/// Mark a still-functional legacy response as deprecated (never 410 on mobile hot paths).
+fn with_legacy_token_deprecation(mut response: ZhtpResponse, successor: &str) -> ZhtpResponse {
+    response.headers.set("Deprecation", "true".to_string());
+    response.headers.set("Sunset", TOKEN_API_SUNSET.to_string());
+    response.headers.set(
+        "Link",
+        format!("<{successor}>; rel=\"successor-version\""),
+    );
+    response
+        .headers
+        .set("X-ZHTP-Successor", successor.to_string());
+    response
+}
+
+fn create_legacy_json_response(
+    data: serde_json::Value,
+    successor: &str,
+) -> Result<ZhtpResponse> {
+    create_json_response(data).map(|r| with_legacy_token_deprecation(r, successor))
+}
+
+/// Convert identity string to PublicKey (wallet portfolio + balance lookups).
+pub(crate) fn identity_to_pubkey(identity: &str) -> Result<PublicKey> {
+    let key_bytes = if identity.starts_with("did:zhtp:") {
+        let hex_part = identity.strip_prefix("did:zhtp:").unwrap_or(identity);
+        hex::decode(hex_part).map_err(|_| anyhow::anyhow!("Invalid DID format"))?
+    } else if identity.starts_with("0x") {
+        hex::decode(&identity[2..]).map_err(|_| anyhow::anyhow!("Invalid hex address"))?
+    } else {
+        hex::decode(identity).map_err(|_| anyhow::anyhow!("Invalid identity format"))?
+    };
+
+    if key_bytes.len() == 32 {
+        let mut key_id_array = [0u8; 32];
+        key_id_array.copy_from_slice(&key_bytes);
+        return Ok(PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: key_id_array,
+        });
+    }
+
+    let key_array: [u8; 2592] = key_bytes.as_slice().try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid public key length: expected 2592 bytes")
+    })?;
+    Ok(PublicKey::new(key_array))
+}
+
+/// Resolve a wallet_id for SOV balance lookups/transfers.
+pub(crate) fn resolve_wallet_id_for_sov(
+    address: &str,
+    blockchain: &Blockchain,
+) -> Option<[u8; 32]> {
+    let hex_part = if address.starts_with("did:zhtp:") {
+        address.strip_prefix("did:zhtp:").unwrap_or(address)
+    } else if address.starts_with("0x") {
+        &address[2..]
+    } else {
+        address
+    };
+
+    let bytes = hex::decode(hex_part).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+
+    let wallet_id_hex = hex::encode(&bytes);
+    if blockchain.query_wallet_exists(&wallet_id_hex) {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        return Some(arr);
+    }
+
+    let identity_hash = lib_blockchain::Hash::from_slice(&bytes);
+    let primary_wallet = blockchain.wallet_registry_snapshot().into_iter().find(|(_, wallet)| {
+        wallet.owner_identity_id.as_ref() == Some(&identity_hash)
+            && wallet.wallet_type == "Primary"
+    })?;
+    Some(primary_wallet.1.wallet_id.as_array())
+}
+
+/// Portfolio bulk balances (token + sovereign asset + CBE + SOV).
+/// Shared by `GET /api/v1/token/balances/{address}` and `GET /api/v1/assets/balances/{address}`.
+pub(crate) fn build_portfolio_balances_json(
+    blockchain: &Blockchain,
+    address: &str,
+) -> Result<serde_json::Value> {
+    use lib_blockchain::contracts::utils::generate_lib_token_id;
+
+    let target_key_id =
+        crate::api::handlers::balance_key::resolve_custom_token_balance_key(blockchain, address)?;
+    let sov_wallet_id = resolve_wallet_id_for_sov(address, blockchain);
+
+    debug!(
+        "portfolio/balances: address={}, target_key_id={}, token_count={}",
+        address,
+        hex::encode(&target_key_id),
+        blockchain.query_token_count()
+    );
+
+    let native_token_id = generate_lib_token_id();
+    let native_token_id_hex = hex::encode(native_token_id);
+    let mut balances = Vec::new();
+    let mut listed_token_ids: HashSet<[u8; 32]> = HashSet::new();
+
+    for (token_id, token) in blockchain.iter_token_contract_entries() {
+        listed_token_ids.insert(token_id);
+        let balance = if token_id == native_token_id {
+            sov_wallet_id
+                .map(|wallet_id| {
+                    blockchain
+                        .token_balance(&token_id, &wallet_id)
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0)
+        } else {
+            blockchain
+                .token_balance(&token_id, &target_key_id)
+                .unwrap_or(0)
+        };
+
+        if balance > 0 {
+            let is_creator = token.creator.key_id == target_key_id;
+            let id = hex::encode(token_id);
+            balances.push(json!({
+                "token_id": id.clone(),
+                "asset_id": id,
+                "name": token.name.clone(),
+                "symbol": token.symbol.clone(),
+                "decimals": token.decimals,
+                "balance": balance.to_string(),
+                "is_creator": is_creator
+            }));
+        }
+    }
+
+    let dao_symbols_upper = dao_token_contract_symbols_upper(blockchain);
+    for asset in blockchain.iter_sovereign_assets() {
+        if listed_token_ids.contains(&asset.asset_id) {
+            continue;
+        }
+        if !include_sovereign_asset_in_token_api(&asset, &dao_symbols_upper) {
+            continue;
+        }
+        let balance = blockchain
+            .token_balance(&asset.asset_id, &target_key_id)
+            .unwrap_or(0);
+        if balance > 0 {
+            let is_creator = asset.creator_key_id == target_key_id;
+            let id = hex::encode(asset.asset_id);
+            balances.push(json!({
+                "token_id": id.clone(),
+                "asset_id": id,
+                "name": asset.name.clone(),
+                "symbol": asset.symbol.clone(),
+                "decimals": asset.decimals,
+                "balance": balance.to_string(),
+                "is_creator": is_creator
+            }));
+        }
+    }
+
+    {
+        let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+        let cbe_key_id = identity_to_pubkey(address)
+            .map(|pk| pk.key_id)
+            .unwrap_or(target_key_id);
+        let cbe_balance = blockchain
+            .token_balance(&cbe_token_id, &cbe_key_id)
+            .unwrap_or(0);
+        if cbe_balance > 0 {
+            let id = hex::encode(cbe_token_id);
+            balances.push(json!({
+                "token_id": id.clone(),
+                "asset_id": id,
+                "name": "CBE Equity",
+                "symbol": "CBE",
+                "decimals": lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
+                "balance": cbe_balance.to_string(),
+                "is_creator": false
+            }));
+        }
+    }
+
+    let has_sov = balances
+        .iter()
+        .any(|b| b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex));
+    if !has_sov {
+        let (name, symbol, decimals) = blockchain
+            .get_token_contract(&native_token_id)
+            .map(|t| (t.name.clone(), t.symbol.clone(), t.decimals))
+            .unwrap_or_else(|| ("Sovereign".to_string(), "SOV".to_string(), 8));
+
+        balances.insert(
+            0,
+            json!({
+                "token_id": native_token_id_hex.clone(),
+                "asset_id": native_token_id_hex,
+                "name": name,
+                "symbol": symbol,
+                "decimals": decimals,
+                "balance": 0,
+                "is_creator": false
+            }),
+        );
+    }
+
+    Ok(json!({
+        "address": address,
+        "balances": balances,
+        "count": balances.len()
+    }))
 }
 
 // ============================================================================
@@ -96,6 +319,8 @@ pub mod option_u128_as_string {
 #[derive(Debug, Serialize)]
 pub struct TokenInfoResponse {
     pub token_id: String,
+    /// Dual-write of `token_id` for clients migrating to asset terminology (SA-8).
+    pub asset_id: String,
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
@@ -112,6 +337,8 @@ pub struct TokenInfoResponse {
 #[derive(Debug, Serialize)]
 pub struct TokenListItem {
     pub token_id: String,
+    /// Dual-write of `token_id` for clients migrating to asset terminology (SA-8).
+    pub asset_id: String,
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
@@ -136,9 +363,16 @@ fn include_sovereign_asset_in_token_api(
         && dao_symbols_upper.contains(&asset.symbol.to_ascii_uppercase()))
 }
 
+fn dual_id(id_hex: String) -> (String, String) {
+    let asset_id = id_hex.clone();
+    (id_hex, asset_id)
+}
+
 fn sovereign_asset_to_list_item(asset: &SovereignAsset) -> TokenListItem {
+    let (token_id, asset_id) = dual_id(hex::encode(asset.asset_id));
     TokenListItem {
-        token_id: hex::encode(asset.asset_id),
+        token_id,
+        asset_id,
         name: asset.name.clone(),
         symbol: asset.symbol.clone(),
         decimals: asset.decimals,
@@ -147,8 +381,10 @@ fn sovereign_asset_to_list_item(asset: &SovereignAsset) -> TokenListItem {
 }
 
 fn sovereign_asset_to_info(asset: &SovereignAsset) -> TokenInfoResponse {
+    let (token_id, asset_id) = dual_id(hex::encode(asset.asset_id));
     TokenInfoResponse {
-        token_id: hex::encode(asset.asset_id),
+        token_id,
+        asset_id,
         name: asset.name.clone(),
         symbol: asset.symbol.clone(),
         decimals: asset.decimals,
@@ -225,17 +461,21 @@ impl TokenHandler {
             let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
             let share_link =
                 crate::api::handlers::assets::asset_share_link(&asset_id);
-            return create_json_response(json!({
-                "success": true,
-                "asset_id": hex::encode(asset_id),
-                "share_link": share_link,
-                "name": payload.name,
-                "symbol": payload.symbol,
-                "creator_allocation": creator_alloc.to_string(),
-                "treasury_allocation": treasury_alloc.to_string(),
-                "tx_status": "submitted_to_mempool",
-                "deprecated_route": "/api/v1/token/create accepts AssetLaunch during migration — prefer POST /api/v1/assets/launch",
-            }));
+            return create_legacy_json_response(
+                json!({
+                    "success": true,
+                    "asset_id": hex::encode(asset_id),
+                    "token_id": hex::encode(asset_id),
+                    "share_link": share_link,
+                    "name": payload.name,
+                    "symbol": payload.symbol,
+                    "creator_allocation": creator_alloc.to_string(),
+                    "treasury_allocation": treasury_alloc.to_string(),
+                    "tx_status": "submitted_to_mempool",
+                    "deprecated_route": "/api/v1/token/create accepts AssetLaunch during migration — prefer POST /api/v1/assets/launch",
+                }),
+                "POST /api/v1/assets/launch",
+            );
         }
 
         if tx.transaction_type == TransactionType::TokenCreation {
@@ -449,9 +689,12 @@ impl TokenHandler {
 
         // CBE token info: return static metadata (token state no longer in-memory)
         let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+        let successor = format!("GET /api/v1/assets/{token_id_hex}");
         if token_id_array == cbe_token_id {
+            let (token_id, asset_id) = dual_id(token_id_hex.to_string());
             let response = TokenInfoResponse {
-                token_id: token_id_hex.to_string(),
+                token_id,
+                asset_id,
                 name: "CBE Equity".to_string(),
                 symbol: "CBE".to_string(),
                 decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
@@ -461,13 +704,15 @@ impl TokenHandler {
                 is_deflationary: false,
                 created_at_block: Some(0),
             };
-            return create_json_response(serde_json::to_value(response)?);
+            return create_legacy_json_response(serde_json::to_value(response)?, &successor);
         }
 
         if let Some(token) = blockchain.get_token_contract(&token_id_array) {
             let created_at = blockchain.contract_blocks.get(&token_id_array).copied();
+            let (token_id, asset_id) = dual_id(token_id_hex.to_string());
             let response = TokenInfoResponse {
-                token_id: token_id_hex.to_string(),
+                token_id,
+                asset_id,
                 name: token.name.clone(),
                 symbol: token.symbol.clone(),
                 decimals: token.decimals,
@@ -481,13 +726,14 @@ impl TokenHandler {
                 is_deflationary: token.is_deflationary,
                 created_at_block: created_at,
             };
-            return create_json_response(serde_json::to_value(response)?);
+            return create_legacy_json_response(serde_json::to_value(response)?, &successor);
         }
 
         if let Some(asset) = blockchain.get_sovereign_asset(&token_id_array) {
-            return create_json_response(serde_json::to_value(sovereign_asset_to_info(
-                &asset,
-            ))?);
+            return create_legacy_json_response(
+                serde_json::to_value(sovereign_asset_to_info(&asset))?,
+                &successor,
+            );
         }
 
         Err(anyhow::anyhow!("Token not found"))
@@ -514,18 +760,23 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
+        let successor = format!("GET /api/v1/assets/{token_id_hex}/balances/{address}");
         // CBE balances live in the token_balances sled tree (#2637).
         if is_cbe {
             let pubkey = self.identity_to_pubkey(address)?;
             let balance = blockchain
                 .token_balance(&cbe_token_id, &pubkey.key_id)
                 .unwrap_or(0);
-            return create_json_response(json!({
-                "token_id": token_id_hex,
-                "address": address,
-                "balance": balance.to_string(),
-                "symbol": "CBE"
-            }));
+            return create_legacy_json_response(
+                json!({
+                    "token_id": token_id_hex,
+                    "asset_id": token_id_hex,
+                    "address": address,
+                    "balance": balance.to_string(),
+                    "symbol": "CBE"
+                }),
+                &successor,
+            );
         }
 
         let balance = if is_sov {
@@ -554,12 +805,16 @@ impl TokenHandler {
             return Err(anyhow::anyhow!("Token not found"));
         };
 
-        create_json_response(json!({
-            "token_id": token_id_hex,
-            "address": address,
-            "balance": balance.to_string(),
-            "symbol": symbol
-        }))
+        create_legacy_json_response(
+            json!({
+                "token_id": token_id_hex,
+                "asset_id": token_id_hex,
+                "address": address,
+                "balance": balance.to_string(),
+                "symbol": symbol
+            }),
+            &successor,
+        )
     }
 
     /// GET /api/v1/token/list - List all tokens
@@ -571,19 +826,25 @@ impl TokenHandler {
         let mut tokens: Vec<TokenListItem> = blockchain
             .iter_token_contract_metadata()
             .into_iter()
-            .map(|token| TokenListItem {
-                token_id: hex::encode(token.token_id),
-                name: token.name.clone(),
-                symbol: token.symbol.clone(),
-                decimals: token.decimals,
-                total_supply: token.total_supply,
+            .map(|token| {
+                let (token_id, asset_id) = dual_id(hex::encode(token.token_id));
+                TokenListItem {
+                    token_id,
+                    asset_id,
+                    name: token.name.clone(),
+                    symbol: token.symbol.clone(),
+                    decimals: token.decimals,
+                    total_supply: token.total_supply,
+                }
             })
             .collect();
 
         // CBE token: include with static metadata (cbe_token field removed from Blockchain)
         let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
+        let (cbe_token_id_hex, cbe_asset_id_hex) = dual_id(hex::encode(cbe_token_id));
         tokens.push(TokenListItem {
-            token_id: hex::encode(cbe_token_id),
+            token_id: cbe_token_id_hex,
+            asset_id: cbe_asset_id_hex,
             name: "CBE Equity".to_string(),
             symbol: "CBE".to_string(),
             decimals: lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
@@ -608,10 +869,13 @@ impl TokenHandler {
 
         let count = tokens.len();
 
-        create_json_response(json!({
-            "tokens": tokens,
-            "count": count
-        }))
+        create_legacy_json_response(
+            json!({
+                "tokens": tokens,
+                "count": count
+            }),
+            "GET /api/v1/assets",
+        )
     }
 
     /// GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for transfer replay protection
@@ -685,171 +949,41 @@ impl TokenHandler {
             .into_iter()
             .find(|token| token.symbol.to_uppercase() == symbol_upper);
 
+        let successor = format!("GET /api/v1/assets/symbol/available/{symbol}");
         match existing_token {
-            Some(token) => create_json_response(json!({
-                "symbol": symbol,
-                "available": false,
-                "reason": format!("Symbol already used by token '{}'", token.name),
-                "existing_token": {
-                    "token_id": hex::encode(token.token_id),
-                    "name": token.name.clone(),
-                    "symbol": token.symbol.clone()
-                }
-            })),
-            None => create_json_response(json!({
-                "symbol": symbol,
-                "available": true
-            })),
+            Some(token) => {
+                let id = hex::encode(token.token_id);
+                create_legacy_json_response(
+                    json!({
+                        "symbol": symbol,
+                        "available": false,
+                        "reason": format!("Symbol already used by token '{}'", token.name),
+                        "existing_token": {
+                            "token_id": id.clone(),
+                            "asset_id": id,
+                            "name": token.name.clone(),
+                            "symbol": token.symbol.clone()
+                        }
+                    }),
+                    &successor,
+                )
+            }
+            None => create_legacy_json_response(
+                json!({
+                    "symbol": symbol,
+                    "available": true
+                }),
+                &successor,
+            ),
         }
     }
 
     /// GET /api/v1/token/balances/{address} - Get all token balances for an address
     async fn handle_get_balances_for_address(&self, address: &str) -> Result<ZhtpResponse> {
-        use lib_blockchain::contracts::utils::generate_lib_token_id;
-
         let blockchain = self.blockchain.read().await;
-        let target_key_id =
-            crate::api::handlers::balance_key::resolve_custom_token_balance_key(
-                &blockchain,
-                address,
-            )?;
-        let sov_wallet_id = self.resolve_wallet_id_for_sov(address, &blockchain);
-
-        debug!(
-            "token/balances: address={}, target_key_id={}, token_count={}",
-            address,
-            hex::encode(&target_key_id),
-            blockchain.query_token_count()
-        );
-
-        let native_token_id = generate_lib_token_id();
-        let native_token_id_hex = hex::encode(native_token_id);
-        let mut balances = Vec::new();
-        let mut listed_token_ids: HashSet<[u8; 32]> = HashSet::new();
-
-        // Collect balances from all token contracts (sled-first metadata list).
-        // TODO(#2637): O(N) sled reads per token — add caching/pagination if
-        // user-creatable tokens grow beyond a handful.
-        for (token_id, token) in blockchain.iter_token_contract_entries() {
-            listed_token_ids.insert(token_id);
-            let balance = if token_id == native_token_id {
-                sov_wallet_id
-                    .map(|wallet_id| {
-                        blockchain
-                            .token_balance(&token_id, &wallet_id)
-                            .unwrap_or(0)
-                    })
-                    .unwrap_or(0)
-            } else {
-                blockchain
-                    .token_balance(&token_id, &target_key_id)
-                    .unwrap_or(0)
-            };
-
-            debug!(
-                "token/balances: token={} ({}) found_balance={}",
-                token.name,
-                token.symbol,
-                balance
-            );
-
-            if balance > 0 {
-                let is_creator = token.creator.key_id == target_key_id;
-                balances.push(json!({
-                    "token_id": hex::encode(token_id),
-                    "name": token.name.clone(),
-                    "symbol": token.symbol.clone(),
-                    "decimals": token.decimals,
-                    "balance": balance.to_string(),
-                    "is_creator": is_creator
-                }));
-            }
-        }
-
-        // Sovereign assets without a token_contracts row (DAO TokenCreation wins).
-        let dao_symbols_upper = dao_token_contract_symbols_upper(&blockchain);
-        for asset in blockchain.iter_sovereign_assets() {
-            if listed_token_ids.contains(&asset.asset_id) {
-                continue;
-            }
-            if !include_sovereign_asset_in_token_api(&asset, &dao_symbols_upper) {
-                continue;
-            }
-            let balance = blockchain
-                .token_balance(&asset.asset_id, &target_key_id)
-                .unwrap_or(0);
-            debug!(
-                "token/balances: sovereign asset={} ({}) found_balance={}",
-                asset.name, asset.symbol, balance
-            );
-            if balance > 0 {
-                let is_creator = asset.creator_key_id == target_key_id;
-                balances.push(json!({
-                    "token_id": hex::encode(asset.asset_id),
-                    "name": asset.name.clone(),
-                    "symbol": asset.symbol.clone(),
-                    "decimals": asset.decimals,
-                    "balance": balance.to_string(),
-                    "is_creator": is_creator
-                }));
-            }
-        }
-
-        // Include CBE balance (lives in cbe_token, not in token_contracts).
-        // Use the raw address bytes as the CBE key — CBE transfers store balances under
-        // the literal address passed in data.to, which equals wallet_id for new-style
-        // wallets. target_key_id is derived from dilithium_pk only (no kyber) so it
-        // diverges from wallet_id; we must parse the address directly here.
-        {
-            let cbe_token_id = lib_blockchain::Blockchain::derive_cbe_token_id_pub();
-            let cbe_key_id = self
-                .identity_to_pubkey(address)
-                .map(|pk| pk.key_id)
-                .unwrap_or(target_key_id);
-            let cbe_balance = blockchain
-                .token_balance(&cbe_token_id, &cbe_key_id)
-                .unwrap_or(0);
-            if cbe_balance > 0 {
-                balances.push(json!({
-                    "token_id": hex::encode(cbe_token_id),
-                    "name": "CBE Equity",
-                    "symbol": "CBE",
-                    "decimals": lib_blockchain::contracts::bonding_curve::canonical::CBE_DECIMALS,
-                    "balance": cbe_balance.to_string(),
-                    "is_creator": false
-                }));
-            }
-        }
-
-        // Always include native SOV entry (even if balance is 0) so clients get the token_id.
-        let has_sov = balances
-            .iter()
-            .any(|b| b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex));
-        if !has_sov {
-            // #2637: get_token_contract() is the sled-first metadata facade.
-            let (name, symbol, decimals) = blockchain
-                .get_token_contract(&native_token_id)
-                .map(|t| (t.name.clone(), t.symbol.clone(), t.decimals))
-                .unwrap_or_else(|| ("Sovereign".to_string(), "SOV".to_string(), 8));
-
-            balances.insert(
-                0,
-                json!({
-                    "token_id": native_token_id_hex,
-                    "name": name,
-                    "symbol": symbol,
-                    "decimals": decimals,
-                    "balance": 0,
-                    "is_creator": false
-                }),
-            );
-        }
-
-        create_json_response(json!({
-            "address": address,
-            "balances": balances,
-            "count": balances.len()
-        }))
+        let body = build_portfolio_balances_json(&blockchain, address)?;
+        // Keep bulk portfolio forever for wallet UX; soft-deprecate this path only.
+        create_legacy_json_response(body, "GET /api/v1/assets/balances/{address}")
     }
 
     // ========================================================================
@@ -858,69 +992,16 @@ impl TokenHandler {
 
     /// Convert identity string to PublicKey
     fn identity_to_pubkey(&self, identity: &str) -> Result<PublicKey> {
-        // Handle different identity formats
-        let key_bytes = if identity.starts_with("did:zhtp:") {
-            let hex_part = identity.strip_prefix("did:zhtp:").unwrap_or(identity);
-            hex::decode(hex_part).map_err(|_| anyhow::anyhow!("Invalid DID format"))?
-        } else if identity.starts_with("0x") {
-            hex::decode(&identity[2..]).map_err(|_| anyhow::anyhow!("Invalid hex address"))?
-        } else {
-            hex::decode(identity).map_err(|_| anyhow::anyhow!("Invalid identity format"))?
-        };
-
-        if key_bytes.len() == 32 {
-            let mut key_id_array = [0u8; 32];
-            key_id_array.copy_from_slice(&key_bytes);
-            return Ok(PublicKey {
-                dilithium_pk: [0u8; 2592],
-                kyber_pk: [0u8; 1568],
-                key_id: key_id_array,
-            });
-        }
-
-        let key_array: [u8; 2592] = key_bytes.as_slice().try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid public key length: expected 2592 bytes"))?;
-        Ok(PublicKey::new(key_array))
+        identity_to_pubkey(identity)
     }
 
     /// Resolve a wallet_id for SOV balance lookups/transfers.
-    ///
-    /// Accepts:
-    /// - wallet_id hex (preferred)
-    /// - DID/identity hex (maps to Primary wallet if found)
     fn resolve_wallet_id_for_sov(
         &self,
         address: &str,
         blockchain: &Blockchain,
     ) -> Option<[u8; 32]> {
-        let hex_part = if address.starts_with("did:zhtp:") {
-            address.strip_prefix("did:zhtp:").unwrap_or(address)
-        } else if address.starts_with("0x") {
-            &address[2..]
-        } else {
-            address
-        };
-
-        let bytes = hex::decode(hex_part).ok()?;
-        if bytes.len() != 32 {
-            return None;
-        }
-
-        // If this is already a wallet_id, accept it.
-        let wallet_id_hex = hex::encode(&bytes);
-        if blockchain.query_wallet_exists(&wallet_id_hex) {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            return Some(arr);
-        }
-
-        // Otherwise treat it as identity_id and try to find the Primary wallet.
-        let identity_hash = lib_blockchain::Hash::from_slice(&bytes);
-        let primary_wallet = blockchain.wallet_registry_snapshot().into_iter().find(|(_, wallet)| {
-            wallet.owner_identity_id.as_ref() == Some(&identity_hash)
-                && wallet.wallet_type == "Primary"
-        })?;
-        Some(primary_wallet.1.wallet_id.as_array())
+        resolve_wallet_id_for_sov(address, blockchain)
     }
 
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
@@ -1148,6 +1229,39 @@ mod tests {
         // parts: ["", "api", "v1", "token", "abc123", "balance"]
         // This has 6 elements, not 7
         assert!(parts.len() < 7);
+    }
+
+    #[test]
+    fn legacy_deprecation_headers_do_not_use_410() {
+        let resp = super::with_legacy_token_deprecation(
+            super::create_json_response(serde_json::json!({"ok": true})).unwrap(),
+            "GET /api/v1/assets",
+        );
+        assert_eq!(resp.status, lib_protocols::types::ZhtpStatus::Ok);
+        assert_eq!(
+            resp.headers.get("Deprecation").as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            resp.headers.get("Sunset").as_deref(),
+            Some(super::TOKEN_API_SUNSET)
+        );
+        assert!(resp
+            .headers
+            .get("Link")
+            .unwrap_or_default()
+            .contains("successor-version"));
+        assert_eq!(
+            resp.headers.get("X-ZHTP-Successor").as_deref(),
+            Some("GET /api/v1/assets")
+        );
+    }
+
+    #[test]
+    fn dual_id_mirrors_token_and_asset() {
+        let (token_id, asset_id) = super::dual_id("ab".repeat(32));
+        assert_eq!(token_id, asset_id);
+        assert_eq!(token_id.len(), 64);
     }
 
 }
