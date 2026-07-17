@@ -15,17 +15,25 @@
 //! (`quic_handshake::handshake_as_initiator` / `quic_uhp_capabilities`).
 //! On failure it returns null and stores a structured last-error string
 //! (`stage=…: message`) retrievable via `zhtp_quic_session_last_error`.
+//!
+//! Last-error storage is **process-global** (mutex, last-writer-wins) so
+//! mobile can read it from a different OS thread than the one that called
+//! `open` (Dart isolates / JNI pools). Concurrent opens can overwrite each
+//! other's error — that is intentional and safer than a silent empty read.
+//!
+//! `zhtp_quic_session_open` **blocks** the caller until connect + UHP finish;
+//! mobile must not call it on the UI thread.
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::cell::RefCell;
 use std::ffi::{c_char, CStr, CString};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::oneshot;
+use tracing::debug;
 
 use lib_identity::types::IdentityType;
 use lib_identity::ZhtpIdentity;
@@ -37,26 +45,61 @@ use lib_protocols::wire::read_response;
 use crate::identity::Identity;
 
 // =============================================================================
-// LAST ERROR (thread-local for FFI)
+// LAST ERROR (process-global for FFI — any thread may read)
 // =============================================================================
 
-thread_local! {
-    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
-    static LAST_STAGE: RefCell<&'static str> = const { RefCell::new("none") };
+/// Canonical stage tokens + NUL-terminated C strings (single source of truth).
+/// Order is stable for `classify_stage` scans; keep longest names first only
+/// if a shorter name were a prefix of a longer one (none are today).
+const STAGES: &[(&str, &[u8])] = &[
+    ("resolve", b"resolve\0"),
+    ("quic", b"quic\0"),
+    ("tls", b"tls\0"),
+    ("uhp_handshake", b"uhp_handshake\0"),
+    ("trust", b"trust\0"),
+    ("session_keys", b"session_keys\0"),
+    ("config", b"config\0"),
+    ("identity", b"identity\0"),
+    ("alpn", b"alpn\0"),
+    ("runtime", b"runtime\0"),
+    ("client_init", b"client_init\0"),
+    ("inbound", b"inbound\0"),
+    ("rpc", b"rpc\0"),
+    ("args", b"args\0"),
+];
+
+const STAGE_NONE: &[u8] = b"none\0";
+
+struct LastErrorState {
+    stage: &'static str,
+    message: Option<String>,
+}
+
+fn last_error_slot() -> &'static Mutex<LastErrorState> {
+    static SLOT: OnceLock<Mutex<LastErrorState>> = OnceLock::new();
+    SLOT.get_or_init(|| {
+        Mutex::new(LastErrorState {
+            stage: "none",
+            message: None,
+        })
+    })
 }
 
 fn clear_last_error() {
-    LAST_ERROR.with(|e| *e.borrow_mut() = None);
-    LAST_STAGE.with(|s| *s.borrow_mut() = "none");
+    if let Ok(mut g) = last_error_slot().lock() {
+        g.stage = "none";
+        g.message = None;
+    }
 }
 
 fn set_last_error(stage: &'static str, message: impl AsRef<str>) {
     let msg = message.as_ref().to_string();
-    eprintln!("[zhtp_quic_session] stage={} error={}", stage, msg);
-    LAST_STAGE.with(|s| *s.borrow_mut() = stage);
-    LAST_ERROR.with(|e| {
-        *e.borrow_mut() = Some(format!("stage={}: {}", stage, msg));
-    });
+    // Debug only — avoid noisy stderr / leaking dial details on mobile release.
+    debug!(stage, error = %msg, "zhtp_quic_session last_error");
+    if let Ok(mut g) = last_error_slot().lock() {
+        g.stage = stage;
+        g.message = Some(format!("stage={}: {}", stage, msg));
+    }
 }
 
 fn set_last_error_from_anyhow(fallback_stage: &'static str, err: &anyhow::Error) {
@@ -65,27 +108,24 @@ fn set_last_error_from_anyhow(fallback_stage: &'static str, err: &anyhow::Error)
     set_last_error(stage, full);
 }
 
+fn current_stage() -> &'static str {
+    last_error_slot()
+        .lock()
+        .map(|g| g.stage)
+        .unwrap_or("none")
+}
+
+fn current_error_message() -> Option<String> {
+    last_error_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.message.clone())
+}
+
 /// Parse `stage=foo` markers embedded in error chains (from ZhtpClient).
 fn classify_stage(msg: &str) -> Option<&'static str> {
-    const STAGES: &[&str] = &[
-        "resolve",
-        "quic",
-        "tls",
-        "uhp_handshake",
-        "trust",
-        "session_keys",
-        "config",
-        "identity",
-        "alpn",
-        "runtime",
-        "client_init",
-        "inbound",
-        "rpc",
-        "args",
-    ];
-    for stage in STAGES {
+    for (stage, _) in STAGES {
         if msg.contains(&format!("stage={}", stage)) {
-            // SAFETY: stage is a static str from STAGES.
             return Some(*stage);
         }
     }
@@ -107,6 +147,15 @@ fn classify_stage(msg: &str) -> Option<&'static str> {
         return Some("identity");
     }
     None
+}
+
+fn stage_as_c_str(stage: &str) -> *const c_char {
+    for (name, cstr) in STAGES {
+        if *name == stage {
+            return cstr.as_ptr() as *const c_char;
+        }
+    }
+    STAGE_NONE.as_ptr() as *const c_char
 }
 
 // =============================================================================
@@ -417,14 +466,18 @@ fn to_zhtp_identity(id: &Identity) -> Result<ZhtpIdentity> {
 }
 
 // =============================================================================
-// Pure Rust open (shared by FFI + tests)
+// Pure Rust open (shared by FFI + tests — not a public crate API)
 // =============================================================================
 
 /// Open a persistent authenticated QUIC session (canonical UHP initiator).
 ///
+/// **Blocking:** waits for QUIC connect + full UHP handshake on the caller
+/// thread (via oneshot from the shared endpoint runtime). Callers must not
+/// invoke this from a UI/main thread.
+///
 /// `alpn` must be `1` (`zhtp-uhp/2`). `sni` is the TLS server name (hostname);
 /// dial host may be an IP after ZDNS bootstrap.
-pub fn open_session(
+fn open_session(
     host: &str,
     port: u16,
     sni: Option<&str>,
@@ -497,9 +550,14 @@ pub fn open_session(
 // =============================================================================
 
 /// Open a persistent QUIC session.
+///
 /// `alpn`: must be `1` (`zhtp-uhp/2`, authenticated UHP). Public ALPN (`0`)
 /// is not supported here — gateways treat `zhtp-public/1` as no-UHP read-only.
-/// Returns null on failure — call `zhtp_quic_session_last_error` for details.
+///
+/// **Blocking** until connect + UHP complete — call off the UI thread.
+///
+/// Returns null on failure — call `zhtp_quic_session_last_error` (any thread;
+/// process-global last-writer-wins) for details.
 #[no_mangle]
 pub extern "C" fn zhtp_quic_session_open(
     host: *const c_char,
@@ -549,48 +607,32 @@ pub extern "C" fn zhtp_quic_session_open(
     }
 }
 
-/// Last structured error from session open / inbound / rpc on this thread.
+/// Last structured error from session open / inbound / rpc.
+///
+/// Process-global (not thread-local): readable from any OS thread after a
+/// failed call on another thread (Dart isolate / JNI pool safe). Concurrent
+/// failures last-writer-wins.
 ///
 /// Format: `stage=<name>: <message chain>`.
-/// Returns a newly allocated C string; free with `zhtp_client_string_free`
-/// (or `zhtp_quic_session_last_error_free`). Null if no error stored.
+/// Returns a newly allocated C string; free with
+/// `zhtp_quic_session_last_error_free`. Null if no error stored.
 #[no_mangle]
 pub extern "C" fn zhtp_quic_session_last_error() -> *mut c_char {
-    LAST_ERROR.with(|e| match e.borrow().as_ref() {
-        Some(msg) => match CString::new(msg.as_str()) {
+    match current_error_message() {
+        Some(msg) => match CString::new(msg) {
             Ok(c) => c.into_raw(),
             Err(_) => std::ptr::null_mut(),
         },
         None => std::ptr::null_mut(),
-    })
+    }
 }
 
 /// Stage token only (`uhp_handshake`, `quic`, `resolve`, …). Static C string
-/// — do not free. Returns `"none"` when no error is stored.
+/// — do not free. Returns `"none"` when no error is stored. Same process-global
+/// contract as `zhtp_quic_session_last_error`.
 #[no_mangle]
 pub extern "C" fn zhtp_quic_session_last_error_stage() -> *const c_char {
-    LAST_STAGE.with(|s| stage_as_c_str(*s.borrow()))
-}
-
-fn stage_as_c_str(stage: &str) -> *const c_char {
-    // Explicit NUL-terminated statics — do not free.
-    match stage {
-        "resolve" => b"resolve\0".as_ptr() as *const c_char,
-        "quic" => b"quic\0".as_ptr() as *const c_char,
-        "tls" => b"tls\0".as_ptr() as *const c_char,
-        "uhp_handshake" => b"uhp_handshake\0".as_ptr() as *const c_char,
-        "trust" => b"trust\0".as_ptr() as *const c_char,
-        "session_keys" => b"session_keys\0".as_ptr() as *const c_char,
-        "config" => b"config\0".as_ptr() as *const c_char,
-        "identity" => b"identity\0".as_ptr() as *const c_char,
-        "alpn" => b"alpn\0".as_ptr() as *const c_char,
-        "runtime" => b"runtime\0".as_ptr() as *const c_char,
-        "client_init" => b"client_init\0".as_ptr() as *const c_char,
-        "inbound" => b"inbound\0".as_ptr() as *const c_char,
-        "rpc" => b"rpc\0".as_ptr() as *const c_char,
-        "args" => b"args\0".as_ptr() as *const c_char,
-        _ => b"none\0".as_ptr() as *const c_char,
-    }
+    stage_as_c_str(current_stage())
 }
 
 /// Free a string returned by `zhtp_quic_session_last_error`.
@@ -759,6 +801,7 @@ pub extern "C" fn zhtp_quic_session_inbound_read(
     out_ptr: *mut *const u8,
     out_len: *mut usize,
 ) -> i32 {
+    clear_last_error();
     if stream.is_null() || out_ptr.is_null() || out_len.is_null() {
         set_last_error("args", "inbound_read null pointer");
         return -2;
@@ -806,7 +849,7 @@ pub extern "C" fn zhtp_quic_session_inbound_read(
             set_last_error("inbound", e);
             -2
         }
-        None => 1,
+        None => 1, // timeout / empty — last_error already cleared
     }
 }
 
@@ -860,9 +903,8 @@ mod tests {
         let err = open_session("127.0.0.1", 9334, Some("g1.example"), 0, &id)
             .expect_err("public alpn must fail");
         assert!(err.to_string().contains("alpn"), "{err}");
-        let stage = LAST_STAGE.with(|s| *s.borrow());
-        assert_eq!(stage, "alpn");
-        let msg = LAST_ERROR.with(|e| e.borrow().clone()).expect("last error");
+        assert_eq!(current_stage(), "alpn");
+        let msg = current_error_message().expect("last error");
         assert!(msg.starts_with("stage=alpn:"), "{msg}");
     }
 
@@ -872,9 +914,50 @@ mod tests {
         id.public_key.truncate(10);
         let err = open_session("127.0.0.1", 9334, Some("g1.example"), 1, &id)
             .expect_err("bad key must fail");
-        assert!(err.to_string().contains("2592") || err.to_string().contains("identity"), "{err}");
-        let stage = LAST_STAGE.with(|s| *s.borrow());
-        assert_eq!(stage, "identity");
+        assert!(
+            err.to_string().contains("2592") || err.to_string().contains("identity"),
+            "{err}"
+        );
+        assert_eq!(current_stage(), "identity");
+    }
+
+    #[test]
+    fn last_error_is_readable_across_threads() {
+        // Contract: open on T1, last_error on T2 (Dart isolate / JNI pool).
+        let id = generate_identity("cross-thread".into()).expect("identity");
+        open_session("127.0.0.1", 9334, Some("g1.example"), 0, &id).expect_err("alpn");
+        let reader = std::thread::spawn(|| {
+            (
+                current_stage().to_string(),
+                current_error_message().expect("cross-thread last error"),
+            )
+        });
+        let (stage, msg) = reader.join().expect("join");
+        assert_eq!(stage, "alpn");
+        assert!(msg.starts_with("stage=alpn:"), "{msg}");
+    }
+
+    #[test]
+    fn stage_table_c_str_covers_every_token() {
+        for (name, cstr) in STAGES {
+            assert!(
+                cstr.ends_with(&[0]),
+                "stage {name} C string must be NUL-terminated"
+            );
+            let body = &cstr[..cstr.len() - 1];
+            assert_eq!(
+                std::str::from_utf8(body).expect("utf8"),
+                *name,
+                "C string body must match stage name"
+            );
+            let ptr = stage_as_c_str(name);
+            let got = unsafe { CStr::from_ptr(ptr) }.to_str().expect("c str");
+            assert_eq!(got, *name);
+        }
+        assert_eq!(
+            unsafe { CStr::from_ptr(stage_as_c_str("not-a-stage")).to_str().unwrap() },
+            "none"
+        );
     }
 
     #[test]
@@ -914,7 +997,7 @@ mod tests {
             panic!(
                 "session open failed: {:#} last={}",
                 e,
-                LAST_ERROR.with(|x| x.borrow().clone().unwrap_or_default())
+                current_error_message().unwrap_or_default()
             );
         });
         assert!(!ptr.is_null());
