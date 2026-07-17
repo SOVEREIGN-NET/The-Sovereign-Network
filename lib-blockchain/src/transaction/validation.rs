@@ -2491,6 +2491,14 @@ impl<'a> StatefulTransactionValidator<'a> {
             && !is_threshold_type
             && transaction.transaction_type != TransactionType::IdentityRegistration
             && transaction.transaction_type != TransactionType::TokenTransfer
+            // RewardClaim is signed by the asset spend-delegate keystore (treasury),
+            // not a user identity. Authorization is Dilithium sig + on-chain
+            // RewardsModuleState.spend_delegate_key_id at apply; beneficiary
+            // `owner_did` is gated separately (sled) below. Requiring the
+            // delegate key in identity_registry/wallets rejects all claims
+            // after a store-backed restart (in-memory maps empty / delegate
+            // never registered as a user). Same exemption class as TokenTransfer.
+            && transaction.transaction_type != TransactionType::RewardClaim
             && transaction.transaction_type != TransactionType::TokenMint
             && transaction.transaction_type != TransactionType::TokenCreation
             && transaction.transaction_type != TransactionType::AssetLaunch
@@ -2541,6 +2549,9 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // RewardClaim: signer is the spend delegate (system tx), but beneficiary
         // `owner_did` must exist in durable sled — same oracle as executor apply.
+        // Spend-delegate (or legacy token-creator) authorization must also match
+        // apply (`reward_claim.rs`) so a non-delegate claim is rejected at
+        // mempool admission instead of halting block apply (#2859 class).
         if transaction.transaction_type == TransactionType::RewardClaim {
             let data = transaction
                 .reward_claim_data()
@@ -2558,6 +2569,31 @@ impl<'a> StatefulTransactionValidator<'a> {
                 tracing::warn!(
                     "[REWARD_CLAIM] owner_did not registered in sled: {} ({e})",
                     &data.owner_did[..data.owner_did.len().min(32)]
+                );
+                return Err(ValidationError::InvalidTransaction);
+            }
+            if let Some(rewards_state) = blockchain.get_rewards_module_state(&data.token_id) {
+                if data.from != rewards_state.spend_delegate_key_id {
+                    tracing::warn!(
+                        "[REWARD_CLAIM] signer is not on-chain spend delegate: from={} expected={}",
+                        hex::encode(data.from),
+                        hex::encode(rewards_state.spend_delegate_key_id)
+                    );
+                    return Err(ValidationError::Unauthorized);
+                }
+            } else if let Some(contract) = blockchain.get_token_contract(&data.token_id) {
+                if contract.creator.key_id != data.from {
+                    tracing::warn!(
+                        "[REWARD_CLAIM] signer is not token creator (legacy path): from={} creator={}",
+                        hex::encode(data.from),
+                        hex::encode(contract.creator.key_id)
+                    );
+                    return Err(ValidationError::Unauthorized);
+                }
+            } else {
+                tracing::warn!(
+                    "[REWARD_CLAIM] token contract not found for claim token_id={}",
+                    hex::encode(data.token_id)
                 );
                 return Err(ValidationError::InvalidTransaction);
             }

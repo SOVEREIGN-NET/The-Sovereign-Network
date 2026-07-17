@@ -2449,8 +2449,28 @@ impl Blockchain {
             ));
         }
 
-        if !self.verify_transaction(&transaction)? {
-            return Err(anyhow::anyhow!("Transaction verification failed"));
+        // Surface ValidationError in the API response (not just node logs).
+        // `verify_transaction` collapses errors to bool and hid UnregisteredSender
+        // as a generic "Transaction verification failed" to clients.
+        {
+            let validator =
+                crate::transaction::validation::StatefulTransactionValidator::new(self);
+            if let Err(error) = validator.validate_transaction_with_state(&transaction) {
+                tracing::warn!("Transaction validation failed: {:?}", error);
+                tracing::warn!(
+                    "Transaction details: inputs={}, outputs={}, fee={}, type={:?}, memo_len={}, version={}",
+                    transaction.inputs.len(),
+                    transaction.outputs.len(),
+                    transaction.fee,
+                    transaction.transaction_type,
+                    transaction.memo.len(),
+                    transaction.version
+                );
+                return Err(anyhow::anyhow!(
+                    "Transaction verification failed: {}",
+                    error
+                ));
+            }
         }
 
         // Nonce gate: reject transactions whose nonce doesn't match the
