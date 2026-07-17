@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use lib_blockchain::{Blockchain, BlockchainQuery};
+use lib_blockchain::Blockchain;
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
@@ -242,31 +242,10 @@ impl MessagingHandler {
         }
     }
 
-    /// Resolve authenticated requester → canonical DID (same paths as receive).
+    /// Resolve authenticated requester → canonical DID (shared with inbound / receive).
     async fn resolve_caller_did(&self, request: &ZhtpRequest) -> Result<String, String> {
-        let requester_key_id = request
-            .requester
-            .as_ref()
-            .map(|id| hex::encode(&id.0))
-            .unwrap_or_default();
-        if requester_key_id.is_empty() {
-            return Err("Authenticated DID required".to_string());
-        }
-        let key_id_did = format!("did:zhtp:{}", requester_key_id);
-        let bound = match (
-            crate::session_manager::session_manager_handle(),
-            request.requester.as_ref(),
-        ) {
-            (Some(mgr), Some(req_id)) => mgr.canonical_did_for_quic_key(&req_id.0).await,
-            _ => None,
-        };
-        if let Some(did) = bound {
-            return Ok(did);
-        }
         let blockchain = self.blockchain.read().await;
-        Ok(blockchain
-            .did_by_device_key_id(&requester_key_id)
-            .unwrap_or(key_id_did))
+        super::did_resolve::resolve_recipient_did_from_request(request, &blockchain).await
     }
 
     /// POST /api/v1/msg/ack
