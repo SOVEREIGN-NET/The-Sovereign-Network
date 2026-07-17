@@ -101,7 +101,24 @@ pub fn verify_manifest_pin(
     }
 
     match store.get_dht_pin_content(manifest_cid)? {
-        Some(bytes) => validate_manifest_json(&bytes, manifest_hash, ctx),
+        Some(bytes) => match validate_manifest_json(&bytes, manifest_hash, ctx) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                // Non-strict: treat bad/stale local cache like a missing pin so tx
+                // validity does not depend on non-consensus DHT contents (consensus split).
+                if manifest_pin_strict_mode() {
+                    Err(err)
+                } else {
+                    tracing::warn!(
+                        manifest_cid = %hex::encode(&manifest_cid[..8]),
+                        block_height,
+                        error = %err,
+                        "manifest pin gate: cached content failed validation; allowing best-effort"
+                    );
+                    Ok(())
+                }
+            }
+        },
         None => {
             if manifest_pin_strict_mode() {
                 Err(TxApplyError::InvalidType(
@@ -171,5 +188,23 @@ mod tests {
         };
         let err = verify_manifest_pin(store.as_ref(), &cid, &hash, ctx, 1).unwrap_err();
         assert!(matches!(err, TxApplyError::InvalidType(msg) if msg.contains("strict")));
+    }
+
+    #[test]
+    fn strict_mode_rejects_corrupt_cached_pin() {
+        // Unit tests compile with MANIFEST_PIN_STRICT_MODE=true.
+        let bytes = build_dao_launch_manifest_bytes("Bubble", "BUBL", 18);
+        let hash = lib_crypto::hash_blake3(&bytes);
+        let mut cid = [0u8; 32];
+        cid[..16].copy_from_slice(&hash[..16]);
+        let store = store_with_pin(cid, b"not-valid-json-manifest");
+        let ctx = ManifestPinContext {
+            name: None,
+            symbol: None,
+            decimals: None,
+            asset_id: None,
+        };
+        let err = verify_manifest_pin(store.as_ref(), &cid, &hash, ctx, 1).unwrap_err();
+        assert!(matches!(err, TxApplyError::InvalidType(_)));
     }
 }

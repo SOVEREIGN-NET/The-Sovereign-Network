@@ -338,12 +338,23 @@ impl Blockchain {
         token_id: [u8; 32],
         block_timestamp: u64,
     ) -> Result<()> {
+        // Callers outside block validation use tip height for the curve-source gate.
+        self.validate_cbe_graduation_oracle_gate_at(token_id, block_timestamp, self.height)
+    }
+
+    /// CBE graduation oracle gate at a specific block height (replay-safe source selection).
+    pub fn validate_cbe_graduation_oracle_gate_at(
+        &self,
+        token_id: [u8; 32],
+        block_timestamp: u64,
+        block_height: u64,
+    ) -> Result<()> {
         use crate::oracle::ORACLE_PRICE_SCALE;
 
         use crate::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD;
         const MICRO_USD_PER_USD: u128 = 1_000_000;
 
-        let Some(reserve_sov) = self.resolve_cbe_graduation_reserve(token_id)? else {
+        let Some(reserve_sov) = self.resolve_cbe_graduation_reserve(token_id, block_height)? else {
             return Ok(());
         };
 
@@ -378,32 +389,53 @@ impl Blockchain {
 
     /// Resolve SOV reserve for CBE graduation oracle gating.
     ///
-    /// Prefers sovereign `asset_curve/` state when the asset has the curve flag (SA-5);
-    /// falls back to the legacy bonding-curve registry. Returns `None` when the gate
-    /// does not apply (non-CBE symbol or already graduated).
-    fn resolve_cbe_graduation_reserve(&self, token_id: [u8; 32]) -> Result<Option<u128>> {
-        use crate::contracts::sovereign_asset::CurvePhase;
+    /// After economic-rules activation, prefers sovereign `asset_curve/` when the asset
+    /// has the curve flag (SA-5). Below that height, always uses the legacy bonding-curve
+    /// registry so historical `BondingCurveGraduate` blocks replay deterministically.
+    /// Missing/unreadable curve side-table rows fall through to legacy rather than
+    /// rejecting the block. Returns `None` when the gate does not apply (non-CBE or graduated).
+    pub(crate) fn resolve_cbe_graduation_reserve(
+        &self,
+        token_id: [u8; 32],
+        block_height: u64,
+    ) -> Result<Option<u128>> {
+        use crate::contracts::sovereign_asset::{economic_rules_active, CurvePhase};
         use crate::contracts::tokens::CBE_SYMBOL;
 
-        if let Some(store) = &self.store {
-            if let Ok(Some(asset)) = store.get_sovereign_asset(&token_id) {
-                if asset.module_flags.has_curve() {
-                    if asset.symbol != CBE_SYMBOL {
-                        return Ok(None);
+        if economic_rules_active(block_height) {
+            if let Some(store) = &self.store {
+                if let Ok(Some(asset)) = store.get_sovereign_asset(&token_id) {
+                    if asset.module_flags.has_curve() {
+                        if asset.symbol != CBE_SYMBOL {
+                            return Ok(None);
+                        }
+                        match store.get_curve_module_state(&token_id) {
+                            Ok(Some(curve_state)) => {
+                                if matches!(
+                                    curve_state.phase,
+                                    CurvePhase::Graduated | CurvePhase::Amm
+                                ) {
+                                    return Ok(None);
+                                }
+                                return Ok(Some(curve_state.reserve_balance));
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    token_id = %hex::encode(&token_id[..8]),
+                                    block_height,
+                                    "curve flag set but asset_curve state missing; using legacy reserve source"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    token_id = %hex::encode(&token_id[..8]),
+                                    block_height,
+                                    error = %e,
+                                    "failed to read curve module state; using legacy reserve source"
+                                );
+                            }
+                        }
                     }
-                    let curve_state = store
-                        .get_curve_module_state(&token_id)
-                        .map_err(|e| {
-                            anyhow::anyhow!("failed to read curve module state: {}", e)
-                        })?
-                        .ok_or_else(|| anyhow::anyhow!("curve module state not found"))?;
-                    if matches!(
-                        curve_state.phase,
-                        CurvePhase::Graduated | CurvePhase::Amm
-                    ) {
-                        return Ok(None);
-                    }
-                    return Ok(Some(curve_state.reserve_balance));
                 }
             }
         }
@@ -435,7 +467,11 @@ impl Blockchain {
             let data = tx
                 .bonding_curve_graduate_data()
                 .ok_or_else(|| anyhow::anyhow!("BondingCurveGraduate missing data"))?;
-            self.validate_cbe_graduation_oracle_gate(data.token_id, block.header.timestamp)?;
+            self.validate_cbe_graduation_oracle_gate_at(
+                data.token_id,
+                block.header.timestamp,
+                block.header.height,
+            )?;
         }
         Ok(())
     }
