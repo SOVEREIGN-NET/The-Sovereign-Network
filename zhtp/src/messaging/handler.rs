@@ -140,7 +140,8 @@ impl MessagingHandler {
     }
 
     /// POST /api/v1/msg/send
-    /// Deposit first (durable), then best-effort live push + mesh relay.
+    /// Deposit (always) then optionally push to a live inbound subscriber.
+    /// Status is honest: `queued` (stored only) or `pushed` (stored + live).
     async fn handle_send(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         let req: SendRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
@@ -154,9 +155,10 @@ impl MessagingHandler {
                 .map_err(|e| anyhow::anyhow!("Invalid envelope: {}", e))?;
 
         let recipient_did = envelope.recipient_did.clone();
+        let message_id = super::deposit::message_id_for_envelope(&envelope_bytes);
 
-        // MSG-R2: always deposit first — live push is best-effort only.
-        // Local store-full is not fatal: still mesh-relay so peers can deposit.
+        // MSG-R2 / R4: deposit first (durable on this node), then best-effort push.
+        // Local store-full is not fatal — still mesh-relay so peers can deposit.
         if let Err(e) = self.deposits.deposit_one(
             &envelope.sender_did,
             &recipient_did,
@@ -164,6 +166,7 @@ impl MessagingHandler {
         ) {
             warn!(
                 error = %e,
+                message_id = %message_id,
                 "msg/send: local deposit failed — continuing mesh relay"
             );
         }
@@ -171,11 +174,12 @@ impl MessagingHandler {
         let messaging_provider =
             crate::runtime::messaging_provider::get_global_messaging_provider();
 
-        let _pushed = messaging_provider
+        // Best-effort live push; deposit remains until client acks.
+        let pushed = messaging_provider
             .try_push(&recipient_did, envelope_bytes.clone())
             .await;
 
-        // Also relay via mesh so all nodes have the message
+        // Also relay via mesh so peer nodes can deposit / push
         if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
             let quic_guard = mesh_router.quic_protocol.read().await;
             if let Some(ref qp) = *quic_guard {
@@ -191,8 +195,15 @@ impl MessagingHandler {
                 );
                 for peer_id in &peer_ids {
                     match qp.send_to_peer(peer_id, mesh_msg.clone()).await {
-                        Ok(_) => info!("  relay -> peer {} OK", hex::encode(&peer_id[..8.min(peer_id.len())])),
-                        Err(e) => info!("  relay -> peer {} FAILED: {}", hex::encode(&peer_id[..8.min(peer_id.len())]), e),
+                        Ok(_) => info!(
+                            "  relay -> peer {} OK",
+                            hex::encode(&peer_id[..8.min(peer_id.len())])
+                        ),
+                        Err(e) => info!(
+                            "  relay -> peer {} FAILED: {}",
+                            hex::encode(&peer_id[..8.min(peer_id.len())]),
+                            e
+                        ),
                     }
                 }
             } else {
@@ -202,12 +213,16 @@ impl MessagingHandler {
             info!("msg/send: mesh router unavailable — no mesh relay");
         }
 
+        let status = if pushed { "pushed" } else { "queued" };
         info!(
-            "Message deposited + relayed for {}",
+            message_id = %message_id,
+            status,
+            "msg/send for {}",
             &recipient_did[..16.min(recipient_did.len())]
         );
         json_response(json!({
-            "status": "delivered",
+            "status": status,
+            "message_id": message_id,
             "recipient_did": recipient_did,
         }))
     }
