@@ -21,6 +21,8 @@ use quinn::SendStream;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
+use super::metrics::redact_did;
+
 /// Write a single framed envelope to the send stream.
 async fn write_frame(send: &mut SendStream, envelope: &[u8]) -> Result<()> {
     let len = envelope.len() as u32;
@@ -40,14 +42,17 @@ pub async fn run_inbound_stream(
 
     if recipient_did.is_empty() {
         warn!(
-            "msg/inbound: empty recipient DID for key_id={}",
-            requester_key_id
+            key_id = %&requester_key_id[..16.min(requester_key_id.len())],
+            "msg/inbound: empty recipient DID"
         );
         let _ = send.finish();
         return Ok(());
     }
 
-    info!("msg/inbound: stream opened for {}", recipient_did);
+    info!(
+        recipient = %redact_did(&recipient_did),
+        "msg/inbound: stream opened"
+    );
 
     let provider = crate::runtime::messaging_provider::get_global_messaging_provider();
 
@@ -58,8 +63,8 @@ pub async fn run_inbound_stream(
         for delivery in deliveries {
             if write_frame(&mut send, &delivery.envelope).await.is_err() {
                 info!(
-                    "msg/inbound: client disconnected during initial peek for {}",
-                    recipient_did
+                    recipient = %redact_did(&recipient_did),
+                    "msg/inbound: client disconnected during initial peek"
                 );
                 // Envelopes still in store — client can reconnect or poll.
                 return Ok(());
@@ -68,8 +73,9 @@ pub async fn run_inbound_stream(
         }
         if count > 0 {
             info!(
-                "msg/inbound: peeked {} envelopes from deposit store for {}",
-                count, recipient_did
+                count,
+                recipient = %redact_did(&recipient_did),
+                "msg/inbound: peeked envelopes from deposit store"
             );
         }
     }
@@ -82,8 +88,9 @@ pub async fn run_inbound_stream(
     let (sub_id, mut rx) = provider.register_subscriber(recipient_did.clone()).await;
 
     info!(
-        "msg/inbound: subscriber registered for {} (id={})",
-        recipient_did, sub_id
+        recipient = %redact_did(&recipient_did),
+        sub_id,
+        "msg/inbound: subscriber registered"
     );
 
     // 3. Push frames until the peer disconnects or a write fails.
@@ -91,7 +98,10 @@ pub async fn run_inbound_stream(
     // does not lose mail — client acks after processing.
     while let Some(envelope) = rx.recv().await {
         if write_frame(&mut send, &envelope).await.is_err() {
-            info!("msg/inbound: write failed (client gone) for {}", recipient_did);
+            info!(
+                recipient = %redact_did(&recipient_did),
+                "msg/inbound: write failed (client gone)"
+            );
             break;
         }
     }
@@ -103,8 +113,9 @@ pub async fn run_inbound_stream(
     provider.unregister_subscriber(&recipient_did, sub_id).await;
     let _ = send.finish();
     info!(
-        "msg/inbound: stream closed for {} (id={})",
-        recipient_did, sub_id
+        recipient = %redact_did(&recipient_did),
+        sub_id,
+        "msg/inbound: stream closed"
     );
     Ok(())
 }
