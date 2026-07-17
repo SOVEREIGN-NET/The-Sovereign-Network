@@ -162,6 +162,22 @@ pub fn mempool_blockchain(actors: &RewardClaimActors) -> Blockchain {
     blockchain
 }
 
+/// Beneficiary registered; treasury/spend-delegate key deliberately absent from
+/// identity maps — production path after store-backed restart (delegate is a
+/// keystore, not a user identity).
+pub fn mempool_blockchain_unregistered_treasury(actors: &RewardClaimActors) -> Blockchain {
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let store = attach_ephemeral_store(&mut blockchain);
+    put_identity_direct(store.as_ref(), &actors.owner_did, &actors.beneficiary.public_key);
+    register_identity_shadow(
+        &mut blockchain,
+        &actors.owner_did,
+        &actors.beneficiary.public_key,
+    );
+    install_bubl_mempool_fixtures(&mut blockchain, actors);
+    blockchain
+}
+
 /// Persist identities, BUBL contract, treasury balance; returns the setup block at height 1.
 pub fn seed_executor_store(
     store: &Arc<dyn BlockchainStore>,

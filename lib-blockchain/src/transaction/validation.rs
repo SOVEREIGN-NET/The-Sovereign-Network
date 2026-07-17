@@ -2491,6 +2491,14 @@ impl<'a> StatefulTransactionValidator<'a> {
             && !is_threshold_type
             && transaction.transaction_type != TransactionType::IdentityRegistration
             && transaction.transaction_type != TransactionType::TokenTransfer
+            // RewardClaim is signed by the asset spend-delegate keystore (treasury),
+            // not a user identity. Authorization is Dilithium sig + on-chain
+            // RewardsModuleState.spend_delegate_key_id at apply; beneficiary
+            // `owner_did` is gated separately (sled) below. Requiring the
+            // delegate key in identity_registry/wallets rejects all claims
+            // after a store-backed restart (in-memory maps empty / delegate
+            // never registered as a user). Same exemption class as TokenTransfer.
+            && transaction.transaction_type != TransactionType::RewardClaim
             && transaction.transaction_type != TransactionType::TokenMint
             && transaction.transaction_type != TransactionType::TokenCreation
             && transaction.transaction_type != TransactionType::AssetLaunch

@@ -15,8 +15,8 @@ mod common;
 use common::block_builders;
 use common::reward_claim_harness::{
     mempool_blockchain, mempool_blockchain_shadow_phantom_beneficiary,
-    mempool_blockchain_unregistered_beneficiary, seed_executor_store, welcome_claim_tx,
-    RewardClaimActors,
+    mempool_blockchain_unregistered_beneficiary, mempool_blockchain_unregistered_treasury,
+    seed_executor_store, welcome_claim_tx, RewardClaimActors,
 };
 
 #[test]
@@ -27,6 +27,20 @@ fn registered_owner_did_accepted_into_mempool() {
     blockchain
         .add_pending_transaction(welcome_claim_tx(&actors, 0))
         .expect("registered owner_did claim should enter mempool");
+    assert_eq!(blockchain.get_pending_transactions().len(), 1);
+}
+
+#[test]
+fn unregistered_treasury_signer_accepted_into_mempool() {
+    // Spend-delegate is a node keystore, not a registered user identity.
+    // Production claims failed with UnregisteredSender after restarts when
+    // validate_sender_identity_exists scanned only in-memory wallets/identities.
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain_unregistered_treasury(&actors);
+
+    blockchain
+        .add_pending_transaction(welcome_claim_tx(&actors, 0))
+        .expect("RewardClaim must not require treasury identity registration");
     assert_eq!(blockchain.get_pending_transactions().len(), 1);
 }
 
@@ -94,9 +108,11 @@ fn duplicate_welcome_claim_rejected_from_mempool() {
         .add_pending_transaction(welcome_claim_tx(&actors, 0))
         .expect_err("duplicate welcome claim must be rejected");
     let msg = err.to_string();
+    // Same bytes → identical hash ("duplicate already pending"); re-signed
+    // payload with same claim keys → pending_reward_claim_conflicts.
     assert!(
-        msg.contains("conflicting RewardClaim"),
-        "expected mempool conflict rejection, got: {msg}"
+        msg.contains("conflicting RewardClaim") || msg.contains("duplicate already pending"),
+        "expected mempool conflict/duplicate rejection, got: {msg}"
     );
     assert_eq!(
         blockchain.get_pending_transactions().len(),
