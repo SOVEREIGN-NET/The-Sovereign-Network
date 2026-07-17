@@ -2467,7 +2467,7 @@ impl Blockchain {
                     transaction.version
                 );
                 return Err(anyhow::anyhow!(
-                    "Transaction verification failed: {:?}",
+                    "Transaction verification failed: {}",
                     error
                 ));
             }
