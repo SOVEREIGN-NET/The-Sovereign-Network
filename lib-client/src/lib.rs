@@ -1525,6 +1525,113 @@ pub extern "C" fn zhtp_client_build_token_create(
     }
 }
 
+/// Build a signed Sovereign Asset `AssetLaunch` transaction.
+///
+/// Returns hex-encoded bincode `Transaction` ready to POST to
+/// `POST /api/v1/assets/launch` as
+/// `{"signed_tx": "<hex>", "enforce_dao_launch_constraints": true}`.
+/// Caller must free with `zhtp_client_string_free`. Returns NULL on error.
+///
+/// When `manifest_cid` / `manifest_hash` are NULL, a deterministic local
+/// DAO launch manifest is derived via `build_dao_launch_manifest` (non-zero
+/// cid/hash). Full Web4 pin is a separate step.
+///
+/// # Parameters
+/// - `handle`: Creator identity handle
+/// - `name` / `symbol`: Null-terminated C strings
+/// - `initial_supply`: Atomic units (u128; mobile ABI: two u64 halves)
+/// - `decimals`: Decimal places
+/// - `treasury_key_id`: 32-byte key_id (must be non-zero and ≠ creator)
+/// - `dao_class`: 0 = Fp (for-profit), 1 = Np (non-profit); other values → NULL
+/// - `burn_bps`: Transfer burn in basis points (max 1000 = 10%)
+/// - `chain_id`: Network chain ID
+/// - `manifest_cid` / `manifest_hash`: Optional 32-byte pointers; NULL → local derive
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_asset_launch(
+    handle: *const IdentityHandle,
+    name: *const std::ffi::c_char,
+    symbol: *const std::ffi::c_char,
+    initial_supply: u128,
+    decimals: u8,
+    treasury_key_id: *const u8,
+    dao_class: u8,
+    burn_bps: u16,
+    chain_id: u8,
+    manifest_cid: *const u8,
+    manifest_hash: *const u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || name.is_null() || symbol.is_null() || treasury_key_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let name_str = unsafe {
+        match std::ffi::CStr::from_ptr(name).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let symbol_str = unsafe {
+        match std::ffi::CStr::from_ptr(symbol).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let mut treasury_arr = [0u8; 32];
+    unsafe {
+        std::ptr::copy_nonoverlapping(treasury_key_id, treasury_arr.as_mut_ptr(), 32);
+    }
+
+    use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode};
+    let dao = match dao_class {
+        0 => DaoClass::Fp,
+        1 => DaoClass::Np,
+        _ => return std::ptr::null_mut(),
+    };
+
+    let (cid, hash) = if manifest_cid.is_null() || manifest_hash.is_null() {
+        match build_dao_launch_manifest(name_str, symbol_str, decimals) {
+            Ok(v) => v,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    } else {
+        let mut c = [0u8; 32];
+        let mut h = [0u8; 32];
+        unsafe {
+            std::ptr::copy_nonoverlapping(manifest_cid, c.as_mut_ptr(), 32);
+            std::ptr::copy_nonoverlapping(manifest_hash, h.as_mut_ptr(), 32);
+        }
+        (c, h)
+    };
+
+    match build_asset_launch_tx(
+        identity,
+        &AssetLaunchBuildParams {
+            name: name_str.to_string(),
+            symbol: symbol_str.to_string(),
+            initial_supply,
+            decimals,
+            treasury_key_id: treasury_arr,
+            dao_class: dao,
+            burn_bps,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: cid,
+            manifest_hash: hash,
+            chain_id,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+        },
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Build a signed token burn transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/token/burn
 /// Caller must free with `zhtp_client_string_free`.
