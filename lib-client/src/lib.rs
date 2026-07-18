@@ -110,7 +110,9 @@ pub use token_tx::{
     build_domain_register_request_with_fee_payment,
     build_domain_register_request_with_fee_payment_and_metadata,
     fee_tx_hash_from_hex,
+    parse_optional_asset_id_hex,
     sign_domain_registration_system_tx,
+    DOMAIN_REGISTRATION_FEE,
     // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx,
     build_domain_transfer_request,
@@ -1889,8 +1891,8 @@ pub extern "C" fn zhtp_client_build_domain_update(
 /// - `treasury_wallet_id`: 32-byte raw DAO treasury wallet id. If NULL,
 ///   the deterministic `blake3("SOV_DAO_TREASURY_V1")` value is used.
 /// - `amount_atoms`: Fee amount in atomic SOV units (18-decimals;
-///   10 SOV = `10_000_000_000_000_000_000`). The server enforces a
-///   minimum of 10 SOV.
+///   100 SOV = `100_000_000_000_000_000_000`). The server enforces the
+///   governance-tunable domain fee (default 100 SOV).
 /// - `nonce`: Sender's current SOV nonce (fetch from
 ///   `GET /api/v1/token/nonce/<sov_token_id_hex>/<sender_wallet_id_hex>`).
 /// - `chain_id`: Network chain id (3 for the current testnet).
@@ -1959,6 +1961,12 @@ pub extern "C" fn zhtp_client_build_domain_fee_payment_tx(
 ///   record). Invalid JSON returns NULL.
 /// - `fee_payment_tx_hex`: Null-terminated hex string produced by
 ///   `zhtp_client_build_domain_fee_payment_tx`. REQUIRED.
+/// - `metadata_json`: Optional null-terminated metadata JSON. Pass NULL
+///   for none.
+/// - `chain_id`: Network chain id (0 → default testnet 0x03).
+/// - `asset_id_hex`: Optional 64-char hex sovereign asset id (optional
+///   `0x` prefix). Pass NULL or empty for unbound (V2) domains; when set
+///   the domain system tx is V3-bound to the asset (DAO M4).
 ///
 /// Returns NULL on missing inputs, JSON parse failure, or signing failure.
 #[no_mangle]
@@ -1969,6 +1977,7 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
     fee_payment_tx_hex: *const std::ffi::c_char,
     metadata_json: *const std::ffi::c_char,
     chain_id: u8,
+    asset_id_hex: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || domain.is_null() || fee_payment_tx_hex.is_null() {
         return std::ptr::null_mut();
@@ -2018,6 +2027,21 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
             Err(_) => return std::ptr::null_mut(),
         }
     };
+    let asset_id_opt: Option<&str> = if asset_id_hex.is_null() {
+        None
+    } else {
+        let raw = unsafe {
+            match std::ffi::CStr::from_ptr(asset_id_hex).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+        if raw.trim().is_empty() {
+            None
+        } else {
+            Some(raw)
+        }
+    };
     let effective_chain_id = if chain_id == 0 {
         token_tx::DEFAULT_DOMAIN_CHAIN_ID
     } else {
@@ -2031,6 +2055,7 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
         Some(fee_tx_str),
         metadata_opt,
         effective_chain_id,
+        asset_id_opt,
     ) {
         Ok(json) => match std::ffi::CString::new(json) {
             Ok(s) => s.into_raw(),

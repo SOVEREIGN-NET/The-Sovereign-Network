@@ -169,7 +169,7 @@ pub struct SimpleDomainRegistrationRequest {
     pub signature: String,
     /// Request timestamp (Unix seconds) - for replay protection
     pub timestamp: u64,
-    /// Fee amount in SOV tokens (fixed: 10 SOV for domain registration)
+    /// Fee amount in whole SOV tokens (must match live TxFeeConfig; default 100 SOV).
     #[serde(default)]
     pub fee: Option<u64>,
     /// CONS-516: hex-encoded canonical signed TokenTransfer paying the
@@ -183,6 +183,11 @@ pub struct SimpleDomainRegistrationRequest {
     /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
     #[serde(default)]
     pub domain_tx_signature_hex: String,
+    /// Optional 64-char hex sovereign `asset_id` for DAO-scoped domains (V3 memo).
+    /// Client and server must both include this in the DomainRegistrationPayload
+    /// so `domain_tx_signature_hex` verifies.
+    #[serde(default)]
+    pub asset_id: Option<String>,
 }
 
 /// Content mapping for simple registration
@@ -844,6 +849,34 @@ impl Web4Handler {
                 (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
             } else {
+                // Optional DAO asset binding (M4 / Q10): 64-char hex → V3 memo.
+                // Must match what the client signed into domain_tx_signature_hex.
+                let bound_asset_id: Option<[u8; 32]> =
+                    if let Some(raw) = simple_request.asset_id.as_deref() {
+                        let hex_str = raw
+                            .trim()
+                            .strip_prefix("0x")
+                            .or_else(|| raw.trim().strip_prefix("0X"))
+                            .unwrap_or(raw.trim());
+                        if hex_str.is_empty() {
+                            None
+                        } else {
+                            let bytes = hex::decode(hex_str).map_err(|e| {
+                                anyhow!("asset_id is not valid hex: {}", e)
+                            })?;
+                            if bytes.len() != 32 {
+                                return Err(anyhow!(
+                                    "asset_id must be 32 bytes (64 hex chars), got {}",
+                                    bytes.len()
+                                ));
+                            }
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&bytes);
+                            Some(arr)
+                        }
+                    } else {
+                        None
+                    };
                 let payload = lib_blockchain::transaction::DomainRegistrationPayload {
                     domain: simple_request.domain.clone(),
                     owner_did: owner_did.clone(),
@@ -855,12 +888,12 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
-                    // CONS-516: fee paid by companion TokenTransfer; V2 memo
+                    // CONS-516: fee paid by companion TokenTransfer; V2/V3 memo
                     // carries fee_tx_hash binding only. Inline fee fields zeroed
                     // so client/server skeletons stay byte-identical.
                     fee_amount_atoms: 0,
                     fee_payer_wallet_id: [0u8; 32],
-                    asset_id: None,
+                    asset_id: bound_asset_id,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
@@ -2627,9 +2660,11 @@ mod tests {
                     "content_type": "text/html"
                 }
             },
-            "signature": sign_simple_registration(owner_identity, domain, timestamp, 10),
+            // Fee must match live TxFeeConfig.domain_registration_fee_atoms / 10^18
+            // (default 100 SOV for DAO launch v1 / M4).
+            "signature": sign_simple_registration(owner_identity, domain, timestamp, 100),
             "timestamp": timestamp,
-            "fee": 10
+            "fee": 100
         }))
     }
 

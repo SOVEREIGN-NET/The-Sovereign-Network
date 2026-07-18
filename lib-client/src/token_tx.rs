@@ -188,6 +188,10 @@ pub struct DomainRegisterParams {
     /// Dilithium5 hex signature over the domain system tx `signing_hash()`.
     #[serde(default)]
     pub domain_tx_signature_hex: String,
+    /// Optional 64-char hex sovereign `asset_id` for DAO-scoped domains (V3 memo).
+    /// When set, the domain system tx encodes as DOMREG3 with `asset_id: Some`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
 }
 
 /// Content mapping for domain registration
@@ -836,11 +840,31 @@ pub fn build_burn_tx(
 
 use crate::crypto::Dilithium5;
 
-/// Domain registration fee in SOV tokens
-const DOMAIN_REGISTRATION_FEE: u64 = 10;
+/// Domain registration fee in whole SOV tokens.
+/// DAO launch v1 standard (epic Q10 / M4) = 100 SOV native → protocol treasury.
+/// Atomic amount = 100 * 10^18 = `100000000000000000000`.
+pub const DOMAIN_REGISTRATION_FEE: u64 = 100;
 
 /// Default chain id for domain system transactions (testnet).
 pub const DEFAULT_DOMAIN_CHAIN_ID: u8 = 0x03;
+
+/// Parse optional 64-char (optionally `0x`-prefixed) hex into a 32-byte asset id.
+pub fn parse_optional_asset_id_hex(asset_id_hex: Option<&str>) -> Result<Option<[u8; 32]>, String> {
+    let Some(raw) = asset_id_hex.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let hex_str = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")).unwrap_or(raw);
+    if hex_str.len() != 64 {
+        return Err(format!(
+            "asset_id must be 64 hex chars (32 bytes), got {} chars",
+            hex_str.len()
+        ));
+    }
+    let bytes = hex::decode(hex_str).map_err(|e| format!("asset_id is not valid hex: {}", e))?;
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(Some(arr))
+}
 
 /// Compute the fee-payment tx hash hex the server embeds in the domain registration memo.
 pub fn fee_tx_hash_from_hex(fee_payment_tx_hex: &str) -> Result<String, String> {
@@ -880,6 +904,7 @@ fn domain_registration_title_description_tags(
 /// Sign the domain `DomainRegistration` system transaction skeleton the server verifies.
 ///
 /// Must mirror `zhtp::api::handlers::web4::domains::attach_client_domain_tx_signature`.
+/// When `asset_id` is `Some`, the memo is V3 (DOMREG3); otherwise V2.
 pub fn sign_domain_registration_system_tx(
     identity: &Identity,
     domain: &str,
@@ -890,6 +915,7 @@ pub fn sign_domain_registration_system_tx(
     description: &str,
     tags: Vec<String>,
     chain_id: u8,
+    asset_id: Option<[u8; 32]>,
 ) -> Result<String, String> {
     use lib_blockchain::transaction::domain::DomainRegistrationPayload;
     use lib_blockchain::transaction::TransactionPayload;
@@ -907,7 +933,7 @@ pub fn sign_domain_registration_system_tx(
         fee_tx_hash: fee_tx_hash_hex.to_string(),
         fee_amount_atoms: 0,
         fee_payer_wallet_id: [0u8; 32],
-        asset_id: None,
+        asset_id,
     };
     let memo = payload
         .encode_memo()
@@ -919,7 +945,7 @@ pub fn sign_domain_registration_system_tx(
         .try_into()
         .map_err(|_| "identity public_key must be exactly 2592 bytes".to_string())?;
 
-    let mut tx = Transaction {
+    let tx = Transaction {
         version: 8,
         chain_id,
         transaction_type: TransactionType::DomainRegistration,
@@ -988,11 +1014,15 @@ pub fn build_domain_register_request_with_fee_payment(
         fee_payment_tx,
         None,
         DEFAULT_DOMAIN_CHAIN_ID,
+        None,
     )
 }
 
 /// Like [`build_domain_register_request_with_fee_payment`] but accepts optional metadata
 /// and an explicit chain id for the domain system transaction signature.
+///
+/// `asset_id_hex`: optional 64-char hex (optional `0x` prefix) sovereign asset id.
+/// When present, the domain system tx is V3-bound to that asset (DAO M4).
 pub fn build_domain_register_request_with_fee_payment_and_metadata(
     identity: &Identity,
     domain: &str,
@@ -1000,6 +1030,7 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
     fee_payment_tx: Option<String>,
     metadata: Option<serde_json::Value>,
     chain_id: u8,
+    asset_id_hex: Option<&str>,
 ) -> Result<String, String> {
     let fee_payment_tx = fee_payment_tx.ok_or_else(|| {
         "fee_payment_tx is required for domain registration. \
@@ -1014,6 +1045,9 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
         );
     }
 
+    let asset_id = parse_optional_asset_id_hex(asset_id_hex)?;
+    let asset_id_hex_out = asset_id.map(|id| hex::encode(id));
+
     let fee_tx_hash_hex = fee_tx_hash_from_hex(&fee_payment_tx)?;
 
     let timestamp = std::time::SystemTime::now()
@@ -1021,7 +1055,7 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
         .as_secs();
 
-    // Sign: domain|timestamp|fee_amount
+    // Sign: domain|timestamp|fee_amount (whole SOV; must match server TxFeeConfig)
     let message = format!("{}|{}|{}", domain, timestamp, DOMAIN_REGISTRATION_FEE);
     let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
         .map_err(|e| format!("Failed to sign: {}", e))?;
@@ -1038,6 +1072,7 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
         &description,
         tags,
         chain_id,
+        asset_id,
     )?;
 
     let request = DomainRegisterParams {
@@ -1050,6 +1085,7 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
         fee: Some(DOMAIN_REGISTRATION_FEE),
         fee_payment_tx: Some(fee_payment_tx),
         domain_tx_signature_hex,
+        asset_id: asset_id_hex_out,
     };
 
     serde_json::to_string(&request).map_err(|e| format!("Failed to serialize request: {}", e))
@@ -1206,7 +1242,7 @@ mod domain_system_tx_tests {
             &identity,
             &sender_wallet,
             &treasury_wallet,
-            10 * 1_000_000_000_000_000_000u128,
+            100 * 1_000_000_000_000_000_000u128,
             DEFAULT_DOMAIN_CHAIN_ID,
             0,
         )
@@ -1231,5 +1267,56 @@ mod domain_system_tx_tests {
             "Dilithium5 signatures are 9190 hex chars"
         );
         assert!(parsed.fee_payment_tx.as_ref().is_some_and(|s| !s.is_empty()));
+        assert_eq!(parsed.fee, Some(DOMAIN_REGISTRATION_FEE));
+        assert!(parsed.asset_id.is_none());
+    }
+
+    #[test]
+    fn domain_register_request_binds_asset_id_v3() {
+        let (identity, _keypair) = test_identity();
+        let treasury = blake3::hash(b"SOV_DAO_TREASURY_V1");
+        let mut treasury_wallet = [0u8; 32];
+        treasury_wallet.copy_from_slice(treasury.as_bytes());
+        let sender_wallet = [42u8; 32];
+        let asset_id = [7u8; 32];
+        let asset_hex = hex::encode(asset_id);
+
+        let fee_tx_hex = build_sov_wallet_transfer_tx(
+            &identity,
+            &sender_wallet,
+            &treasury_wallet,
+            100 * 1_000_000_000_000_000_000u128,
+            DEFAULT_DOMAIN_CHAIN_ID,
+            0,
+        )
+        .expect("fee tx");
+
+        let json = build_domain_register_request_with_fee_payment_and_metadata(
+            &identity,
+            "dao.example.sov",
+            None,
+            Some(fee_tx_hex),
+            None,
+            DEFAULT_DOMAIN_CHAIN_ID,
+            Some(&asset_hex),
+        )
+        .expect("request json");
+
+        let parsed: DomainRegisterParams = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed.asset_id.as_deref(), Some(asset_hex.as_str()));
+        assert!(!parsed.domain_tx_signature_hex.is_empty());
+    }
+
+    #[test]
+    fn parse_optional_asset_id_strips_0x() {
+        let id = [1u8; 32];
+        let hex_plain = hex::encode(id);
+        let with_prefix = format!("0x{}", hex_plain);
+        assert_eq!(
+            parse_optional_asset_id_hex(Some(&with_prefix)).unwrap(),
+            Some(id)
+        );
+        assert_eq!(parse_optional_asset_id_hex(None).unwrap(), None);
+        assert_eq!(parse_optional_asset_id_hex(Some("")).unwrap(), None);
     }
 }
