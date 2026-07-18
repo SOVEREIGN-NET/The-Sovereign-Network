@@ -841,8 +841,14 @@ pub fn build_burn_tx(
 use crate::crypto::Dilithium5;
 
 /// Domain registration fee in whole SOV tokens.
+///
 /// DAO launch v1 standard (epic Q10 / M4) = 100 SOV native → protocol treasury.
 /// Atomic amount = 100 * 10^18 = `100000000000000000000`.
+///
+/// **Coupling:** clients sign `domain|timestamp|{this}` while the node verifies
+/// against live `TxFeeConfig.domain_registration_fee_atoms` (default matches
+/// this constant). If governance changes the fee, rebuild clients with the new
+/// whole-SOV amount (or query the node first).
 pub const DOMAIN_REGISTRATION_FEE: u64 = 100;
 
 /// Default chain id for domain system transactions (testnet).
@@ -1305,6 +1311,37 @@ mod domain_system_tx_tests {
         let parsed: DomainRegisterParams = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed.asset_id.as_deref(), Some(asset_hex.as_str()));
         assert!(!parsed.domain_tx_signature_hex.is_empty());
+
+        // Memo must be DOMREG3 with the same asset_id the client signed.
+        use lib_blockchain::transaction::domain::{
+            DomainRegistrationPayload, DOMAIN_REGISTRATION_PREFIX_V3,
+        };
+        let fee_tx_hash_hex = fee_tx_hash_from_hex(parsed.fee_payment_tx.as_ref().unwrap())
+            .expect("fee hash");
+        let (title, description, tags) =
+            domain_registration_title_description_tags("dao.example.sov", None);
+        let payload = DomainRegistrationPayload {
+            domain: "dao.example.sov".to_string(),
+            owner_did: identity.did.clone(),
+            manifest_cid: String::new(),
+            build_hash: String::new(),
+            title,
+            description,
+            category: "general".to_string(),
+            tags,
+            duration_days: 365,
+            fee_tx_hash: fee_tx_hash_hex,
+            fee_amount_atoms: 0,
+            fee_payer_wallet_id: [0u8; 32],
+            asset_id: Some(asset_id),
+        };
+        let memo = payload.encode_memo().expect("encode");
+        assert!(
+            memo.starts_with(DOMAIN_REGISTRATION_PREFIX_V3),
+            "DAO-bound register must encode DOMREG3"
+        );
+        let decoded = DomainRegistrationPayload::decode_memo(&memo).expect("decode");
+        assert_eq!(decoded.asset_id, Some(asset_id));
     }
 
     #[test]

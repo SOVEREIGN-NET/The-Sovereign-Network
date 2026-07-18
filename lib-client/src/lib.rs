@@ -1541,19 +1541,28 @@ pub extern "C" fn zhtp_client_build_token_create(
 /// # Parameters
 /// - `handle`: Creator identity handle
 /// - `name` / `symbol`: Null-terminated C strings
-/// - `initial_supply`: Atomic units (u128; mobile ABI: two u64 halves)
+/// - `initial_supply_atoms_lo` / `initial_supply_atoms_hi`: Atomic supply as two
+///   little-endian u64 halves (`hi << 64 | lo` → u128). Same pattern as
+///   `zhtp_client_build_domain_fee_payment_tx` (Swift/Kotlin-safe; bare `u128`
+///   is not a portable C ABI).
 /// - `decimals`: Decimal places
 /// - `treasury_key_id`: 32-byte key_id (must be non-zero and ≠ creator)
 /// - `dao_class`: 0 = Fp (for-profit), 1 = Np (non-profit); other values → NULL
 /// - `burn_bps`: Transfer burn in basis points (max 1000 = 10%)
 /// - `chain_id`: Network chain ID
-/// - `manifest_cid` / `manifest_hash`: Optional 32-byte pointers; NULL → local derive
+/// - `manifest_cid` / `manifest_hash`: Optional 32-byte pointers. Both NULL →
+///   local derive via `build_dao_launch_manifest`. Both non-null → copy.
+///   Mixed (one null, one set) → NULL (fail closed).
+///
+/// M1 defaults (not overridable via this ABI): `SupplyMode::Fixed`,
+/// `rewards`/`governance` none, `transfer_authority` false.
 #[no_mangle]
 pub extern "C" fn zhtp_client_build_asset_launch(
     handle: *const IdentityHandle,
     name: *const std::ffi::c_char,
     symbol: *const std::ffi::c_char,
-    initial_supply: u128,
+    initial_supply_atoms_lo: u64,
+    initial_supply_atoms_hi: u64,
     decimals: u8,
     treasury_key_id: *const u8,
     dao_class: u8,
@@ -1580,6 +1589,9 @@ pub extern "C" fn zhtp_client_build_asset_launch(
         }
     };
 
+    let initial_supply: u128 =
+        (initial_supply_atoms_hi as u128) << 64 | (initial_supply_atoms_lo as u128);
+
     let mut treasury_arr = [0u8; 32];
     unsafe {
         std::ptr::copy_nonoverlapping(treasury_key_id, treasury_arr.as_mut_ptr(), 32);
@@ -1592,19 +1604,22 @@ pub extern "C" fn zhtp_client_build_asset_launch(
         _ => return std::ptr::null_mut(),
     };
 
-    let (cid, hash) = if manifest_cid.is_null() || manifest_hash.is_null() {
-        match build_dao_launch_manifest(name_str, symbol_str, decimals) {
+    // Fail closed: both null (derive) or both non-null (copy). Never half-set.
+    let (cid, hash) = match (manifest_cid.is_null(), manifest_hash.is_null()) {
+        (true, true) => match build_dao_launch_manifest(name_str, symbol_str, decimals) {
             Ok(v) => v,
             Err(_) => return std::ptr::null_mut(),
+        },
+        (false, false) => {
+            let mut c = [0u8; 32];
+            let mut h = [0u8; 32];
+            unsafe {
+                std::ptr::copy_nonoverlapping(manifest_cid, c.as_mut_ptr(), 32);
+                std::ptr::copy_nonoverlapping(manifest_hash, h.as_mut_ptr(), 32);
+            }
+            (c, h)
         }
-    } else {
-        let mut c = [0u8; 32];
-        let mut h = [0u8; 32];
-        unsafe {
-            std::ptr::copy_nonoverlapping(manifest_cid, c.as_mut_ptr(), 32);
-            std::ptr::copy_nonoverlapping(manifest_hash, h.as_mut_ptr(), 32);
-        }
-        (c, h)
+        _ => return std::ptr::null_mut(),
     };
 
     match build_asset_launch_tx(
@@ -1858,10 +1873,9 @@ pub extern "C" fn zhtp_client_build_domain_update(
 //
 // The web4 server now requires every new-domain registration to carry a
 // `fee_payment_tx` field: a hex-encoded, user-signed TokenTransfer paying the
-// 10 SOV registration fee from the owner's Primary wallet to the DAO
-// treasury wallet. The two FFI exports below give the mobile SDK the same
-// surface the Rust CLI already uses (`build_domain_fee_payment_tx` +
-// `build_domain_register_request_with_fee_payment`).
+// domain registration fee (default **100 SOV** = `100 * 10^18` atoms; must
+// match live `TxFeeConfig.domain_registration_fee_atoms`) from the owner's
+// Primary wallet to the DAO treasury wallet.
 //
 // Mobile flow:
 //   1. Fetch owner's Primary `wallet_id` (32 bytes) via the existing
@@ -1871,6 +1885,9 @@ pub extern "C" fn zhtp_client_build_domain_update(
 //   3. Call `zhtp_client_build_domain_fee_payment_tx` to get the hex tx.
 //   4. Call `zhtp_client_build_domain_register_request_with_fee_payment`
 //      with the hex from step 3 to get the JSON body to POST.
+//
+// **ABI note (M4):** step 4 gained a trailing `asset_id_hex` parameter.
+// Mobile must regenerate headers and pass NULL for non-DAO domains.
 //
 // The DAO treasury wallet id is deterministic and may be hard-coded or
 // computed by the caller — see Blockchain::deterministic_treasury_wallet_id
@@ -1967,6 +1984,10 @@ pub extern "C" fn zhtp_client_build_domain_fee_payment_tx(
 /// - `asset_id_hex`: Optional 64-char hex sovereign asset id (optional
 ///   `0x` prefix). Pass NULL or empty for unbound (V2) domains; when set
 ///   the domain system tx is V3-bound to the asset (DAO M4).
+///
+/// **Breaking C ABI (M4):** this export added `asset_id_hex` as the last
+/// argument. Existing mobile binaries must be rebuilt against the new
+/// header; old arity will crash or mis-parse.
 ///
 /// Returns NULL on missing inputs, JSON parse failure, or signing failure.
 #[no_mangle]
