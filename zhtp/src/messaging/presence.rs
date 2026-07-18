@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 
+use super::metrics::redact_did;
+
 /// Grace period before marking a DID as offline (handles app backgrounding).
 const PRESENCE_GRACE_PERIOD_SECS: u64 = 30;
 
@@ -58,7 +60,7 @@ impl PresenceTracker {
         };
 
         if was_offline {
-            info!("Presence: {} online", &did[..16.min(did.len())]);
+            info!(did = %redact_did(did), "Presence: online");
             let _ = self.event_tx.send(PresenceEvent {
                 did: did.to_string(),
                 online: true,
@@ -77,7 +79,7 @@ impl PresenceTracker {
 
         let mut online = self.online.write().await;
         if online.remove(did).is_some() {
-            info!("Presence: {} offline", &did[..16.min(did.len())]);
+            info!(did = %redact_did(did), "Presence: offline");
             let _ = self.event_tx.send(PresenceEvent {
                 did: did.to_string(),
                 online: false,
