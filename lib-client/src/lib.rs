@@ -110,7 +110,9 @@ pub use token_tx::{
     build_domain_register_request_with_fee_payment,
     build_domain_register_request_with_fee_payment_and_metadata,
     fee_tx_hash_from_hex,
+    parse_optional_asset_id_hex,
     sign_domain_registration_system_tx,
+    DOMAIN_REGISTRATION_FEE,
     // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx,
     build_domain_transfer_request,
@@ -1525,6 +1527,128 @@ pub extern "C" fn zhtp_client_build_token_create(
     }
 }
 
+/// Build a signed Sovereign Asset `AssetLaunch` transaction.
+///
+/// Returns hex-encoded bincode `Transaction` ready to POST to
+/// `POST /api/v1/assets/launch` as
+/// `{"signed_tx": "<hex>", "enforce_dao_launch_constraints": true}`.
+/// Caller must free with `zhtp_client_string_free`. Returns NULL on error.
+///
+/// When `manifest_cid` / `manifest_hash` are NULL, a deterministic local
+/// DAO launch manifest is derived via `build_dao_launch_manifest` (non-zero
+/// cid/hash). Full Web4 pin is a separate step.
+///
+/// # Parameters
+/// - `handle`: Creator identity handle
+/// - `name` / `symbol`: Null-terminated C strings
+/// - `initial_supply_atoms_lo` / `initial_supply_atoms_hi`: Atomic supply as two
+///   little-endian u64 halves (`hi << 64 | lo` → u128). Same pattern as
+///   `zhtp_client_build_domain_fee_payment_tx` (Swift/Kotlin-safe; bare `u128`
+///   is not a portable C ABI).
+/// - `decimals`: Decimal places
+/// - `treasury_key_id`: 32-byte key_id (must be non-zero and ≠ creator)
+/// - `dao_class`: 0 = Fp (for-profit), 1 = Np (non-profit); other values → NULL
+/// - `burn_bps`: Transfer burn in basis points (max 1000 = 10%)
+/// - `chain_id`: Network chain ID
+/// - `manifest_cid` / `manifest_hash`: Optional 32-byte pointers. Both NULL →
+///   local derive via `build_dao_launch_manifest`. Both non-null → copy.
+///   Mixed (one null, one set) → NULL (fail closed).
+///
+/// M1 defaults (not overridable via this ABI): `SupplyMode::Fixed`,
+/// `rewards`/`governance` none, `transfer_authority` false.
+#[no_mangle]
+pub extern "C" fn zhtp_client_build_asset_launch(
+    handle: *const IdentityHandle,
+    name: *const std::ffi::c_char,
+    symbol: *const std::ffi::c_char,
+    initial_supply_atoms_lo: u64,
+    initial_supply_atoms_hi: u64,
+    decimals: u8,
+    treasury_key_id: *const u8,
+    dao_class: u8,
+    burn_bps: u16,
+    chain_id: u8,
+    manifest_cid: *const u8,
+    manifest_hash: *const u8,
+) -> *mut std::ffi::c_char {
+    if handle.is_null() || name.is_null() || symbol.is_null() || treasury_key_id.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let identity = unsafe { &(*handle).inner };
+    let name_str = unsafe {
+        match std::ffi::CStr::from_ptr(name).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+    let symbol_str = unsafe {
+        match std::ffi::CStr::from_ptr(symbol).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        }
+    };
+
+    let initial_supply: u128 =
+        (initial_supply_atoms_hi as u128) << 64 | (initial_supply_atoms_lo as u128);
+
+    let mut treasury_arr = [0u8; 32];
+    unsafe {
+        std::ptr::copy_nonoverlapping(treasury_key_id, treasury_arr.as_mut_ptr(), 32);
+    }
+
+    use lib_blockchain::contracts::sovereign_asset::{DaoClass, SupplyMode};
+    let dao = match dao_class {
+        0 => DaoClass::Fp,
+        1 => DaoClass::Np,
+        _ => return std::ptr::null_mut(),
+    };
+
+    // Fail closed: both null (derive) or both non-null (copy). Never half-set.
+    let (cid, hash) = match (manifest_cid.is_null(), manifest_hash.is_null()) {
+        (true, true) => match build_dao_launch_manifest(name_str, symbol_str, decimals) {
+            Ok(v) => v,
+            Err(_) => return std::ptr::null_mut(),
+        },
+        (false, false) => {
+            let mut c = [0u8; 32];
+            let mut h = [0u8; 32];
+            unsafe {
+                std::ptr::copy_nonoverlapping(manifest_cid, c.as_mut_ptr(), 32);
+                std::ptr::copy_nonoverlapping(manifest_hash, h.as_mut_ptr(), 32);
+            }
+            (c, h)
+        }
+        _ => return std::ptr::null_mut(),
+    };
+
+    match build_asset_launch_tx(
+        identity,
+        &AssetLaunchBuildParams {
+            name: name_str.to_string(),
+            symbol: symbol_str.to_string(),
+            initial_supply,
+            decimals,
+            treasury_key_id: treasury_arr,
+            dao_class: dao,
+            burn_bps,
+            supply_mode: SupplyMode::Fixed,
+            manifest_cid: cid,
+            manifest_hash: hash,
+            chain_id,
+            rewards: None,
+            governance: None,
+            transfer_authority: false,
+        },
+    ) {
+        Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Build a signed token burn transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/token/burn
 /// Caller must free with `zhtp_client_string_free`.
@@ -1749,10 +1873,9 @@ pub extern "C" fn zhtp_client_build_domain_update(
 //
 // The web4 server now requires every new-domain registration to carry a
 // `fee_payment_tx` field: a hex-encoded, user-signed TokenTransfer paying the
-// 10 SOV registration fee from the owner's Primary wallet to the DAO
-// treasury wallet. The two FFI exports below give the mobile SDK the same
-// surface the Rust CLI already uses (`build_domain_fee_payment_tx` +
-// `build_domain_register_request_with_fee_payment`).
+// domain registration fee (default **100 SOV** = `100 * 10^18` atoms; must
+// match live `TxFeeConfig.domain_registration_fee_atoms`) from the owner's
+// Primary wallet to the DAO treasury wallet.
 //
 // Mobile flow:
 //   1. Fetch owner's Primary `wallet_id` (32 bytes) via the existing
@@ -1762,6 +1885,9 @@ pub extern "C" fn zhtp_client_build_domain_update(
 //   3. Call `zhtp_client_build_domain_fee_payment_tx` to get the hex tx.
 //   4. Call `zhtp_client_build_domain_register_request_with_fee_payment`
 //      with the hex from step 3 to get the JSON body to POST.
+//
+// **ABI note (M4):** step 4 gained a trailing `asset_id_hex` parameter.
+// Mobile must regenerate headers and pass NULL for non-DAO domains.
 //
 // The DAO treasury wallet id is deterministic and may be hard-coded or
 // computed by the caller — see Blockchain::deterministic_treasury_wallet_id
@@ -1782,8 +1908,8 @@ pub extern "C" fn zhtp_client_build_domain_update(
 /// - `treasury_wallet_id`: 32-byte raw DAO treasury wallet id. If NULL,
 ///   the deterministic `blake3("SOV_DAO_TREASURY_V1")` value is used.
 /// - `amount_atoms`: Fee amount in atomic SOV units (18-decimals;
-///   10 SOV = `10_000_000_000_000_000_000`). The server enforces a
-///   minimum of 10 SOV.
+///   100 SOV = `100_000_000_000_000_000_000`). The server enforces the
+///   governance-tunable domain fee (default 100 SOV).
 /// - `nonce`: Sender's current SOV nonce (fetch from
 ///   `GET /api/v1/token/nonce/<sov_token_id_hex>/<sender_wallet_id_hex>`).
 /// - `chain_id`: Network chain id (3 for the current testnet).
@@ -1852,6 +1978,16 @@ pub extern "C" fn zhtp_client_build_domain_fee_payment_tx(
 ///   record). Invalid JSON returns NULL.
 /// - `fee_payment_tx_hex`: Null-terminated hex string produced by
 ///   `zhtp_client_build_domain_fee_payment_tx`. REQUIRED.
+/// - `metadata_json`: Optional null-terminated metadata JSON. Pass NULL
+///   for none.
+/// - `chain_id`: Network chain id (0 → default testnet 0x03).
+/// - `asset_id_hex`: Optional 64-char hex sovereign asset id (optional
+///   `0x` prefix). Pass NULL or empty for unbound (V2) domains; when set
+///   the domain system tx is V3-bound to the asset (DAO M4).
+///
+/// **Breaking C ABI (M4):** this export added `asset_id_hex` as the last
+/// argument. Existing mobile binaries must be rebuilt against the new
+/// header; old arity will crash or mis-parse.
 ///
 /// Returns NULL on missing inputs, JSON parse failure, or signing failure.
 #[no_mangle]
@@ -1862,6 +1998,7 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
     fee_payment_tx_hex: *const std::ffi::c_char,
     metadata_json: *const std::ffi::c_char,
     chain_id: u8,
+    asset_id_hex: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
     if handle.is_null() || domain.is_null() || fee_payment_tx_hex.is_null() {
         return std::ptr::null_mut();
@@ -1911,6 +2048,21 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
             Err(_) => return std::ptr::null_mut(),
         }
     };
+    let asset_id_opt: Option<&str> = if asset_id_hex.is_null() {
+        None
+    } else {
+        let raw = unsafe {
+            match std::ffi::CStr::from_ptr(asset_id_hex).to_str() {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            }
+        };
+        if raw.trim().is_empty() {
+            None
+        } else {
+            Some(raw)
+        }
+    };
     let effective_chain_id = if chain_id == 0 {
         token_tx::DEFAULT_DOMAIN_CHAIN_ID
     } else {
@@ -1924,6 +2076,7 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
         Some(fee_tx_str),
         metadata_opt,
         effective_chain_id,
+        asset_id_opt,
     ) {
         Ok(json) => match std::ffi::CString::new(json) {
             Ok(s) => s.into_raw(),

@@ -307,6 +307,7 @@ async fn register_domain_impl(
         created_at: loaded.identity.created_at,
     };
 
+    // asset_id_hex: None — plain domain registration (not DAO-scoped V3).
     let body_json = zhtp_client::token_tx::build_domain_register_request_with_fee_payment_and_metadata(
         &identity,
         domain,
@@ -314,6 +315,7 @@ async fn register_domain_impl(
         Some(fee_payment_tx_hex),
         metadata_json,
         3,
+        None,
     )
     .map_err(|e| CliError::ConfigError(format!("Failed to build registration request: {}", e)))?;
 

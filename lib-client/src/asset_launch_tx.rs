@@ -204,6 +204,48 @@ mod tests {
         assert_eq!(payload.treasury_bps, DaoClass::Fp.treasury_bps());
     }
 
+    /// Mirrors `zhtp_client_build_asset_launch` defaults: local manifest derive,
+    /// Fixed supply, no rewards/governance, transfer_authority false.
+    #[test]
+    fn ffi_defaults_local_manifest_round_trip() {
+        use crate::identity::generate_identity;
+
+        let identity = generate_identity("ffi-launch".to_string()).unwrap();
+        let (cid, hash) = build_dao_launch_manifest("Mobile DAO", "MDAO", 18).unwrap();
+        let signed = build_asset_launch_tx(
+            &identity,
+            &AssetLaunchBuildParams {
+                name: "Mobile DAO".to_string(),
+                symbol: "MDAO".to_string(),
+                initial_supply: 1_000_000_000_000_000_000_000,
+                decimals: 18,
+                treasury_key_id: [0xABu8; 32],
+                dao_class: DaoClass::Fp,
+                burn_bps: 100,
+                supply_mode: SupplyMode::Fixed,
+                manifest_cid: cid,
+                manifest_hash: hash,
+                chain_id: 3,
+                rewards: None,
+                governance: None,
+                transfer_authority: false,
+            },
+        )
+        .expect("ffi-default builder");
+
+        let tx: Transaction =
+            bincode::deserialize(&hex::decode(signed).expect("hex")).expect("tx");
+        assert_eq!(tx.transaction_type, TransactionType::AssetLaunch);
+        let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).expect("memo");
+        assert_eq!(payload.manifest_cid, cid);
+        assert_eq!(payload.manifest_hash, hash);
+        assert_eq!(payload.burn_bps, 100);
+        assert_eq!(payload.supply_mode, SupplyMode::Fixed);
+        assert!(payload.rewards.is_none());
+        assert!(payload.governance.is_none());
+        assert!(!payload.transfer_authority);
+    }
+
     #[test]
     fn np_launch_uses_full_treasury_split() {
         use crate::identity::generate_identity;

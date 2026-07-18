@@ -169,7 +169,7 @@ pub struct SimpleDomainRegistrationRequest {
     pub signature: String,
     /// Request timestamp (Unix seconds) - for replay protection
     pub timestamp: u64,
-    /// Fee amount in SOV tokens (fixed: 10 SOV for domain registration)
+    /// Fee amount in whole SOV tokens (must match live TxFeeConfig; default 100 SOV).
     #[serde(default)]
     pub fee: Option<u64>,
     /// CONS-516: hex-encoded canonical signed TokenTransfer paying the
@@ -183,6 +183,11 @@ pub struct SimpleDomainRegistrationRequest {
     /// Dilithium5 hex signature over the domain system tx `signing_hash()` (client-signed).
     #[serde(default)]
     pub domain_tx_signature_hex: String,
+    /// Optional 64-char hex sovereign `asset_id` for DAO-scoped domains (V3 memo).
+    /// Client and server must both include this in the DomainRegistrationPayload
+    /// so `domain_tx_signature_hex` verifies.
+    #[serde(default)]
+    pub asset_id: Option<String>,
 }
 
 /// Content mapping for simple registration
@@ -755,7 +760,7 @@ impl Web4Handler {
                 .unwrap_or_default(),
             public: true,
             economic_settings: DomainEconomicSettings {
-                registration_fee: 10.0,
+                registration_fee: registration_fee_whole as f64,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
                 hosting_budget: 100.0,
@@ -844,6 +849,12 @@ impl Web4Handler {
                 (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
             } else {
+                // Optional DAO asset binding (M4 / Q10): same parser as lib-client
+                // so client/server domain_tx_signature skeletons stay byte-identical.
+                let bound_asset_id = zhtp_client::token_tx::parse_optional_asset_id_hex(
+                    simple_request.asset_id.as_deref(),
+                )
+                .map_err(|e| anyhow!(e))?;
                 let payload = lib_blockchain::transaction::DomainRegistrationPayload {
                     domain: simple_request.domain.clone(),
                     owner_did: owner_did.clone(),
@@ -855,12 +866,12 @@ impl Web4Handler {
                     tags,
                     duration_days: 365,
                     fee_tx_hash: fee_tx_hash_hex.clone(),
-                    // CONS-516: fee paid by companion TokenTransfer; V2 memo
+                    // CONS-516: fee paid by companion TokenTransfer; V2/V3 memo
                     // carries fee_tx_hash binding only. Inline fee fields zeroed
                     // so client/server skeletons stay byte-identical.
                     fee_amount_atoms: 0,
                     fee_payer_wallet_id: [0u8; 32],
-                    asset_id: None,
+                    asset_id: bound_asset_id,
                 };
                 (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
@@ -1094,7 +1105,7 @@ impl Web4Handler {
             tags: vec!["web4".to_string(), "manifest".to_string()],
             public: true,
             economic_settings: DomainEconomicSettings {
-                registration_fee: 10.0,
+                registration_fee: registration_fee_whole as f64,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
                 hosting_budget: 100.0,
@@ -1297,7 +1308,8 @@ impl Web4Handler {
             tags: api_request.tags,
             public: api_request.public,
             economic_settings: DomainEconomicSettings {
-                registration_fee: 10.0, // Will be calculated properly
+                // Display fee matches client/server default (TxFeeConfig / 10^18).
+                registration_fee: zhtp_client::token_tx::DOMAIN_REGISTRATION_FEE as f64,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
                 hosting_budget: 100.0,
@@ -1315,7 +1327,7 @@ impl Web4Handler {
             deploy_manifest_cid: None, // Auto-generate for non-manifest registration
             owner_signature_hex: String::new(),
             registration_timestamp: 0,
-            registration_fee_whole: 10,
+            registration_fee_whole: zhtp_client::token_tx::DOMAIN_REGISTRATION_FEE,
         };
 
         // Process registration
@@ -2568,8 +2580,8 @@ mod tests {
             kyber_pk: [0u8; 1568],
             key_id: owner_wallet_id,
         };
-        // 11 SOV — enough to cover the 10 SOV domain registration fee (atoms).
-        sov.mint(&owner_wallet_key, lib_types::sov::atoms(11)).unwrap();
+        // 101 SOV — enough to cover the 100 SOV domain registration fee (atoms).
+        sov.mint(&owner_wallet_key, lib_types::sov::atoms(101)).unwrap();
         blockchain.insert_token_contract(generate_lib_token_id(), sov);
 
         let blockchain = Arc::new(RwLock::new(blockchain));
@@ -2627,10 +2639,136 @@ mod tests {
                     "content_type": "text/html"
                 }
             },
-            "signature": sign_simple_registration(owner_identity, domain, timestamp, 10),
+            // Fee must match live TxFeeConfig.domain_registration_fee_atoms / 10^18
+            // (default 100 SOV for DAO launch v1 / M4).
+            "signature": sign_simple_registration(owner_identity, domain, timestamp, 100),
             "timestamp": timestamp,
-            "fee": 10
+            "fee": 100
         }))
+    }
+
+    /// M4 / V3: `domain_tx_signature_hex` must be over the memo that includes
+    /// the same `asset_id` the server will encode. Mismatch (wrong id or V2)
+    /// must fail closed so DAO-scoped registration cannot silently drift.
+    #[test]
+    fn v3_domain_tx_signature_requires_matching_asset_id() {
+        use lib_blockchain::integration::crypto_integration::{
+            PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm,
+        };
+        use lib_blockchain::transaction::domain::DomainRegistrationPayload;
+        use lib_identity::types::IdentityType;
+
+        let owner = lib_identity::ZhtpIdentity::new_unified(
+            IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "v3-asset-id-sig-test",
+            None,
+        )
+        .expect("identity");
+        let owner_pk = owner.public_key.dilithium_pk.as_slice();
+        let private = owner
+            .private_key
+            .clone()
+            .expect("test identity private key");
+        let keypair = lib_crypto::KeyPair {
+            public_key: owner.public_key.clone(),
+            private_key: private,
+        };
+
+        let asset_id = [0xABu8; 32];
+        let timestamp = 1_700_000_000u64;
+        let fee_tx_hash = "aa".repeat(32);
+
+        let make_memo = |aid: Option<[u8; 32]>| {
+            DomainRegistrationPayload {
+                domain: "dao.example.sov".to_string(),
+                owner_did: owner.did.clone(),
+                manifest_cid: String::new(),
+                build_hash: String::new(),
+                title: "dao.example.sov".to_string(),
+                description: String::new(),
+                category: "general".to_string(),
+                tags: vec![],
+                duration_days: 365,
+                fee_tx_hash: fee_tx_hash.clone(),
+                fee_amount_atoms: 0,
+                fee_payer_wallet_id: [0u8; 32],
+                asset_id: aid,
+            }
+            .encode_memo()
+            .expect("encode memo")
+        };
+
+        let memo_v3 = make_memo(Some(asset_id));
+        assert!(
+            memo_v3.starts_with(lib_blockchain::transaction::domain::DOMAIN_REGISTRATION_PREFIX_V3),
+            "DAO-bound payload must encode DOMREG3"
+        );
+
+        let owner_pk_arr: [u8; 2592] = owner_pk.try_into().expect("pk len");
+        let skeleton = lib_blockchain::Transaction {
+            version: 8,
+            chain_id: domain_chain_id(),
+            transaction_type: lib_blockchain::TransactionType::DomainRegistration,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: BcSignature {
+                signature: vec![],
+                public_key: BcPublicKey::new(owner_pk_arr),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp,
+            },
+            memo: memo_v3.clone(),
+            payload: lib_blockchain::transaction::TransactionPayload::None,
+        };
+        let sig = lib_crypto::sign_message(&keypair, skeleton.signing_hash().as_bytes())
+            .expect("sign");
+        let sig_hex = hex::encode(&sig.signature);
+
+        attach_client_domain_tx_signature(
+            owner_pk,
+            &sig_hex,
+            lib_blockchain::TransactionType::DomainRegistration,
+            memo_v3,
+            timestamp,
+        )
+        .expect("matching V3 asset_id must verify");
+
+        // Same signature over a V2 memo (no asset_id) must fail.
+        let err_v2 = attach_client_domain_tx_signature(
+            owner_pk,
+            &sig_hex,
+            lib_blockchain::TransactionType::DomainRegistration,
+            make_memo(None),
+            timestamp,
+        )
+        .expect_err("V2 memo must not verify V3 signature");
+        assert!(
+            err_v2
+                .to_string()
+                .contains("does not match the domain system transaction"),
+            "got: {}",
+            err_v2
+        );
+
+        // Same signature over a different asset_id must fail.
+        let err_wrong = attach_client_domain_tx_signature(
+            owner_pk,
+            &sig_hex,
+            lib_blockchain::TransactionType::DomainRegistration,
+            make_memo(Some([0xCDu8; 32])),
+            timestamp,
+        )
+        .expect_err("wrong asset_id must not verify");
+        assert!(
+            err_wrong
+                .to_string()
+                .contains("does not match the domain system transaction"),
+            "got: {}",
+            err_wrong
+        );
     }
 
     /// CONS-516: a new-domain registration without `fee_payment_tx` must be
