@@ -2247,19 +2247,27 @@ impl IdentityHandler {
                 initial_balance: 0,
             };
             if let Err(e) = blockchain.register_wallet(primary_wallet_data) {
-                tracing::warn!("Failed to register primary wallet: {}", e);
-            } else {
-                queue_welcome_bonus_token_mint(
-                    &mut blockchain,
-                    primary_wallet_id_arr,
-                    welcome_bonus_amount,
-                )
-                .await;
-                tracing::info!(
-                    "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
-                    SOV_WELCOME_BONUS_SOV
-                );
+                tracing::error!("Failed to register primary wallet: {}", e);
+                let mut identity_manager = self.identity_manager.write().await;
+                identity_manager.remove_identity(&identity_id);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!(
+                        "Failed to queue primary wallet (identity may be pending on chain): {}",
+                        e
+                    ),
+                ));
             }
+            queue_welcome_bonus_token_mint(
+                &mut blockchain,
+                primary_wallet_id_arr,
+                welcome_bonus_amount,
+            )
+            .await;
+            tracing::info!(
+                "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
+                SOV_WELCOME_BONUS_SOV
+            );
 
             // UBI wallet - no initial balance
             let ubi_wallet_data = lib_blockchain::transaction::WalletTransactionData {
@@ -2276,7 +2284,16 @@ impl IdentityHandler {
                 initial_balance: 0,
             };
             if let Err(e) = blockchain.register_wallet(ubi_wallet_data) {
-                tracing::warn!("Failed to register UBI wallet: {}", e);
+                tracing::error!("Failed to register UBI wallet: {}", e);
+                let mut identity_manager = self.identity_manager.write().await;
+                identity_manager.remove_identity(&identity_id);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!(
+                        "Failed to queue UBI wallet (identity/primary may be pending on chain): {}",
+                        e
+                    ),
+                ));
             }
 
             // Savings wallet - no initial balance
@@ -2296,28 +2313,45 @@ impl IdentityHandler {
                 initial_balance: 0,
             };
             if let Err(e) = blockchain.register_wallet(savings_wallet_data) {
-                tracing::warn!("Failed to register savings wallet: {}", e);
+                tracing::error!("Failed to register savings wallet: {}", e);
+                let mut identity_manager = self.identity_manager.write().await;
+                identity_manager.remove_identity(&identity_id);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    format!(
+                        "Failed to queue savings wallet (identity/other wallets may be pending on chain): {}",
+                        e
+                    ),
+                ));
             }
 
             tracing::info!("✅ All 3 wallet registrations queued for blockchain inclusion");
         }
 
-        if let Some(ref tx_hash) = blockchain_tx_hash {
-            crate::runtime::blockchain_provider::register_pending_identity_projection(
-                tx_hash,
-                crate::runtime::blockchain_provider::PendingIdentityProjection {
-                    identity_id: identity_id.to_string(),
-                    display_name: pending_display_name,
-                    device_id: req_data.device_id.clone(),
-                    node_id: hex::encode(&node_id_bytes),
-                    kyber_public_key: req_data.kyber_public_key.clone(),
-                    primary_wallet_id: primary_wallet_id.clone(),
-                    ubi_wallet_id: ubi_wallet_id.clone(),
-                    savings_wallet_id: savings_wallet_id.clone(),
-                    registered_at: now,
-                },
-            );
-        }
+        // Never report success without a chain identity tx hash (false-success path).
+        let Some(ref tx_hash) = blockchain_tx_hash else {
+            let mut identity_manager = self.identity_manager.write().await;
+            identity_manager.remove_identity(&identity_id);
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::InternalServerError,
+                "Identity registration did not produce a blockchain transaction hash".to_string(),
+            ));
+        };
+
+        crate::runtime::blockchain_provider::register_pending_identity_projection(
+            tx_hash,
+            crate::runtime::blockchain_provider::PendingIdentityProjection {
+                identity_id: identity_id.to_string(),
+                display_name: pending_display_name,
+                device_id: req_data.device_id.clone(),
+                node_id: hex::encode(&node_id_bytes),
+                kyber_public_key: req_data.kyber_public_key.clone(),
+                primary_wallet_id: primary_wallet_id.clone(),
+                ubi_wallet_id: ubi_wallet_id.clone(),
+                savings_wallet_id: savings_wallet_id.clone(),
+                registered_at: now,
+            },
+        );
 
         tracing::info!(
             "✅ Client citizen registration queued: {} with 3 wallets pending block inclusion",
