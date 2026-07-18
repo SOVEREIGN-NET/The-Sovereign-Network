@@ -1065,10 +1065,6 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
 ///
 /// # Returns
 /// JSON string ready to POST to /api/v1/web4/domains/update
-/// Domain separation prefix for domain update signatures.
-/// Mirrors the `ZHTP-identity-sig-v1\0` pattern used in identity attestations.
-const ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN: &[u8] = b"ZHTP-domain-update-v1\0";
-
 pub fn build_domain_update_request(
     identity: &Identity,
     domain: &str,
@@ -1080,14 +1076,12 @@ pub fn build_domain_update_request(
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
         .as_secs();
 
-    // Sign: ZHTP-domain-update-v1\0domain|expected_previous_manifest_cid|new_manifest_cid|timestamp
-    let mut message = ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN.to_vec();
-    message.extend_from_slice(
-        format!(
-            "{}|{}|{}|{}",
-            domain, expected_previous_manifest_cid, new_manifest_cid, timestamp
-        )
-        .as_bytes(),
+    // Canonical message from lib-network (includes ZHTP-domain-update-v1\0 prefix).
+    let message = lib_network::web4::domain_update_signing_message(
+        domain,
+        expected_previous_manifest_cid,
+        new_manifest_cid,
+        timestamp,
     );
     let signature = Dilithium5::sign(&message, &identity.private_key)
         .map_err(|e| format!("Failed to sign: {}", e))?;

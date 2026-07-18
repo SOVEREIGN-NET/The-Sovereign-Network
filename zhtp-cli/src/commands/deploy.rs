@@ -863,22 +863,16 @@ async fn deploy_update_impl(
         ))?;
     }
 
-    // Domain separation prefix for domain update signatures.
-    // Mirrors the `ZHTP-identity-sig-v1\0` pattern used in identity attestations.
-    const ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN: &[u8] = b"ZHTP-domain-update-v1\0";
-
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
         .as_secs();
-    // Sign: ZHTP-domain-update-v1\0domain|expected_previous_manifest_cid|new_manifest_cid|timestamp
-    let mut update_message = ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN.to_vec();
-    update_message.extend_from_slice(
-        format!(
-            "{}|{}|{}|{}",
-            domain, previous_cid, manifest_hash, timestamp
-        )
-        .as_bytes(),
+    // Canonical message from lib-network (includes ZHTP-domain-update-v1\0 prefix).
+    let update_message = lib_network::web4::domain_update_signing_message(
+        domain,
+        &previous_cid,
+        &manifest_hash,
+        timestamp,
     );
     let update_signature = lib_crypto::sign_message(&loaded.keypair, &update_message)
         .map_err(|e| CliError::ConfigError(format!("Failed to sign update: {}", e)))?;
