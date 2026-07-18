@@ -867,11 +867,14 @@ async fn deploy_update_impl(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
         .as_secs();
-    let update_message = format!(
-        "{}|{}|{}|{}",
-        domain, previous_cid, manifest_hash, timestamp
+    // Canonical message from lib-network (includes ZHTP-domain-update-v1\0 prefix).
+    let update_message = lib_network::web4::domain_update_signing_message(
+        domain,
+        &previous_cid,
+        &manifest_hash,
+        timestamp,
     );
-    let update_signature = lib_crypto::sign_message(&loaded.keypair, update_message.as_bytes())
+    let update_signature = lib_crypto::sign_message(&loaded.keypair, &update_message)
         .map_err(|e| CliError::ConfigError(format!("Failed to sign update: {}", e)))?;
 
     let update_body = serde_json::json!({

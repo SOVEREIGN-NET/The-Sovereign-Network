@@ -34,9 +34,10 @@ pub use content_service::*;
 pub use domain_registry::*;
 pub use domain_signing::{
     domain_registration_signing_message, domain_transfer_signing_candidates,
-    domain_update_signing_message, has_owner_signing_key, verify_domain_registration_signature,
-    verify_domain_transfer_signature, verify_domain_update_signature,
-    validate_domain_owner_signature_hex, DILITHIUM5_HEX_SIGNATURE_LEN,
+    domain_update_signing_message, domain_update_signing_message_legacy,
+    domain_update_verify_candidates, has_owner_signing_key, validate_domain_owner_signature_hex,
+    verify_domain_registration_signature, verify_domain_transfer_signature,
+    verify_domain_update_signature, DILITHIUM5_HEX_SIGNATURE_LEN, ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN,
 };
 pub use name_resolver::NameResolver;
 #[cfg(feature = "quic")]

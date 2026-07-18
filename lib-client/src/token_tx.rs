@@ -1118,12 +1118,14 @@ pub fn build_domain_update_request(
         .map_err(|e| format!("Failed to get timestamp: {}", e))?
         .as_secs();
 
-    // Sign: domain|expected_previous_manifest_cid|new_manifest_cid|timestamp
-    let message = format!(
-        "{}|{}|{}|{}",
-        domain, expected_previous_manifest_cid, new_manifest_cid, timestamp
+    // Canonical message from lib-network (includes ZHTP-domain-update-v1\0 prefix).
+    let message = lib_network::web4::domain_update_signing_message(
+        domain,
+        expected_previous_manifest_cid,
+        new_manifest_cid,
+        timestamp,
     );
-    let signature = Dilithium5::sign(message.as_bytes(), &identity.private_key)
+    let signature = Dilithium5::sign(&message, &identity.private_key)
         .map_err(|e| format!("Failed to sign: {}", e))?;
 
     let request = DomainUpdateParams {

@@ -1848,13 +1848,7 @@ impl Web4Handler {
         // - Web4Manifest CID = derived deterministically from DeployManifest, used for resolution
         // - The transform from DeployManifest → Web4Manifest is deterministic and auditable
         // - Both CIDs are stored: DeployManifest for audit, Web4Manifest for runtime
-        let signed_message = format!(
-            "{}|{}|{}|{}",
-            update_request.domain,
-            update_request.expected_previous_manifest_cid,
-            update_request.new_manifest_cid,
-            update_request.timestamp
-        );
+        // Verify via canonical candidates (prefixed first, legacy unprefixed dual-accept).
         let signature_bytes = hex::decode(&update_request.signature)
             .map_err(|e| anyhow!("Invalid update signature hex encoding: {}", e))?;
 
@@ -1863,12 +1857,32 @@ impl Web4Handler {
             .get_identity_by_did(owner_did)
             .ok_or_else(|| anyhow!("Owner identity not found: {}", owner_did))?;
 
-        let is_valid = lib_crypto::verify_signature(
-            signed_message.as_bytes(),
-            &signature_bytes,
-            &owner_identity.public_key.as_bytes(),
-        )
-        .map_err(|e| anyhow!("Signature verification error: {}", e))?;
+        let pk = owner_identity.public_key.as_bytes();
+        let candidates = lib_network::web4::domain_update_verify_candidates(
+            &update_request.domain,
+            &update_request.expected_previous_manifest_cid,
+            &update_request.new_manifest_cid,
+            update_request.timestamp,
+        );
+        let mut is_valid = false;
+        for (idx, signed_message) in candidates.iter().enumerate() {
+            match lib_crypto::verify_signature(signed_message, &signature_bytes, &pk) {
+                Ok(true) => {
+                    if idx > 0 {
+                        info!(
+                            domain = %update_request.domain,
+                            "domain update accepted via legacy unprefixed signature"
+                        );
+                    }
+                    is_valid = true;
+                    break;
+                }
+                Ok(false) => continue,
+                Err(e) => {
+                    return Err(anyhow!("Signature verification error: {}", e));
+                }
+            }
+        }
 
         if !is_valid {
             return Err(anyhow!("Invalid update signature"));
