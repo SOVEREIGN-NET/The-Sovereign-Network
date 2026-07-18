@@ -14,8 +14,15 @@ mod api_integration_tests {
     use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
     use lib_protocols::zhtp::ZhtpRequestHandler;
     use lib_storage::{PersistentStorageSystem, UnifiedStorageConfig, UnifiedStorageSystem};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, OnceLock};
     use tokio::sync::RwLock;
+
+    /// Serialise tests that mutate the process-global blockchain provider so
+    /// parallel `cargo test` workers cannot race on `set_global_blockchain`.
+    fn global_blockchain_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn create_test_config() -> NodeConfig {
         let mut config = NodeConfig::default();
@@ -311,6 +318,10 @@ mod api_integration_tests {
 
     #[tokio::test]
     async fn test_register_identity_empty_display_name_uses_user_prefix_fallback() {
+        let _guard = global_blockchain_test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
         let mut storage_config = UnifiedStorageConfig::default();
         let db_path = std::env::temp_dir().join(format!(
             "zhtp-test-empty-name-{}",
@@ -371,6 +382,10 @@ mod api_integration_tests {
 
     #[tokio::test]
     async fn test_register_identity_rejects_on_chain_duplicate() {
+        let _guard = global_blockchain_test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
         let mut storage_config = UnifiedStorageConfig::default();
         let db_path =
             std::env::temp_dir().join(format!("zhtp-test-dup-{}", rand::random::<u64>()));

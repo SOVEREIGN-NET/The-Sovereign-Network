@@ -6,6 +6,63 @@ impl Blockchain {
         self.identity_registry.insert(did, data);
     }
 
+    /// Roll back a partially applied client identity registration that has not
+    /// yet been included in a block.
+    ///
+    /// Removes mempool txs (identity / wallet registrations / welcome mint),
+    /// identity + wallet shadows, and height indexes so a later retry can
+    /// re-onboard cleanly (#2768 / #2769). Does not touch committed blocks.
+    ///
+    /// After removing explicitly tracked `queued_txs`, also sweeps any remaining
+    /// pending txs that still match the DID or wallet ids (covers tracking gaps
+    /// if a mempool lookup missed a just-enqueued entry).
+    pub fn abort_pending_client_registration(
+        &mut self,
+        queued_txs: &[Transaction],
+        did: &str,
+        wallet_id_hexes: &[&str],
+    ) {
+        self.remove_pending_transactions(queued_txs);
+
+        let related: Vec<Transaction> = self
+            .pending_transactions
+            .iter()
+            .filter(|tx| {
+                if tx
+                    .identity_data()
+                    .is_some_and(|data| data.did == did)
+                {
+                    return true;
+                }
+                if let Some(wallet) = tx.wallet_data() {
+                    let wid = hex::encode(wallet.wallet_id.as_bytes());
+                    if wallet_id_hexes.iter().any(|h| *h == wid) {
+                        return true;
+                    }
+                }
+                // Welcome-bonus TokenMint targets the primary wallet_id in `to`.
+                if let Some(mint) = tx.token_mint_data() {
+                    let to_hex = hex::encode(mint.to);
+                    if wallet_id_hexes.iter().any(|h| *h == to_hex) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .cloned()
+            .collect();
+        if !related.is_empty() {
+            self.remove_pending_transactions(&related);
+        }
+
+        self.identity_registry.remove(did);
+        self.identity_blocks.remove(did);
+        for wallet_id in wallet_id_hexes {
+            self.wallet_registry.remove(*wallet_id);
+            self.wallet_blocks.remove(*wallet_id);
+        }
+    }
+
     /// In-memory shadow only — test premises that must not use sled-first facades.
     pub fn identity_shadow_contains_key(&self, did: &str) -> bool {
         self.identity_registry.contains_key(did)
