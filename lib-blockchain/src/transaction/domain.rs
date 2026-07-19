@@ -25,6 +25,32 @@ pub const DOMAIN_REGISTRATION_PREFIX_V2: &[u8] = b"DOMREG2:";
 pub const DOMAIN_REGISTRATION_PREFIX_V3: &[u8] = b"DOMREG3:";
 pub const DOMAIN_UPDATE_PREFIX: &[u8] = b"DOMUPD1:";
 
+/// Parse optional 64-char (optionally `0x`-prefixed) hex into a 32-byte asset id.
+///
+/// Shared by node API handlers and lib-client so domain_tx_signature skeletons
+/// stay byte-identical for optional DAO asset binding (M4 / Q10).
+pub fn parse_optional_asset_id_hex(
+    asset_id_hex: Option<&str>,
+) -> std::result::Result<Option<[u8; 32]>, String> {
+    let Some(raw) = asset_id_hex.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let hex_str = raw
+        .strip_prefix("0x")
+        .or_else(|| raw.strip_prefix("0X"))
+        .unwrap_or(raw);
+    if hex_str.len() != 64 {
+        return Err(format!(
+            "asset_id must be 64 hex chars (32 bytes), got {} chars",
+            hex_str.len()
+        ));
+    }
+    let bytes = hex::decode(hex_str).map_err(|e| format!("asset_id is not valid hex: {}", e))?;
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(Some(arr))
+}
+
 /// Canonical on-chain domain record — stored in `Blockchain::domain_registry`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OnChainDomainRecord {
@@ -419,6 +445,20 @@ mod tests {
             err.contains("not found in mempool"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn parse_optional_asset_id_strips_0x_and_empty() {
+        let id = [1u8; 32];
+        let hex_plain = hex::encode(id);
+        let with_prefix = format!("0x{}", hex_plain);
+        assert_eq!(
+            parse_optional_asset_id_hex(Some(&with_prefix)).unwrap(),
+            Some(id)
+        );
+        assert_eq!(parse_optional_asset_id_hex(None).unwrap(), None);
+        assert_eq!(parse_optional_asset_id_hex(Some("")).unwrap(), None);
+        assert!(parse_optional_asset_id_hex(Some("dead")).is_err());
     }
 
     #[test]

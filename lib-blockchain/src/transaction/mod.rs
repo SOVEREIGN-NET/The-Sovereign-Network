@@ -32,8 +32,8 @@ pub use reward_claim::{
     REWARD_CLAIM_MEMO, REWARD_NEW_PARTNER_ATOMS, REWARD_WELCOME_ATOMS, WEEKLY_PARTNER_CAP,
 };
 pub use domain::{
-    DomainRegistrationPayload, DomainUpdatePayload, OnChainDomainRecord,
-    DOMAIN_REGISTRATION_PREFIX, DOMAIN_UPDATE_PREFIX,
+    parse_optional_asset_id_hex, DomainRegistrationPayload, DomainUpdatePayload,
+    OnChainDomainRecord, DOMAIN_REGISTRATION_PREFIX, DOMAIN_UPDATE_PREFIX,
 };
 
 // Explicit re-exports from core module
@@ -91,7 +91,11 @@ pub use contract_execution::{
     CONTRACT_EXECUTION_MEMO_PREFIX_V1, CONTRACT_EXECUTION_MEMO_PREFIX_V2,
     MAX_CONTRACT_EXECUTION_MEMO_BYTES,
 };
-pub use fee::{required_token_creation_fee, TxFeeConfig, DEFAULT_TOKEN_CREATION_FEE};
+pub use fee::{
+    required_domain_registration_fee, required_token_creation_fee, TxFeeConfig,
+    DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS, DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE,
+    DEFAULT_TOKEN_CREATION_FEE,
+};
 pub use asset_tx::{
     build_dao_launch_manifest, build_dao_launch_manifest_bytes, manifest_cid_hash_from_bytes,
     AssetAuthorityProof, AssetAuthorityTransferCancelPayloadV1,
