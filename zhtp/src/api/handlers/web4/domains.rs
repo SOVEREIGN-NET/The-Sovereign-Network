@@ -849,9 +849,9 @@ impl Web4Handler {
                 (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
                     .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
             } else {
-                // Optional DAO asset binding (M4 / Q10): same parser as lib-client
-                // so client/server domain_tx_signature skeletons stay byte-identical.
-                let bound_asset_id = zhtp_client::token_tx::parse_optional_asset_id_hex(
+                // Optional DAO asset binding (M4 / Q10): shared parser so
+                // client/server domain_tx_signature skeletons stay byte-identical.
+                let bound_asset_id = lib_blockchain::transaction::parse_optional_asset_id_hex(
                     simple_request.asset_id.as_deref(),
                 )
                 .map_err(|e| anyhow!(e))?;
@@ -1309,7 +1309,8 @@ impl Web4Handler {
             public: api_request.public,
             economic_settings: DomainEconomicSettings {
                 // Display fee matches client/server default (TxFeeConfig / 10^18).
-                registration_fee: zhtp_client::token_tx::DOMAIN_REGISTRATION_FEE as f64,
+                registration_fee:
+                    lib_blockchain::transaction::DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE as f64,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
                 hosting_budget: 100.0,
@@ -1327,7 +1328,8 @@ impl Web4Handler {
             deploy_manifest_cid: None, // Auto-generate for non-manifest registration
             owner_signature_hex: String::new(),
             registration_timestamp: 0,
-            registration_fee_whole: zhtp_client::token_tx::DOMAIN_REGISTRATION_FEE,
+            registration_fee_whole:
+                lib_blockchain::transaction::DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE,
         };
 
         // Process registration

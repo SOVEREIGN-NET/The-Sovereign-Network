@@ -5,10 +5,16 @@ pub const DEFAULT_TX_BYTES_PER_SOV: u64 = 100;
 pub const DEFAULT_TX_WITNESS_CAP: u32 = 500;
 pub const DEFAULT_TOKEN_CREATION_FEE: u64 = 1_000;
 
-/// Default DomainRegistration fee, in atomic SOV units (10^18 per whole SOV).
+/// Default DomainRegistration fee in whole SOV (signing message / API display).
 /// DAO launch v1 standard (epic Q10) = 100 whole SOV.
+///
+/// Clients sign `domain|timestamp|{this}`; the node verifies against live
+/// `TxFeeConfig.domain_registration_fee_atoms` (default = this × 10^18).
+pub const DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE: u64 = 100;
+
+/// Default DomainRegistration fee, in atomic SOV units (10^18 per whole SOV).
 pub const DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS: u128 =
-    100 * lib_types::TOKEN_SCALE_18;
+    (DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE as u128) * lib_types::TOKEN_SCALE_18;
 
 /// Non-refundable SOV burn applied at observer-admission registration time
 /// (observer-admission-3). Provides a small economic barrier against Sybil

@@ -849,28 +849,16 @@ use crate::crypto::Dilithium5;
 /// against live `TxFeeConfig.domain_registration_fee_atoms` (default matches
 /// this constant). If governance changes the fee, rebuild clients with the new
 /// whole-SOV amount (or query the node first).
-pub const DOMAIN_REGISTRATION_FEE: u64 = 100;
+///
+/// Canonical definition lives in `lib-blockchain` so node + client stay aligned.
+pub const DOMAIN_REGISTRATION_FEE: u64 =
+    lib_blockchain::transaction::DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE;
 
 /// Default chain id for domain system transactions (testnet).
 pub const DEFAULT_DOMAIN_CHAIN_ID: u8 = 0x03;
 
 /// Parse optional 64-char (optionally `0x`-prefixed) hex into a 32-byte asset id.
-pub fn parse_optional_asset_id_hex(asset_id_hex: Option<&str>) -> Result<Option<[u8; 32]>, String> {
-    let Some(raw) = asset_id_hex.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(None);
-    };
-    let hex_str = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")).unwrap_or(raw);
-    if hex_str.len() != 64 {
-        return Err(format!(
-            "asset_id must be 64 hex chars (32 bytes), got {} chars",
-            hex_str.len()
-        ));
-    }
-    let bytes = hex::decode(hex_str).map_err(|e| format!("asset_id is not valid hex: {}", e))?;
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(Some(arr))
-}
+pub use lib_blockchain::transaction::parse_optional_asset_id_hex;
 
 /// Compute the fee-payment tx hash hex the server embeds in the domain registration memo.
 pub fn fee_tx_hash_from_hex(fee_payment_tx_hex: &str) -> Result<String, String> {
