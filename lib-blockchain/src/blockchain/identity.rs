@@ -16,6 +16,10 @@ impl Blockchain {
     /// After removing explicitly tracked `queued_txs`, also sweeps any remaining
     /// pending txs that still match the DID or wallet ids (covers tracking gaps
     /// if a mempool lookup missed a just-enqueued entry).
+    ///
+    /// **Lock ordering (callers):** acquire `blockchain` write lock first, call
+    /// this, drop that lock, then acquire `identity_manager` for local remove.
+    /// Never hold `identity_manager` while waiting for `blockchain` write.
     pub fn abort_pending_client_registration(
         &mut self,
         queued_txs: &[Transaction],
