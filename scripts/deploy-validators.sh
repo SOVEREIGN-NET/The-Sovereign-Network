@@ -42,7 +42,8 @@ set -euo pipefail
 # ---- node table -------------------------------------------------------------
 #
 # Format: ssh-alias|ip|sudo
-# Mirrored from CLAUDE.md deployment table. Update both together.
+# Testnet is validators ONLY (g1–g3). No gateways, no g4/g5.
+# Do not expand this table. scripts/deploy-gateways.sh is intentionally retired.
 NODES=(
     "zhtp-g1|77.42.37.161|"
     "zhtp-g2|77.42.74.80|"

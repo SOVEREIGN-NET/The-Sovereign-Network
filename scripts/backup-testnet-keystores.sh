@@ -20,6 +20,7 @@ ACTIVE=(
   "g2|zhtp-g2|77.42.74.80|f37a307761b863130adb6129f16c269af4e395eb3d4b14b070a756bef282c07b"
   "g3|zhtp-g3|178.105.9.247|bf409db91ad276fa35e8af9c78a48facdfba99eb95fcbf01719310e91c558a9c"
 )
+# Offline / retired hosts — only with --include-retired. Not deploy targets.
 RETIRED=(
   "g4|zhtp-g4|148.113.140.176|14225182b8140220c2adf3e61471ba5f0117f863408ee6b2b86cff4d0f679cef"
   "g5|zhtp-g5|51.75.62.133|3218b9025f1b7c678e115c094a73d3e077801f60501452babd43c7a32ecdf284"

@@ -1,35 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Convenience wrapper — validators only (g1–g3).
+# Gateways / g4 / g5 are retired; do not add them back.
+#
 set -euo pipefail
 
-BINARY="target/debug/zhtp"
-NODES=(zhtp-g1 zhtp-g2 zhtp-g3 zhtp-gateway)
-SUDO_NODES=(zhtp-g4 zhtp-g5 zhtp-gateway-2)
-ALL_NODES=("${NODES[@]}" "${SUDO_NODES[@]}")
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+BINARY="${1:-target/dev-release/zhtp}"
 
 if [[ ! -f "$BINARY" ]]; then
-    echo "ERROR: $BINARY not found. Build first: cargo build --release -p zhtp"
+    echo "ERROR: $BINARY not found. Build first:" >&2
+    echo "  cargo build --profile dev-release -p zhtp -p zhtp-cli" >&2
     exit 1
 fi
 
-restart_node() {
-    local node="$1"
-    if [[ " ${SUDO_NODES[*]} " =~ " ${node} " ]]; then
-        ssh "$node" "sudo systemctl restart zhtp"
-        ssh "$node" "sudo systemctl is-active zhtp"
-    else
-        ssh "$node" "systemctl restart zhtp"
-        ssh "$node" "systemctl is-active zhtp"
-    fi
-}
-
-echo "=== Deploying to all nodes ==="
-for node in "${ALL_NODES[@]}"; do
-    echo "--- $node ---"
-    rsync -az --progress "$BINARY" "$node:/opt/zhtp/zhtp"
-    ssh "$node" "chmod +x /opt/zhtp/zhtp"
-    restart_node "$node"
-    echo "  $node: deployed + restarted"
-done
-
-echo ""
-echo "=== All nodes deployed ==="
+exec "$ROOT/scripts/deploy-validators.sh" "$BINARY"
