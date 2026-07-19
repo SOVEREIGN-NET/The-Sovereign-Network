@@ -1138,14 +1138,21 @@ mod tests {
     #[test]
     fn test_build_block0_loads_opaque_setup_when_present() {
         let config = GenesisConfig::from_embedded().expect("parse");
-        if config.opaque.is_none() {
-            return;
-        }
+        // Assert correct behaviour for whichever embedded genesis is present
+        // (does not run both branches in one execution — see also
+        // `test_build_block0_opaque_absent_means_none` for the forced-absent path).
         let bc = config.build_block0().expect("build");
-        assert!(
-            bc.opaque_server_setup.is_some(),
-            "build_block0 must load [opaque] server setup (fresh-genesis / sled-wipe path)"
-        );
+        if config.opaque.is_some() {
+            assert!(
+                bc.opaque_server_setup.is_some(),
+                "build_block0 must load [opaque] server setup (fresh-genesis / sled-wipe path)"
+            );
+        } else {
+            assert!(
+                bc.opaque_server_setup.is_none(),
+                "embedded genesis without [opaque] must leave opaque_server_setup unset"
+            );
+        }
     }
 
     #[test]

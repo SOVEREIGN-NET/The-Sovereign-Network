@@ -14,8 +14,15 @@ mod api_integration_tests {
     use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
     use lib_protocols::zhtp::ZhtpRequestHandler;
     use lib_storage::{PersistentStorageSystem, UnifiedStorageConfig, UnifiedStorageSystem};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, OnceLock};
     use tokio::sync::RwLock;
+
+    /// Serialise tests that mutate the process-global blockchain provider so
+    /// parallel `cargo test` workers cannot race on `set_global_blockchain`.
+    fn global_blockchain_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn create_test_config() -> NodeConfig {
         let mut config = NodeConfig::default();
@@ -310,7 +317,75 @@ mod api_integration_tests {
     }
 
     #[tokio::test]
+    async fn test_register_identity_empty_display_name_uses_user_prefix_fallback() {
+        let _guard = global_blockchain_test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let mut storage_config = UnifiedStorageConfig::default();
+        let db_path = std::env::temp_dir().join(format!(
+            "zhtp-test-empty-name-{}",
+            rand::random::<u64>()
+        ));
+        storage_config.storage_config.dht_persist_path = Some(db_path.clone());
+        let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
+            .expect("failed to create storage");
+        let (handler, db_path) = build_identity_handler(storage, db_path);
+
+        crate::runtime::blockchain_provider::initialize_global_blockchain_provider();
+        let bc = lib_blockchain::Blockchain::new().expect("new blockchain");
+        crate::runtime::blockchain_provider::set_global_blockchain(Arc::new(RwLock::new(bc)))
+            .await
+            .expect("set global blockchain");
+
+        let keypair = lib_crypto::KeyPair::generate().expect("keypair generation failed");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Whitespace-only display_name must fall back to user_{key_id_prefix}.
+        let request = build_register_request(&keypair, "device-empty-name", now, Some("   "));
+
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
+        assert_eq!(response.status, ZhtpStatus::Ok);
+
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("invalid json");
+        assert_eq!(json.get("status").and_then(|v| v.as_str()), Some("queued"));
+        assert!(
+            json.get("blockchain_tx").and_then(|v| v.as_str()).is_some(),
+            "success response must include blockchain_tx hash"
+        );
+
+        let expected_prefix = format!(
+            "user_{}",
+            &hex::encode(lib_crypto::hash_blake3(&keypair.public_key.dilithium_pk))[..8]
+        );
+        // Pending projection / shadow uses the fallback name; surface via chain shadow.
+        let did = json
+            .get("did")
+            .and_then(|v| v.as_str())
+            .expect("missing did");
+        let bc = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .expect("blockchain");
+        let bc = bc.read().await;
+        let name = bc
+            .identity_display_name(did)
+            .expect("shadow identity after successful register");
+        assert_eq!(name, expected_prefix);
+
+        let _ = std::fs::remove_dir_all(db_path);
+    }
+
+    #[tokio::test]
     async fn test_register_identity_rejects_on_chain_duplicate() {
+        let _guard = global_blockchain_test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
         let mut storage_config = UnifiedStorageConfig::default();
         let db_path =
             std::env::temp_dir().join(format!("zhtp-test-dup-{}", rand::random::<u64>()));

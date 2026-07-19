@@ -39,31 +39,81 @@ use lib_blockchain::{
 
 // Removed unused cryptographic imports
 
-/// Queue a treasury-signed SOV TokenMint for a welcome bonus (post wallet registration).
-async fn queue_welcome_bonus_token_mint(
-    blockchain: &mut lib_blockchain::Blockchain,
+/// Build a treasury-signed SOV TokenMint for the welcome bonus.
+///
+/// Call this **before** taking the blockchain write lock — it loads the
+/// validator keystore from disk (I/O) and must not run under that lock
+/// (review #2920: lock serializes block production).
+async fn build_welcome_bonus_token_mint(
     wallet_id: [u8; 32],
     amount: u128,
-) {
+) -> Result<Transaction, String> {
     let memo = format!("WELCOME_BONUS_V1:{}", hex::encode(wallet_id)).into_bytes();
-    match crate::runtime::token_utils::build_sov_mint_tx(&wallet_id, amount, memo).await {
-        Ok(mint_tx) => {
-            if let Err(e) =
-                blockchain.add_system_transaction(
-                    mint_tx,
-                    lib_blockchain::SystemOriginator::TreasuryWalletBootstrap,
-                )
-            {
-                tracing::warn!("Failed to queue welcome bonus TokenMint: {}", e);
-            } else {
-                tracing::info!(
-                    "💰 Welcome bonus TokenMint queued ({} atoms → wallet {})",
-                    amount,
-                    hex::encode(&wallet_id[..8])
-                );
+    crate::runtime::token_utils::build_sov_mint_tx(&wallet_id, amount, memo)
+        .await
+        .map_err(|e| format!("Failed to build welcome bonus TokenMint: {}", e))
+}
+
+/// Enqueue a pre-built welcome-bonus mint under the blockchain write lock.
+fn enqueue_welcome_bonus_token_mint(
+    blockchain: &mut lib_blockchain::Blockchain,
+    mint_tx: Transaction,
+) -> Result<(), String> {
+    blockchain
+        .add_system_transaction(
+            mint_tx,
+            lib_blockchain::SystemOriginator::TreasuryWalletBootstrap,
+        )
+        .map_err(|e| format!("Failed to queue welcome bonus TokenMint: {}", e))?;
+    Ok(())
+}
+
+/// Locate a just-enqueued pending tx by hash (for rollback tracking).
+fn pending_tx_by_hash(
+    blockchain: &lib_blockchain::Blockchain,
+    hash: &lib_blockchain::Hash,
+) -> Option<Transaction> {
+    blockchain
+        .pending_transactions
+        .iter()
+        .find(|tx| tx.hash() == *hash)
+        .cloned()
+}
+
+/// Register one citizen wallet, track its pending tx, or abort the whole commit.
+fn register_wallet_or_abort(
+    blockchain: &mut lib_blockchain::Blockchain,
+    wallet_data: lib_blockchain::transaction::WalletTransactionData,
+    label: &str,
+    queued_txs: &mut Vec<Transaction>,
+    did: &str,
+    wallet_id_hexes: &[&str],
+) -> Result<(), (ZhtpStatus, String)> {
+    match blockchain.register_wallet(wallet_data) {
+        Ok(hash) => match pending_tx_by_hash(blockchain, &hash) {
+            Some(tx) => {
+                queued_txs.push(tx);
+                Ok(())
             }
+            None => {
+                blockchain.abort_pending_client_registration(queued_txs, did, wallet_id_hexes);
+                Err((
+                    ZhtpStatus::InternalServerError,
+                    format!(
+                        "Failed to track {} wallet for registration rollback",
+                        label
+                    ),
+                ))
+            }
+        },
+        Err(e) => {
+            tracing::error!("Failed to register {} wallet: {}", label, e);
+            blockchain.abort_pending_client_registration(queued_txs, did, wallet_id_hexes);
+            Err((
+                ZhtpStatus::InternalServerError,
+                format!("Failed to queue {} wallet: {}", label, e),
+            ))
         }
-        Err(e) => tracing::warn!("Failed to build welcome bonus TokenMint: {}", e),
     }
 }
 
@@ -2166,7 +2216,8 @@ impl IdentityHandler {
         };
 
         let primary_wallet_id_arr = citizenship_result.primary_wallet_id.0;
-        let mut blockchain_tx_hash = None;
+        let ubi_wallet_id_arr = citizenship_result.ubi_wallet_id.0;
+        let savings_wallet_id_arr = citizenship_result.savings_wallet_id.0;
         let blockchain_arc =
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(arc) => arc,
@@ -2179,17 +2230,71 @@ impl IdentityHandler {
                     ));
                 }
             };
-        {
-            let mut blockchain = blockchain_arc.write().await;
 
+        // Keystore I/O + Dilithium sign — outside blockchain write lock so a slow
+        // disk read cannot stall block production (review #2920).
+        let welcome_mint_tx =
+            match build_welcome_bonus_token_mint(primary_wallet_id_arr, welcome_bonus_amount).await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!("{}", e);
+                    let mut identity_manager = self.identity_manager.write().await;
+                    identity_manager.remove_identity(&identity_id);
+                    return Ok(ZhtpResponse::error(ZhtpStatus::InternalServerError, e));
+                }
+            };
+
+        // Commit under blockchain write only. Failures return (status, msg) so we
+        // can drop the blockchain lock before taking identity_manager (lock order:
+        // blockchain → then identity_manager; never reverse / nest).
+        let commit_result: Result<String, (ZhtpStatus, String)> = async {
+            let mut blockchain = blockchain_arc.write().await;
+            // Lock held deliberately across the full commit for atomic rollback:
+            // block production needs this same write lock, so no block can include
+            // partial registration txs before abort_pending_client_registration.
+            // No network/disk await while held — welcome mint was built above.
+
+            // ── Validate-then-commit (review #2920 / #2768 / #2769) ──────────
             if blockchain.identity_display_name_taken(&pending_display_name) {
-                let mut identity_manager = self.identity_manager.write().await;
-                identity_manager.remove_identity(&identity_id);
-                return Ok(ZhtpResponse::error(
+                return Err((
                     ZhtpStatus::Conflict,
                     "Display name already taken".to_string(),
                 ));
             }
+            if blockchain.identity_exists(&did_string) {
+                return Err((
+                    ZhtpStatus::Conflict,
+                    "Identity already exists on chain; retry with the same keys or contact support"
+                        .to_string(),
+                ));
+            }
+            for (label, wid) in [
+                ("primary", primary_wallet_id.as_str()),
+                ("UBI", ubi_wallet_id.as_str()),
+                ("savings", savings_wallet_id.as_str()),
+            ] {
+                if blockchain.wallet_exists(wid) {
+                    return Err((
+                        ZhtpStatus::Conflict,
+                        format!(
+                            "{} wallet already exists on chain; cannot re-register",
+                            label
+                        ),
+                    ));
+                }
+            }
+
+            let mut queued_txs: Vec<Transaction> = Vec::new();
+            let wallet_id_hexes = [
+                primary_wallet_id.as_str(),
+                ubi_wallet_id.as_str(),
+                savings_wallet_id.as_str(),
+            ];
+            let abort = |bc: &mut lib_blockchain::Blockchain, queued: &[Transaction]| {
+                bc.abort_pending_client_registration(queued, &did_string, &wallet_id_hexes);
+            };
+
             let identity_tx = Transaction::new_identity_registration(
                 identity_transaction_data.clone(),
                 vec![],
@@ -2206,118 +2311,153 @@ impl IdentityHandler {
                 .into_bytes(),
             );
             let identity_tx_hash = identity_tx.hash().to_string();
-            match blockchain.add_system_transaction(
-                identity_tx,
+            if let Err(e) = blockchain.add_system_transaction(
+                identity_tx.clone(),
                 lib_blockchain::SystemOriginator::ClientIdentityRegistration,
             ) {
-                Ok(()) => {
-                    let pending_height = blockchain.get_height() + 1;
-                    blockchain.insert_identity_shadow(did_string.clone(), identity_transaction_data);
-                    blockchain
-                        .identity_blocks
-                        .insert(did_string.clone(), pending_height);
-                    tracing::info!(
-                        "⛓️ Identity registration queued on blockchain: {}",
-                        &identity_tx_hash[..16]
-                    );
-                    blockchain_tx_hash = Some(identity_tx_hash);
-                }
-                Err(e) => {
-                    tracing::error!("Blockchain identity registration failed: {}", e);
-                    let mut identity_manager = self.identity_manager.write().await;
-                    identity_manager.remove_identity(&identity_id);
-                    return Ok(ZhtpResponse::error(
-                        ZhtpStatus::InternalServerError,
-                        format!("Failed to queue identity on chain: {}", e),
-                    ));
-                }
+                tracing::error!("Blockchain identity registration failed: {}", e);
+                return Err((
+                    ZhtpStatus::InternalServerError,
+                    format!("Failed to queue identity on chain: {}", e),
+                ));
             }
+            queued_txs.push(identity_tx);
+            let pending_height = blockchain.get_height() + 1;
+            blockchain.insert_identity_shadow(did_string.clone(), identity_transaction_data);
+            blockchain
+                .identity_blocks
+                .insert(did_string.clone(), pending_height);
+            tracing::info!(
+                "⛓️ Identity registration queued on blockchain: {}",
+                &identity_tx_hash[..16.min(identity_tx_hash.len())]
+            );
 
-            let primary_wallet_data = lib_blockchain::transaction::WalletTransactionData {
-                wallet_id: lib_blockchain::Hash::from_slice(&primary_wallet_id_arr),
-                wallet_type: "Primary".to_string(),
-                wallet_name: "Primary Wallet".to_string(),
-                alias: Some("primary".to_string()),
-                public_key: public_key_bytes.clone(),
-                owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
-                seed_commitment: lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed"),
-                created_at,
-                registration_fee: 50,
-                capabilities: 0xFF,
-                initial_balance: 0,
-            };
-            if let Err(e) = blockchain.register_wallet(primary_wallet_data) {
-                tracing::warn!("Failed to register primary wallet: {}", e);
-            } else {
-                queue_welcome_bonus_token_mint(
-                    &mut blockchain,
-                    primary_wallet_id_arr,
-                    welcome_bonus_amount,
-                )
-                .await;
-                tracing::info!(
-                    "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
-                    SOV_WELCOME_BONUS_SOV
-                );
-            }
-
-            // UBI wallet - no initial balance
-            let ubi_wallet_data = lib_blockchain::transaction::WalletTransactionData {
-                wallet_id: lib_blockchain::Hash::from_slice(&citizenship_result.ubi_wallet_id.0),
-                wallet_type: "UBI".to_string(),
-                wallet_name: "UBI Wallet".to_string(),
-                alias: Some("ubi".to_string()),
-                public_key: public_key_bytes.clone(),
-                owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
-                seed_commitment: lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed"),
-                created_at,
-                registration_fee: 50,
-                capabilities: 0x01,
-                initial_balance: 0,
-            };
-            if let Err(e) = blockchain.register_wallet(ubi_wallet_data) {
-                tracing::warn!("Failed to register UBI wallet: {}", e);
-            }
-
-            // Savings wallet - no initial balance
-            let savings_wallet_data = lib_blockchain::transaction::WalletTransactionData {
-                wallet_id: lib_blockchain::Hash::from_slice(
-                    &citizenship_result.savings_wallet_id.0,
+            let seed_commitment =
+                lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed");
+            let owner_identity_id = Some(lib_blockchain::Hash::from_slice(&identity_id.0));
+            let wallet_specs = [
+                (
+                    "primary",
+                    lib_blockchain::transaction::WalletTransactionData {
+                        wallet_id: lib_blockchain::Hash::from_slice(&primary_wallet_id_arr),
+                        wallet_type: "Primary".to_string(),
+                        wallet_name: "Primary Wallet".to_string(),
+                        alias: Some("primary".to_string()),
+                        public_key: public_key_bytes.clone(),
+                        owner_identity_id,
+                        seed_commitment,
+                        created_at,
+                        registration_fee: 50,
+                        capabilities: 0xFF,
+                        initial_balance: 0,
+                    },
                 ),
-                wallet_type: "Savings".to_string(),
-                wallet_name: "Savings Wallet".to_string(),
-                alias: Some("savings".to_string()),
-                public_key: public_key_bytes.clone(),
-                owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
-                seed_commitment: lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed"),
-                created_at,
-                registration_fee: 50,
-                capabilities: 0x02,
-                initial_balance: 0,
-            };
-            if let Err(e) = blockchain.register_wallet(savings_wallet_data) {
-                tracing::warn!("Failed to register savings wallet: {}", e);
+                (
+                    "UBI",
+                    lib_blockchain::transaction::WalletTransactionData {
+                        wallet_id: lib_blockchain::Hash::from_slice(&ubi_wallet_id_arr),
+                        wallet_type: "UBI".to_string(),
+                        wallet_name: "UBI Wallet".to_string(),
+                        alias: Some("ubi".to_string()),
+                        public_key: public_key_bytes.clone(),
+                        owner_identity_id,
+                        seed_commitment,
+                        created_at,
+                        registration_fee: 50,
+                        capabilities: 0x01,
+                        initial_balance: 0,
+                    },
+                ),
+                (
+                    "savings",
+                    lib_blockchain::transaction::WalletTransactionData {
+                        wallet_id: lib_blockchain::Hash::from_slice(&savings_wallet_id_arr),
+                        wallet_type: "Savings".to_string(),
+                        wallet_name: "Savings Wallet".to_string(),
+                        alias: Some("savings".to_string()),
+                        public_key: public_key_bytes.clone(),
+                        owner_identity_id,
+                        seed_commitment,
+                        created_at,
+                        registration_fee: 50,
+                        capabilities: 0x02,
+                        initial_balance: 0,
+                    },
+                ),
+            ];
+
+            // Primary first so welcome mint can follow immediately after.
+            let [(primary_label, primary_data), (ubi_label, ubi_data), (savings_label, savings_data)] =
+                wallet_specs;
+
+            register_wallet_or_abort(
+                &mut blockchain,
+                primary_data,
+                primary_label,
+                &mut queued_txs,
+                &did_string,
+                &wallet_id_hexes,
+            )?;
+
+            if let Err(e) =
+                enqueue_welcome_bonus_token_mint(&mut blockchain, welcome_mint_tx.clone())
+            {
+                tracing::error!("{}", e);
+                abort(&mut blockchain, &queued_txs);
+                return Err((ZhtpStatus::InternalServerError, e));
             }
+            queued_txs.push(welcome_mint_tx);
+            tracing::info!(
+                "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
+                SOV_WELCOME_BONUS_SOV
+            );
+
+            register_wallet_or_abort(
+                &mut blockchain,
+                ubi_data,
+                ubi_label,
+                &mut queued_txs,
+                &did_string,
+                &wallet_id_hexes,
+            )?;
+            register_wallet_or_abort(
+                &mut blockchain,
+                savings_data,
+                savings_label,
+                &mut queued_txs,
+                &did_string,
+                &wallet_id_hexes,
+            )?;
 
             tracing::info!("✅ All 3 wallet registrations queued for blockchain inclusion");
+            Ok(identity_tx_hash)
         }
+        .await;
 
-        if let Some(ref tx_hash) = blockchain_tx_hash {
-            crate::runtime::blockchain_provider::register_pending_identity_projection(
-                tx_hash,
-                crate::runtime::blockchain_provider::PendingIdentityProjection {
-                    identity_id: identity_id.to_string(),
-                    display_name: pending_display_name,
-                    device_id: req_data.device_id.clone(),
-                    node_id: hex::encode(&node_id_bytes),
-                    kyber_public_key: req_data.kyber_public_key.clone(),
-                    primary_wallet_id: primary_wallet_id.clone(),
-                    ubi_wallet_id: ubi_wallet_id.clone(),
-                    savings_wallet_id: savings_wallet_id.clone(),
-                    registered_at: now,
-                },
-            );
-        }
+        let tx_hash = match commit_result {
+            Ok(hash) => hash,
+            Err((status, msg)) => {
+                // blockchain write lock already dropped — safe to take identity_manager.
+                let mut identity_manager = self.identity_manager.write().await;
+                identity_manager.remove_identity(&identity_id);
+                return Ok(ZhtpResponse::error(status, msg));
+            }
+        };
+
+        crate::runtime::blockchain_provider::register_pending_identity_projection(
+            &tx_hash,
+            crate::runtime::blockchain_provider::PendingIdentityProjection {
+                identity_id: identity_id.to_string(),
+                display_name: pending_display_name,
+                device_id: req_data.device_id.clone(),
+                node_id: hex::encode(&node_id_bytes),
+                kyber_public_key: req_data.kyber_public_key.clone(),
+                primary_wallet_id: primary_wallet_id.clone(),
+                ubi_wallet_id: ubi_wallet_id.clone(),
+                savings_wallet_id: savings_wallet_id.clone(),
+                registered_at: now,
+            },
+        );
 
         tracing::info!(
             "✅ Client citizen registration queued: {} with 3 wallets pending block inclusion",
@@ -2333,7 +2473,7 @@ impl IdentityHandler {
             "node_id": hex::encode(&node_id_bytes),
             "device_id": req_data.device_id,
             "identity_type": req_data.identity_type,
-            "blockchain_tx": blockchain_tx_hash,
+            "blockchain_tx": tx_hash,
             "welcome_bonus": welcome_bonus_amount.to_string(),
             "registered_at": now,
             "pqc_enabled": req_data.kyber_public_key.is_some(),

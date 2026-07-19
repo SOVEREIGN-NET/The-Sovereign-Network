@@ -303,6 +303,75 @@ fn system_injection_accepts_valid_client_identity_registration() {
 }
 
 #[test]
+fn abort_pending_client_registration_clears_mempool_and_shadows() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let pk = [0xABu8; 2592];
+    let identity_tx = make_client_identity_registration_tx(pk, vec![0x01, 0x02], None);
+    let did = identity_tx
+        .identity_data()
+        .expect("identity payload")
+        .did
+        .clone();
+    let wallet_id = [0x11u8; 32];
+    let wallet_hex = hex::encode(wallet_id);
+
+    bc.add_system_transaction(
+        identity_tx.clone(),
+        crate::blockchain::SystemOriginator::ClientIdentityRegistration,
+    )
+    .expect("enqueue identity");
+    bc.insert_identity_shadow(
+        did.clone(),
+        identity_tx.identity_data().expect("payload").clone(),
+    );
+    bc.identity_blocks.insert(did.clone(), bc.get_height() + 1);
+
+    let wallet_data = crate::transaction::WalletTransactionData {
+        wallet_id: crate::types::Hash::from_slice(&wallet_id),
+        wallet_type: "Primary".to_string(),
+        wallet_name: "Primary".to_string(),
+        alias: Some("primary".to_string()),
+        public_key: pk.to_vec(),
+        owner_identity_id: None,
+        seed_commitment: crate::types::Hash::default(),
+        created_at: 1,
+        registration_fee: 0,
+        capabilities: 0,
+        initial_balance: 0,
+    };
+    let wallet_hash = bc.register_wallet(wallet_data).expect("enqueue wallet");
+    let wallet_tx = bc
+        .pending_transactions
+        .iter()
+        .find(|t| t.hash() == wallet_hash)
+        .cloned()
+        .expect("wallet tx in mempool");
+
+    assert_eq!(bc.pending_transactions.len(), 2);
+    assert!(bc.identity_exists(&did));
+    assert!(bc.wallet_exists(&wallet_hex));
+
+    bc.abort_pending_client_registration(
+        &[identity_tx, wallet_tx],
+        &did,
+        &[wallet_hex.as_str()],
+    );
+
+    assert!(
+        bc.pending_transactions.is_empty(),
+        "abort must clear queued txs"
+    );
+    assert!(
+        !bc.identity_exists(&did),
+        "abort must clear identity shadow so retries are not blocked"
+    );
+    assert!(
+        !bc.wallet_exists(&wallet_hex),
+        "abort must clear wallet shadow"
+    );
+}
+
+#[test]
 fn system_injection_rejects_client_identity_registration_without_proof() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     let pk = [0xCDu8; 2592];
