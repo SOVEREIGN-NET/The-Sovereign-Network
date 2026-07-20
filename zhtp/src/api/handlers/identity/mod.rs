@@ -1960,14 +1960,37 @@ impl IdentityHandler {
             "human".to_string()
         }
 
+        // #2773: Per-IP admission limit BEFORE body parse / Dilithium verify.
+        // Prefer mesh `peer_addr` (not spoofable X-Forwarded-For) — same as migrate.
+        // check_and_consume counts every attempt (success or fail) so valid spam
+        // still burns slots and cannot flood the mempool.
+        const REGISTER_MAX_PER_HOUR: usize = 10;
+        const REGISTER_WINDOW_SECS: u64 = 3600;
+        let reported_ip = login_handlers::extract_client_ip(&request);
+        let rate_key = request
+            .headers
+            .get("peer_addr")
+            .unwrap_or_else(|| reported_ip.clone());
+        if self
+            .rate_limiter
+            .check_and_consume(&rate_key, REGISTER_MAX_PER_HOUR, REGISTER_WINDOW_SECS)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "identity/register rate limited key={} reported_ip={}",
+                rate_key,
+                reported_ip
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::TooManyRequests,
+                "Too many registration attempts. Please try again later.".to_string(),
+            ));
+        }
+
         // Parse request
         let req_data: RegisterIdentityRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid register request: {}", e))?;
-
-        let client_ip = login_handlers::extract_client_ip(&request);
-        if let Err(response) = self.rate_limiter.check_rate_limit(&client_ip).await {
-            return Ok(response);
-        }
 
         tracing::info!(
             "📱 Client-side identity registration (device: {})",

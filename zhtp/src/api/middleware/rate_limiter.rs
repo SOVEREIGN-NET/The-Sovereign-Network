@@ -63,6 +63,33 @@ impl RateLimiter {
         max_attempts: usize,
         window_seconds: u64,
     ) -> Result<(), ZhtpResponse> {
+        self.check_window(ip, max_attempts, window_seconds, false)
+            .await
+    }
+
+    /// Admission rate limit: every call consumes a slot (success or failure).
+    ///
+    /// Use for expensive unauthenticated endpoints (e.g. identity/register) where
+    /// valid spam still costs Dilithium verification and mempool pressure. Unlike
+    /// [`check_rate_limit`] / [`check_rate_limit_aggressive`], this does not wait
+    /// for a later `record_failed_attempt` — the attempt is counted immediately.
+    pub async fn check_and_consume(
+        &self,
+        ip: &str,
+        max_attempts: usize,
+        window_seconds: u64,
+    ) -> Result<(), ZhtpResponse> {
+        self.check_window(ip, max_attempts, window_seconds, true)
+            .await
+    }
+
+    async fn check_window(
+        &self,
+        ip: &str,
+        max_attempts: usize,
+        window_seconds: u64,
+        consume: bool,
+    ) -> Result<(), ZhtpResponse> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -75,23 +102,26 @@ impl RateLimiter {
                 failed_attempts: Vec::new(),
             });
 
-        // Remove old attempts outside the window
         entry
             .failed_attempts
             .retain(|&timestamp| now - timestamp < window_seconds);
 
-        // Check if limit exceeded
         if entry.failed_attempts.len() >= max_attempts {
             tracing::warn!(
-                "Aggressive rate limit exceeded for IP {} ({} failed attempts in window)",
+                "Rate limit exceeded for IP {} ({} attempts in {}s window)",
                 ip,
-                entry.failed_attempts.len()
+                entry.failed_attempts.len(),
+                window_seconds
             );
 
             return Err(ZhtpResponse::error(
                 ZhtpStatus::TooManyRequests,
-                format!("Too many failed attempts. Please try again later."),
+                "Too many failed attempts. Please try again later.".to_string(),
             ));
+        }
+
+        if consume {
+            entry.failed_attempts.push(now);
         }
 
         Ok(())
@@ -311,5 +341,18 @@ mod tests {
         limiter.cleanup().await;
         let stats = limiter.stats().await;
         assert_eq!(stats.tracked_ips, 1);
+    }
+
+    #[tokio::test]
+    async fn test_check_and_consume_counts_every_attempt() {
+        let limiter = RateLimiter::new();
+
+        for _ in 0..3 {
+            assert!(limiter.check_and_consume("reg_ip", 3, 3600).await.is_ok());
+        }
+        // Fourth attempt in the window is denied
+        assert!(limiter.check_and_consume("reg_ip", 3, 3600).await.is_err());
+        // Other IPs unaffected
+        assert!(limiter.check_and_consume("other_ip", 3, 3600).await.is_ok());
     }
 }
