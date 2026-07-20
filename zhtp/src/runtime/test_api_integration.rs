@@ -433,4 +433,64 @@ mod api_integration_tests {
 
         let _ = std::fs::remove_dir_all(db_path);
     }
+
+    /// #2773: unauthenticated register admits at most 10 attempts / hour / IP.
+    #[tokio::test]
+    async fn test_register_identity_rate_limits_per_ip() {
+        let mut storage_config = UnifiedStorageConfig::default();
+        let db_path =
+            std::env::temp_dir().join(format!("zhtp-test-rl-{}", rand::random::<u64>()));
+        storage_config.storage_config.dht_persist_path = Some(db_path.clone());
+        let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
+            .expect("failed to create storage");
+        let (handler, db_path) = build_identity_handler(storage, db_path);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // 10 attempts (any status) from the same IP must be admitted into the handler.
+        // 11th is rejected before crypto / parse side effects matter.
+        for i in 0..10 {
+            let keypair = lib_crypto::KeyPair::generate().expect("keypair");
+            // Far-future timestamp → cheap BadRequest after rate-limit consume
+            let mut request =
+                build_register_request(&keypair, &format!("device-rl-{}", i), now + 120, None);
+            request.headers.set("peer_addr", "203.0.113.50".into());
+            let response = handler
+                .handle_request(request)
+                .await
+                .expect("handler failed");
+            assert_ne!(
+                response.status,
+                ZhtpStatus::TooManyRequests,
+                "attempt {} should not be rate-limited yet",
+                i + 1
+            );
+        }
+
+        let keypair = lib_crypto::KeyPair::generate().expect("keypair");
+        let mut request =
+            build_register_request(&keypair, "device-rl-blocked", now + 120, None);
+        request.headers.set("peer_addr", "203.0.113.50".into());
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
+        assert_eq!(response.status, ZhtpStatus::TooManyRequests);
+
+        // Different peer is unaffected
+        let keypair = lib_crypto::KeyPair::generate().expect("keypair");
+        let mut request =
+            build_register_request(&keypair, "device-rl-other", now + 120, None);
+        request.headers.set("peer_addr", "203.0.113.99".into());
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
+        assert_ne!(response.status, ZhtpStatus::TooManyRequests);
+
+        let _ = std::fs::remove_dir_all(db_path);
+    }
 }
