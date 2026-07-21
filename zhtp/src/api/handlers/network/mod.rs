@@ -322,6 +322,13 @@ pub struct NetworkHandler {
 
 impl NetworkHandler {
     pub fn new(runtime: Arc<RuntimeOrchestrator>) -> Self {
+        // Seed an initial maintenance banner from ZHTP_MAINTENANCE_MESSAGE, if
+        // set. Guarded to run at most once per process.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        crate::runtime::maintenance_provider::seed_from_env(now);
         Self { runtime }
     }
 
@@ -387,6 +394,16 @@ impl ZhtpRequestHandler for NetworkHandler {
             }
             (ZhtpMethod::Get, "/api/v1/network/status") => {
                 self.handle_get_network_status(request).await
+            }
+            // Operator maintenance / status banner (surfaced in /network/directory).
+            (ZhtpMethod::Get, "/api/v1/network/maintenance") => {
+                self.handle_get_maintenance(request).await
+            }
+            (ZhtpMethod::Post, "/api/v1/network/maintenance") => {
+                self.handle_set_maintenance(request).await
+            }
+            (ZhtpMethod::Delete, "/api/v1/network/maintenance") => {
+                self.handle_clear_maintenance(request).await
             }
             (ZhtpMethod::Get, "/api/v1/network/peers") => {
                 self.handle_get_network_peers(request).await
@@ -1095,6 +1112,99 @@ impl NetworkHandler {
         ))
     }
 
+    /// GET /api/v1/network/maintenance — current operator banner (public read).
+    ///
+    /// Returns `{ "maintenance": <notice-or-null> }`. The same value is embedded
+    /// in `/network/directory`; this endpoint exists so operators can check it
+    /// directly.
+    async fn handle_get_maintenance(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let notice = crate::runtime::maintenance_provider::get_maintenance_notice();
+        Ok(ZhtpResponse::json(
+            &serde_json::json!({ "maintenance": notice }),
+            None,
+        )?)
+    }
+
+    /// POST /api/v1/network/maintenance — set/replace the operator banner.
+    ///
+    /// Council/InfraAdmin only (same operator class as `halt-consensus`).
+    /// Body: `{ "message": "...", "severity": "info|warning|critical" }`
+    /// (`severity` optional, defaults to `warning`). To remove the banner use
+    /// `DELETE` — an empty message is rejected.
+    async fn handle_set_maintenance(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        if let Some(resp) = self.require_operator(&request, "set the maintenance banner") {
+            return Ok(resp);
+        }
+
+        let body: serde_json::Value = match serde_json::from_slice(&request.body) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    format!("invalid JSON body: {e}"),
+                ))
+            }
+        };
+        let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let severity = body
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("warning");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        match crate::runtime::maintenance_provider::set_maintenance_notice(message, severity, now) {
+            Ok(notice) => {
+                info!(
+                    severity = %notice.severity,
+                    "operator set maintenance banner"
+                );
+                Ok(ZhtpResponse::json(
+                    &serde_json::json!({ "status": "set", "maintenance": notice }),
+                    None,
+                )?)
+            }
+            Err(e) => Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e)),
+        }
+    }
+
+    /// DELETE /api/v1/network/maintenance — clear the operator banner.
+    ///
+    /// Council/InfraAdmin only.
+    async fn handle_clear_maintenance(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        if let Some(resp) = self.require_operator(&request, "clear the maintenance banner") {
+            return Ok(resp);
+        }
+        let cleared = crate::runtime::maintenance_provider::clear_maintenance_notice();
+        if cleared {
+            info!("operator cleared maintenance banner");
+        }
+        Ok(ZhtpResponse::json(
+            &serde_json::json!({ "status": "cleared", "was_active": cleared }),
+            None,
+        )?)
+    }
+
+    /// Returns `Some(Forbidden)` unless the caller holds an operator role
+    /// (`Council` or `InfraAdmin`). `None` means authorized — proceed.
+    fn require_operator(&self, request: &ZhtpRequest, action: &str) -> Option<ZhtpResponse> {
+        let principal = crate::api::principal::extract_principal_from_request(request);
+        let allowed = matches!(
+            principal.role,
+            lib_access_control::Role::Council | lib_access_control::Role::InfraAdmin
+        );
+        if allowed {
+            None
+        } else {
+            Some(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                format!("{action} requires Council or InfraAdmin role"),
+            ))
+        }
+    }
+
     /// POST /api/v1/node/force-sync — trigger immediate catch-up sync from peers
     async fn handle_node_force_sync(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Force sync requested");
@@ -1255,6 +1365,9 @@ impl NetworkHandler {
                 "total_gateways": gateways.len(),
                 "connected_peers": peer_count,
             },
+            // Operator maintenance / status banner. `null` when none is active;
+            // additive field — older clients ignore it. Never an empty string.
+            "maintenance": crate::runtime::maintenance_provider::get_maintenance_notice(),
         });
 
         Ok(ZhtpResponse::json(&response, None)?)
