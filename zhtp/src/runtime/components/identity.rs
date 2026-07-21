@@ -144,33 +144,36 @@ impl Component for IdentityComponent {
         crate::runtime::set_global_identity_manager(identity_manager_arc.clone()).await?;
         info!(" Identity manager registered globally for component access");
 
-        // Phase 4 (#1987/#2007): DHT/local storage is cache only. When the
-        // chain already has identity projections, do not treat DHT bootstrap
-        // as an authority source for IdentityManager or mempool injection.
+        // Phase 4 (#1987/#2007–#2009): local DHT/storage bootstrap only warms
+        // IdentityManager as a cache. It must not invent chain authority
+        // (wallet registration / welcome-bonus mint are gated or removed
+        // inside bootstrap). Do NOT skip the warm path when the chain already
+        // has identities — IdentityManager is still needed for PoUW/API paths
+        // that read the manager, and chain backfill into the manager is
+        // intentionally disabled (wallet ownership migration hazard below).
         let canonical_identities = canonical_identity_projection_count().await;
-        if should_skip_dht_identity_bootstrap(canonical_identities) {
+        if canonical_identities > 0 {
             info!(
-                "Canonical identity projection present ({} identities) — skipping DHT identity bootstrap (cache-only)",
+                "Canonical identity projection present ({} identities) — DHT bootstrap is cache-only (no authority mutations without ZHTP_MIGRATE_IDENTITIES)",
                 canonical_identities
             );
-        } else {
-            info!("🔄 Bootstrapping identities from local DHT storage (no canonical projection yet)...");
-            match bootstrap_identities_from_dht(&identity_manager_arc).await {
-                Ok(result) => {
-                    info!(
-                        "✅ Bootstrap complete: {} identities, {} wallets loaded",
-                        result.identities_loaded, result.wallets_loaded
-                    );
-                    if !result.errors.is_empty() {
-                        for err in &result.errors {
-                            debug!("  Bootstrap warning: {}", err);
-                        }
+        }
+        info!("🔄 Warming IdentityManager from local DHT/storage cache...");
+        match bootstrap_identities_from_dht(&identity_manager_arc).await {
+            Ok(result) => {
+                info!(
+                    "✅ Cache warm complete: {} identities, {} wallets loaded",
+                    result.identities_loaded, result.wallets_loaded
+                );
+                if !result.errors.is_empty() {
+                    for err in &result.errors {
+                        debug!("  Bootstrap warning: {}", err);
                     }
                 }
-                Err(e) => {
-                    // Non-fatal - log and continue
-                    info!("⚠️ DHT bootstrap skipped (non-fatal): {}", e);
-                }
+            }
+            Err(e) => {
+                // Non-fatal - log and continue
+                info!("⚠️ DHT cache warm skipped (non-fatal): {}", e);
             }
         }
 
@@ -329,12 +332,14 @@ pub struct DhtBootstrapResult {
     pub errors: Vec<String>,
 }
 
-/// Prefer canonical chain identity projection over DHT on startup (#2007).
+/// Whether DHT bootstrap may enqueue chain-mutating registration work (#2008).
 ///
-/// When any committed identity projection exists, DHT must not act as an
-/// authoritative bootstrap source for IdentityManager or registration enqueue.
-pub(crate) fn should_skip_dht_identity_bootstrap(canonical_identity_count: usize) -> bool {
-    canonical_identity_count > 0
+/// Authority mutations from local DHT/storage require an explicit ops opt-in.
+/// Cache warm (IdentityManager population) is always allowed and is not gated.
+pub(crate) fn dht_authority_mutations_enabled() -> bool {
+    std::env::var("ZHTP_MIGRATE_IDENTITIES")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 /// Count identities already present in the blockchain projection (sled + shadow).
@@ -995,9 +1000,7 @@ async fn bootstrap_identities_from_dht(
                                 .await
                                 .ok();
 
-                        let migrate_wallets = std::env::var("ZHTP_MIGRATE_IDENTITIES")
-                            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                            .unwrap_or(false);
+                        let migrate_wallets = dht_authority_mutations_enabled();
 
                         if migrate_wallets {
                             if let Some(ref bc_arc) = blockchain_arc {
@@ -1284,13 +1287,19 @@ mod tests {
     use lib_blockchain::Hash;
 
     #[test]
-    fn dht_identity_bootstrap_skipped_when_canonical_projection_exists() {
-        assert!(should_skip_dht_identity_bootstrap(1));
-        assert!(should_skip_dht_identity_bootstrap(42));
+    fn dht_authority_mutations_default_off() {
+        // Default: no env → cache warm only, no register_wallet / mint from DHT.
+        // (Do not set ZHTP_MIGRATE_IDENTITIES in this process for the assertion.)
+        let previous = std::env::var_os("ZHTP_MIGRATE_IDENTITIES");
+        std::env::remove_var("ZHTP_MIGRATE_IDENTITIES");
         assert!(
-            !should_skip_dht_identity_bootstrap(0),
-            "empty chain may still warm IdentityManager from local cache"
+            !dht_authority_mutations_enabled(),
+            "DHT must not mutate chain authority without ZHTP_MIGRATE_IDENTITIES"
         );
+        match previous {
+            Some(v) => std::env::set_var("ZHTP_MIGRATE_IDENTITIES", v),
+            None => std::env::remove_var("ZHTP_MIGRATE_IDENTITIES"),
+        }
     }
 
     #[test]
