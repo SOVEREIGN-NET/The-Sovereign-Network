@@ -14,9 +14,10 @@ mod common;
 
 use common::block_builders;
 use common::reward_claim_harness::{
-    mempool_blockchain, mempool_blockchain_shadow_phantom_beneficiary,
-    mempool_blockchain_unregistered_beneficiary, mempool_blockchain_unregistered_treasury,
-    seed_executor_store, welcome_claim_tx, welcome_claim_tx_from, RewardClaimActors,
+    mempool_blockchain, mempool_blockchain_rewards_module_without_token_contract,
+    mempool_blockchain_shadow_phantom_beneficiary, mempool_blockchain_unregistered_beneficiary,
+    mempool_blockchain_unregistered_treasury, seed_executor_store, welcome_claim_tx,
+    welcome_claim_tx_from, RewardClaimActors,
 };
 
 #[test]
@@ -63,6 +64,37 @@ fn non_delegate_signer_rejected_from_mempool() {
     assert!(
         blockchain.get_pending_transactions().is_empty(),
         "non-delegate claim must not enter mempool"
+    );
+}
+
+#[test]
+fn rewards_module_without_token_contract_rejected_from_mempool() {
+    // GENESIS-3 H=1920 halt: pure AssetLaunch writes rewards_module_state but
+    // no token_contracts row. Old mempool order checked rewards_module first and
+    // admitted the claim; apply then failed and halted consensus after BFT.
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain_rewards_module_without_token_contract(&actors);
+
+    assert!(
+        blockchain.get_rewards_module_state(&actors.token_id).is_some(),
+        "fixture must expose rewards module (AssetLaunch path)"
+    );
+    assert!(
+        blockchain.get_token_contract(&actors.token_id).is_none(),
+        "fixture must omit token_contracts row"
+    );
+
+    let err = blockchain
+        .add_pending_transaction(welcome_claim_tx(&actors, 0))
+        .expect_err("RewardClaim without token contract must not enter mempool");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("verification failed") || msg.contains("Invalid"),
+        "expected mempool rejection for missing token contract, got: {msg}"
+    );
+    assert!(
+        blockchain.get_pending_transactions().is_empty(),
+        "unapplyable RewardClaim must not enter mempool"
     );
 }
 

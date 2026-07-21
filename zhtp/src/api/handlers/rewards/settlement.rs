@@ -105,6 +105,12 @@ pub fn plan_reward_claim(
         Ok(false) => return Err("owner_did_not_registered".into()),
         Err(_) => return Err("owner_did_not_registered".into()),
     }
+    // Apply requires a token_contracts row; rewards-module state alone is not
+    // enough (pure AssetLaunch). Fail closed here so the API never signs a claim
+    // that would pass mempool and halt consensus on block apply.
+    if bc.get_token_contract(token_id).is_none() {
+        return Err("token_contract_not_found".into());
+    }
     let ts = claim_unix_ts();
     // Map conversion failures to a stable snake_case reason for clients /
     // soft_fail matching — do not surface the raw numeric error string.

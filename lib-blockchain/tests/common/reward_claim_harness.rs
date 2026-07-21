@@ -124,6 +124,41 @@ fn install_bubl_mempool_fixtures(blockchain: &mut Blockchain, actors: &RewardCla
     );
 }
 
+/// Identities + rewards-module state for `token_id`, but **no** `token_contracts`
+/// row — mirrors pure AssetLaunch (discoverable rewards, un-applyable claims).
+pub fn mempool_blockchain_rewards_module_without_token_contract(
+    actors: &RewardClaimActors,
+) -> Blockchain {
+    use lib_blockchain::contracts::sovereign_asset::RewardsModuleState;
+
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let store = attach_ephemeral_store(&mut blockchain);
+    register_actor_identities_store(store.as_ref(), actors);
+    register_actor_identities_shadow(&mut blockchain, actors);
+    // put_rewards_module_state requires an active block transaction.
+    // Empty store expects height 0 (genesis slot) for the first begin_block.
+    store.begin_block(0).expect("begin rewards fixture block");
+    store
+        .put_rewards_module_state(
+            &actors.token_id,
+            &RewardsModuleState {
+                spend_delegate_key_id: actors.treasury.public_key.key_id,
+                policy_cid: [0u8; 32],
+                policy_hash: [0u8; 32],
+                nonce: 0,
+                pending_policy: None,
+            },
+        )
+        .expect("seed rewards module without token contract");
+    store.commit_block().expect("commit rewards fixture block");
+    blockchain.insert_token_nonce_shadow(
+        actors.token_id,
+        actors.treasury.public_key.key_id,
+        0,
+    );
+    blockchain
+}
+
 /// In-memory blockchain with treasury identity + BUBL contract, but beneficiary
 /// `owner_did` deliberately absent from the registry (halt regression harness).
 pub fn mempool_blockchain_unregistered_beneficiary(actors: &RewardClaimActors) -> Blockchain {

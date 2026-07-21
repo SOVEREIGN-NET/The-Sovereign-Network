@@ -102,6 +102,46 @@ pub fn requires_system_tx_signature(transaction: &Transaction) -> bool {
     system_tx_signature_policy(transaction.transaction_type) == SystemTxSignaturePolicy::Required
 }
 
+/// Client / auto-bootstrap system txs that are intentionally unsigned at the
+/// Dilithium tx layer. Authentication is elsewhere:
+/// - [`TransactionType::IdentityRegistration`]: API verifies `ZHTP_REGISTER`
+///   proof; payload carries `ownership_proof` + DID/pk binding (see
+///   `SystemOriginator::ClientIdentityRegistration`).
+/// - [`TransactionType::WalletRegistration`]: zero-balance auto wallets from
+///   the same registration path (`SystemOriginator::AutoWalletRegistration`).
+///
+/// Non-empty signatures still always go through full crypto verify.
+pub fn allows_empty_system_signature(transaction: &Transaction) -> bool {
+    if !transaction.signature.signature.is_empty() {
+        return false;
+    }
+    match transaction.transaction_type {
+        TransactionType::IdentityRegistration => {
+            let Some(data) = transaction.identity_data() else {
+                return false;
+            };
+            if data.ownership_proof.is_empty() || data.public_key.len() != 2592 {
+                return false;
+            }
+            let Ok(identity_pk): Result<[u8; 2592], _> = data.public_key.as_slice().try_into()
+            else {
+                return false;
+            };
+            if transaction.signature.public_key.dilithium_pk != identity_pk {
+                return false;
+            }
+            let key_id = crate::types::hash::blake3_hash(identity_pk.as_slice());
+            let expected_did = format!("did:zhtp:{}", hex::encode(key_id.as_bytes()));
+            data.did == expected_did
+        }
+        TransactionType::WalletRegistration => transaction
+            .wallet_data()
+            .map(|w| w.initial_balance == 0)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +190,43 @@ mod tests {
                 SystemTxSignaturePolicy::Required
             );
         }
+    }
+
+    #[test]
+    fn client_identity_registration_allows_empty_sig_when_bound() {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::core::IdentityTransactionData;
+        use crate::types::Hash;
+
+        let dilithium_pk = [0xABu8; 2592];
+        let key_id = crate::types::hash::blake3_hash(&dilithium_pk);
+        let did = format!("did:zhtp:{}", hex::encode(key_id.as_bytes()));
+        let identity_data = IdentityTransactionData {
+            did,
+            display_name: "test_user".to_string(),
+            public_key: dilithium_pk.to_vec(),
+            ownership_proof: vec![0x01, 0x02],
+            identity_type: "human".to_string(),
+            did_document_hash: Hash::default(),
+            created_at: 1,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: vec![],
+        };
+        let tx = Transaction::new_identity_registration(
+            identity_data,
+            vec![],
+            Signature {
+                signature: Vec::new(),
+                public_key: PublicKey::new(dilithium_pk),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 1,
+            },
+            b"client-identity-register:test".to_vec(),
+        );
+        assert!(allows_empty_system_signature(&tx));
+        assert!(requires_system_tx_signature(&tx));
     }
 }

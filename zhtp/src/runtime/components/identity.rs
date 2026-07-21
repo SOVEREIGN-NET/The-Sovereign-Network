@@ -973,7 +973,6 @@ async fn bootstrap_identities_from_dht(
                                 if !bc.wallet_exists(wid) {
                                     let wallet_bytes = hex::decode(wid).unwrap_or_default();
                                     if wallet_bytes.len() >= 32 {
-                                        const WELCOME_BONUS: u128 = SOV_WELCOME_BONUS;
                                         let wallet_data =
                                             lib_blockchain::transaction::WalletTransactionData {
                                                 wallet_id: lib_blockchain::Hash::from_slice(
@@ -995,16 +994,14 @@ async fn bootstrap_identities_from_dht(
                                                 created_at,
                                                 registration_fee: 0,
                                                 capabilities: 0xFF,
-                                                initial_balance: WELCOME_BONUS,
+                                                // Enqueue-only (#1989): no embedded balance / UTXO mint.
+                                                initial_balance: 0,
                                             };
                                         if bc.register_wallet(wallet_data).is_ok() {
-                                            // Create spendable UTXO (not just registry entry)
-                                            bc.create_funding_utxo(
-                                                wid,
-                                                &identity_hash.0,
-                                                WELCOME_BONUS,
+                                            info!(
+                                                "💰 MIGRATED primary wallet {} queued (0 SOV; TokenMint required for funding)",
+                                                &wid[..16.min(wid.len())]
                                             );
-                                            info!("💰 MIGRATED primary wallet {} with {} SOV (spendable)", &wid[..16], SOV_WELCOME_BONUS_SOV);
                                         }
                                     }
                                 }

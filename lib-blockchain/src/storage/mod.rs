@@ -912,6 +912,18 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - Block hash MUST be unique
     fn append_block(&self, block: &crate::block::Block) -> StorageResult<()>;
 
+    /// Replace an already-committed block at the same height (hash may change).
+    ///
+    /// Used after genesis funding mutates block 0 in memory so the sled body and
+    /// height index match the tip hash proposers use. Not a general reorg API.
+    ///
+    /// Default: unsupported.
+    fn replace_block(&self, _block: &crate::block::Block) -> StorageResult<()> {
+        Err(StorageError::Database(
+            "replace_block not implemented for this BlockchainStore backend".into(),
+        ))
+    }
+
     /// Get a block by its height.
     ///
     /// Returns None if no block exists at that height.
@@ -1715,6 +1727,20 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         let _ = (did_hash, metadata);
         Err(StorageError::Database(
             "put_identity_metadata_direct not supported by this backend".to_string(),
+        ))
+    }
+
+    /// Write owner → did_hash index outside begin_block/commit_block.
+    ///
+    /// Used by projection rebuild after block-scan replay (#1985 / #1999).
+    fn put_identity_owner_index_direct(
+        &self,
+        addr: &Address,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<()> {
+        let _ = (addr, did_hash);
+        Err(StorageError::Database(
+            "put_identity_owner_index_direct not supported by this backend".to_string(),
         ))
     }
 

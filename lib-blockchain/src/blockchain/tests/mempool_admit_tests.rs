@@ -303,6 +303,38 @@ fn system_injection_accepts_valid_client_identity_registration() {
 }
 
 #[test]
+fn register_wallet_is_enqueue_only_no_registry_or_mint() {
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    let pk = [0xABu8; 2592];
+    let wallet_id = [0x42u8; 32];
+    let wallet_hex = hex::encode(wallet_id);
+    let wallet_data = crate::transaction::WalletTransactionData {
+        wallet_id: crate::types::Hash::from_slice(&wallet_id),
+        wallet_type: "Primary".to_string(),
+        wallet_name: "Primary".to_string(),
+        alias: Some("primary".to_string()),
+        public_key: pk.to_vec(),
+        owner_identity_id: None,
+        seed_commitment: crate::types::Hash::default(),
+        created_at: 1,
+        registration_fee: 0,
+        capabilities: 0,
+        initial_balance: 0,
+    };
+    let shadow_before = bc.wallet_registry_shadow_len();
+    let hash = bc.register_wallet(wallet_data).expect("enqueue");
+    assert_eq!(bc.pending_transactions.len(), 1);
+    assert_eq!(bc.pending_transactions[0].hash(), hash);
+    assert_eq!(
+        bc.wallet_registry_shadow_len(),
+        shadow_before,
+        "register_wallet must not grow wallet_registry (enqueue-only)"
+    );
+    assert!(bc.wallet_exists(&wallet_hex), "pending occupies wallet id");
+    assert!(!bc.identity_committed("did:zhtp:none"));
+}
+
+#[test]
 fn abort_pending_client_registration_clears_mempool_and_shadows() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     let pk = [0xABu8; 2592];
@@ -348,6 +380,7 @@ fn abort_pending_client_registration_clears_mempool_and_shadows() {
         .expect("wallet tx in mempool");
 
     assert_eq!(bc.pending_transactions.len(), 2);
+    // Pending occupies DID / wallet id without committed wallet shadow (#1989 / #1990).
     assert!(bc.identity_exists(&did));
     assert!(bc.wallet_exists(&wallet_hex));
 
@@ -363,11 +396,11 @@ fn abort_pending_client_registration_clears_mempool_and_shadows() {
     );
     assert!(
         !bc.identity_exists(&did),
-        "abort must clear identity shadow so retries are not blocked"
+        "abort must clear identity pending/shadow so retries are not blocked"
     );
     assert!(
         !bc.wallet_exists(&wallet_hex),
-        "abort must clear wallet shadow"
+        "abort must clear wallet pending/shadow"
     );
 }
 

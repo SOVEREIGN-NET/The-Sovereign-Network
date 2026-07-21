@@ -589,8 +589,17 @@ async fn register_identity_on_chain(
     let result: serde_json::Value = ZhtpClient::parse_json(&response)
         .map_err(|e| CliError::ConfigError(format!("Failed to parse response: {}", e)))?;
 
-    if result.get("status").and_then(|s| s.as_str()) == Some("success") {
-        output.success("Identity registered on-chain")?;
+    let status = result.get("status").and_then(|s| s.as_str()).unwrap_or("");
+    // API returns "queued" when txs are in the mempool, "confirmed" when
+    // wait_for_inclusion saw block commit. Both are operator success paths.
+    if status == "success" || status == "queued" || status == "confirmed" {
+        if status == "queued" {
+            output.success("Identity registration queued on-chain (pending block inclusion)")?;
+        } else if status == "confirmed" {
+            output.success("Identity confirmed on-chain (block-committed)")?;
+        } else {
+            output.success("Identity registered on-chain")?;
+        }
         if let Some(did) = result.get("did").and_then(|d| d.as_str()) {
             output.print(&format!("DID: {}", did))?;
         }
@@ -602,6 +611,9 @@ async fn register_identity_on_chain(
         }
         if let Some(savings) = result.get("savings_wallet_id").and_then(|w| w.as_str()) {
             output.print(&format!("Savings wallet: {}", savings))?;
+        }
+        if let Some(tx) = result.get("blockchain_tx").and_then(|t| t.as_str()) {
+            output.print(&format!("Tx: {}", tx))?;
         }
     } else {
         let err = result
