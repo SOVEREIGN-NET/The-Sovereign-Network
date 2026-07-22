@@ -168,68 +168,41 @@ impl PouwHandler {
         "did:zhtp:anonymous".to_string()
     }
 
-    /// Validate client DID against identity registry
+    /// Validate client DID against chain identity projection (manager only if chain down).
     async fn validate_client_identity(&self, client_did: &str) -> Result<(), String> {
-        // Check DID format (currently only did:zhtp:... is supported by identity registry)
-        if !client_did.starts_with("did:zhtp:") {
-            return Err("Invalid DID format: must start with 'did:zhtp:'".to_string());
+        let view = crate::runtime::resolve_pouw_client_identity(
+            client_did,
+            &self.identity_manager,
+        )
+        .await?;
+
+        // Identity age check: reject DIDs registered less than MIN_IDENTITY_AGE_SECS ago.
+        // created_at is chain-authoritative when the blockchain is available.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let age_secs = now.saturating_sub(view.created_at);
+        if age_secs < MIN_IDENTITY_AGE_SECS {
+            warn!(
+                did = %client_did,
+                age_secs = age_secs,
+                required_secs = MIN_IDENTITY_AGE_SECS,
+                source = ?view.source,
+                "PoUW reward rejected: identity too new"
+            );
+            return Err(format!(
+                "Identity too new for reward eligibility: {} seconds old, minimum {} seconds required",
+                age_secs, MIN_IDENTITY_AGE_SECS
+            ));
         }
 
-        // Check if identity exists in registry, ensuring exact DID match.
-        let identity_manager = self.identity_manager.read().await;
-        match identity_manager.get_identity_by_did(client_did) {
-            Some(identity) => {
-                if identity.did != client_did {
-                    return Err(format!(
-                        "Client DID mismatch: requested {}, found {}",
-                        client_did, identity.did
-                    ));
-                }
-
-                // Identity age check: reject DIDs registered less than MIN_IDENTITY_AGE_SECS ago.
-                // Prevents Sybil attacks from freshly created identities.
-                // Use on-chain created_at (persisted in blocks) instead of in-memory
-                // identity manager timestamp, which resets on node restart.
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let chain_created_at = match
-                    crate::runtime::blockchain_provider::get_global_blockchain().await
-                {
-                    Ok(blockchain_arc) => {
-                        let blockchain = blockchain_arc.read().await;
-                        // #2639: sled-first — durable created_at survives restart
-                        // (in-mem registry is empty on a store-backed node then).
-                        blockchain
-                            .identity_consensus_by_did(client_did)
-                            .map(|c| c.created_at)
-                            .unwrap_or(identity.created_at)
-                    }
-                    Err(_) => identity.created_at,
-                };
-                let age_secs = now.saturating_sub(chain_created_at);
-                if age_secs < MIN_IDENTITY_AGE_SECS {
-                    warn!(
-                        did = %client_did,
-                        age_secs = age_secs,
-                        required_secs = MIN_IDENTITY_AGE_SECS,
-                        "PoUW reward rejected: identity too new"
-                    );
-                    return Err(format!(
-                        "Identity too new for reward eligibility: {} seconds old, minimum {} seconds required",
-                        age_secs, MIN_IDENTITY_AGE_SECS
-                    ));
-                }
-
-                debug!("Client identity validated: {}", client_did);
-                Ok(())
-            }
-            None => Err(format!(
-                "Client DID not found in identity registry: {}",
-                client_did
-            )),
-        }
+        debug!(
+            did = %client_did,
+            source = ?view.source,
+            "Client identity validated"
+        );
+        Ok(())
     }
 
     fn payout_status_str(status: crate::pouw::rewards::PayoutStatus) -> &'static str {

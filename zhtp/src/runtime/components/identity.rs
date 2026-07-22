@@ -144,12 +144,35 @@ impl Component for IdentityComponent {
         crate::runtime::set_global_identity_manager(identity_manager_arc.clone()).await?;
         info!(" Identity manager registered globally for component access");
 
-        // Bootstrap identities from DHT storage
-        info!("🔄 Bootstrapping identities from DHT storage...");
+        // Phase 4 (#1987/#2007–#2009): local DHT/storage bootstrap only warms
+        // IdentityManager as a cache. It must not invent chain authority
+        // (wallet registration / welcome-bonus mint are gated or removed
+        // inside bootstrap). Do NOT skip the warm path when the chain already
+        // has identities — IdentityManager is still needed for PoUW/API paths
+        // that read the manager, and chain backfill into the manager is
+        // intentionally disabled (wallet ownership migration hazard below).
+        //
+        // IdentityComponent starts before BlockchainComponent, so the provider
+        // is often unset here; count is informational only. Chain-aligned warm
+        // filters inside bootstrap when the provider is available; PoUW uses
+        // chain-first resolve regardless of what was warmed.
+        match canonical_identity_projection_count().await {
+            Some(n) if n > 0 => info!(
+                "Canonical identity projection present ({} identities) — DHT bootstrap is cache-only (no authority mutations without ZHTP_MIGRATE_IDENTITIES)",
+                n
+            ),
+            Some(_) => info!(
+                "Canonical identity projection empty — DHT cache warm may seed manager from local rows (still non-authoritative for PoUW)"
+            ),
+            None => info!(
+                "Blockchain provider not ready at identity warm — DHT cache warm without chain filter; PoUW re-checks when chain is up"
+            ),
+        }
+        info!("🔄 Warming IdentityManager from local DHT/storage cache...");
         match bootstrap_identities_from_dht(&identity_manager_arc).await {
             Ok(result) => {
                 info!(
-                    "✅ Bootstrap complete: {} identities, {} wallets loaded",
+                    "✅ Cache warm complete: {} identities, {} wallets loaded",
                     result.identities_loaded, result.wallets_loaded
                 );
                 if !result.errors.is_empty() {
@@ -160,7 +183,7 @@ impl Component for IdentityComponent {
             }
             Err(e) => {
                 // Non-fatal - log and continue
-                info!("⚠️ DHT bootstrap skipped (non-fatal): {}", e);
+                info!("⚠️ DHT cache warm skipped (non-fatal): {}", e);
             }
         }
 
@@ -317,6 +340,30 @@ pub struct DhtBootstrapResult {
     pub identities_loaded: u32,
     pub wallets_loaded: u32,
     pub errors: Vec<String>,
+}
+
+/// Whether DHT bootstrap may enqueue chain-mutating registration work (#2008).
+///
+/// Authority mutations from local DHT/storage require an explicit ops opt-in.
+/// Cache warm (IdentityManager population) is always allowed and is not gated.
+pub(crate) fn dht_authority_mutations_enabled() -> bool {
+    std::env::var("ZHTP_MIGRATE_IDENTITIES")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Count identities already present in the blockchain projection (sled + shadow).
+///
+/// Returns `None` when the global provider is not ready yet (Identity starts
+/// before Blockchain). Callers must not treat "provider down" as "zero identities".
+async fn canonical_identity_projection_count() -> Option<usize> {
+    match crate::runtime::blockchain_provider::get_global_blockchain().await {
+        Ok(bc_arc) => {
+            let bc = bc_arc.read().await;
+            Some(bc.identity_count())
+        }
+        Err(_) => None,
+    }
 }
 
 /// Safe string truncation for display (avoids panic on short strings)
@@ -502,12 +549,7 @@ async fn rebuild_index_from_backup(
 async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
     use std::io::BufReader;
 
-    // Check if migration is enabled
-    let migrate_enabled = std::env::var("ZHTP_MIGRATE_IDENTITIES")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false);
-
-    if !migrate_enabled {
+    if !dht_authority_mutations_enabled() {
         return Ok((0, 0));
     }
 
@@ -837,6 +879,14 @@ async fn bootstrap_identities_from_dht(
 
     info!("📋 Found {} identities in DHT index", identity_ids.len());
 
+    // Fetch chain handle once for the whole warm (exists filter + wallet restore).
+    // Committed projection only — pending mempool registrations must not make a
+    // stale DHT row look chain-backed.
+    let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+        .await
+        .ok();
+    let migrate_wallets = dht_authority_mutations_enabled();
+
     // 2. For each identity, load record and verify
     for identity_id in &identity_ids {
         let id_preview = truncate_for_display(identity_id, 16);
@@ -932,6 +982,20 @@ async fn bootstrap_identities_from_dht(
                         _ => lib_identity::IdentityType::Human,
                     };
 
+                    // When the chain projection is available, only warm the manager
+                    // for DIDs that exist on-chain. Stale local DHT rows must not
+                    // invent IdentityManager entries that diverge from authority.
+                    if let Some(ref bc_arc) = blockchain_arc {
+                        let bc = bc_arc.read().await;
+                        if !bc.identity_committed(did_str) {
+                            debug!(
+                                "Skipping DHT cache warm for {} — not in committed chain identity projection",
+                                id_preview
+                            );
+                            continue;
+                        }
+                    }
+
                     // Register into IdentityManager
                     let mut mgr = identity_manager.write().await;
                     if let Err(e) = mgr.register_external_identity(
@@ -958,117 +1022,112 @@ async fn bootstrap_identities_from_dht(
                             .get("savings_wallet_id")
                             .and_then(|v| v.as_str());
 
-                        // Get blockchain for balance lookup and migration
-                        let blockchain_arc =
-                            crate::runtime::blockchain_provider::get_global_blockchain()
-                                .await
-                                .ok();
+                        // Balance lookup only by default. DHT must not invent
+                        // wallet registration / funding outside opt-in migration
+                        // (#2008 post-confirmation; #2009 cache-only reads).
+                        if migrate_wallets {
+                            if let Some(ref bc_arc) = blockchain_arc {
+                                let mut bc = bc_arc.write().await;
 
-                        // Migrate missing wallets to blockchain (for identities created before fix)
-                        if let Some(ref bc_arc) = blockchain_arc {
-                            let mut bc = bc_arc.write().await;
-
-                            // Migrate primary wallet if missing
-                            if let Some(wid) = primary_wallet_id {
-                                if !bc.wallet_exists(wid) {
-                                    let wallet_bytes = hex::decode(wid).unwrap_or_default();
-                                    if wallet_bytes.len() >= 32 {
-                                        let wallet_data =
-                                            lib_blockchain::transaction::WalletTransactionData {
-                                                wallet_id: lib_blockchain::Hash::from_slice(
-                                                    &wallet_bytes[..32],
-                                                ),
-                                                wallet_type: "Primary".to_string(),
-                                                wallet_name: "Primary Wallet".to_string(),
-                                                alias: Some("primary".to_string()),
-                                                public_key: pk_bytes_for_migration.clone(),
-                                                owner_identity_id: Some(
-                                                    lib_blockchain::Hash::from_slice(
-                                                        &identity_hash.0,
+                                // Enqueue-only (#1989): no embedded balance / UTXO mint.
+                                if let Some(wid) = primary_wallet_id {
+                                    if !bc.wallet_exists(wid) {
+                                        let wallet_bytes = hex::decode(wid).unwrap_or_default();
+                                        if wallet_bytes.len() >= 32 {
+                                            let wallet_data =
+                                                lib_blockchain::transaction::WalletTransactionData {
+                                                    wallet_id: lib_blockchain::Hash::from_slice(
+                                                        &wallet_bytes[..32],
                                                     ),
-                                                ),
-                                                seed_commitment:
-                                                    lib_blockchain::types::hash::blake3_hash(
-                                                        b"migrated_wallet",
+                                                    wallet_type: "Primary".to_string(),
+                                                    wallet_name: "Primary Wallet".to_string(),
+                                                    alias: Some("primary".to_string()),
+                                                    public_key: pk_bytes_for_migration.clone(),
+                                                    owner_identity_id: Some(
+                                                        lib_blockchain::Hash::from_slice(
+                                                            &identity_hash.0,
+                                                        ),
                                                     ),
-                                                created_at,
-                                                registration_fee: 0,
-                                                capabilities: 0xFF,
-                                                // Enqueue-only (#1989): no embedded balance / UTXO mint.
-                                                initial_balance: 0,
-                                            };
-                                        if bc.register_wallet(wallet_data).is_ok() {
-                                            info!(
-                                                "💰 MIGRATED primary wallet {} queued (0 SOV; TokenMint required for funding)",
-                                                &wid[..16.min(wid.len())]
-                                            );
+                                                    seed_commitment:
+                                                        lib_blockchain::types::hash::blake3_hash(
+                                                            b"migrated_wallet",
+                                                        ),
+                                                    created_at,
+                                                    registration_fee: 0,
+                                                    capabilities: 0xFF,
+                                                    initial_balance: 0,
+                                                };
+                                            if bc.register_wallet(wallet_data).is_ok() {
+                                                info!(
+                                                    "💰 MIGRATED primary wallet {} queued (0 SOV; TokenMint required for funding)",
+                                                    &wid[..16.min(wid.len())]
+                                                );
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // Migrate UBI wallet if missing
-                            if let Some(wid) = ubi_wallet_id {
-                                if !bc.wallet_exists(wid) {
-                                    let wallet_bytes = hex::decode(wid).unwrap_or_default();
-                                    if wallet_bytes.len() >= 32 {
-                                        let wallet_data =
-                                            lib_blockchain::transaction::WalletTransactionData {
-                                                wallet_id: lib_blockchain::Hash::from_slice(
-                                                    &wallet_bytes[..32],
-                                                ),
-                                                wallet_type: "UBI".to_string(),
-                                                wallet_name: "UBI Wallet".to_string(),
-                                                alias: Some("ubi".to_string()),
-                                                public_key: pk_bytes_for_migration.clone(),
-                                                owner_identity_id: Some(
-                                                    lib_blockchain::Hash::from_slice(
-                                                        &identity_hash.0,
+                                if let Some(wid) = ubi_wallet_id {
+                                    if !bc.wallet_exists(wid) {
+                                        let wallet_bytes = hex::decode(wid).unwrap_or_default();
+                                        if wallet_bytes.len() >= 32 {
+                                            let wallet_data =
+                                                lib_blockchain::transaction::WalletTransactionData {
+                                                    wallet_id: lib_blockchain::Hash::from_slice(
+                                                        &wallet_bytes[..32],
                                                     ),
-                                                ),
-                                                seed_commitment:
-                                                    lib_blockchain::types::hash::blake3_hash(
-                                                        b"migrated_wallet",
+                                                    wallet_type: "UBI".to_string(),
+                                                    wallet_name: "UBI Wallet".to_string(),
+                                                    alias: Some("ubi".to_string()),
+                                                    public_key: pk_bytes_for_migration.clone(),
+                                                    owner_identity_id: Some(
+                                                        lib_blockchain::Hash::from_slice(
+                                                            &identity_hash.0,
+                                                        ),
                                                     ),
-                                                created_at,
-                                                registration_fee: 0,
-                                                capabilities: 0x01,
-                                                initial_balance: 0,
-                                            };
-                                        let _ = bc.register_wallet(wallet_data);
+                                                    seed_commitment:
+                                                        lib_blockchain::types::hash::blake3_hash(
+                                                            b"migrated_wallet",
+                                                        ),
+                                                    created_at,
+                                                    registration_fee: 0,
+                                                    capabilities: 0x01,
+                                                    initial_balance: 0,
+                                                };
+                                            let _ = bc.register_wallet(wallet_data);
+                                        }
                                     }
                                 }
-                            }
 
-                            // Migrate savings wallet if missing
-                            if let Some(wid) = savings_wallet_id {
-                                if !bc.wallet_exists(wid) {
-                                    let wallet_bytes = hex::decode(wid).unwrap_or_default();
-                                    if wallet_bytes.len() >= 32 {
-                                        let wallet_data =
-                                            lib_blockchain::transaction::WalletTransactionData {
-                                                wallet_id: lib_blockchain::Hash::from_slice(
-                                                    &wallet_bytes[..32],
-                                                ),
-                                                wallet_type: "Savings".to_string(),
-                                                wallet_name: "Savings Wallet".to_string(),
-                                                alias: Some("savings".to_string()),
-                                                public_key: pk_bytes_for_migration.clone(),
-                                                owner_identity_id: Some(
-                                                    lib_blockchain::Hash::from_slice(
-                                                        &identity_hash.0,
+                                if let Some(wid) = savings_wallet_id {
+                                    if !bc.wallet_exists(wid) {
+                                        let wallet_bytes = hex::decode(wid).unwrap_or_default();
+                                        if wallet_bytes.len() >= 32 {
+                                            let wallet_data =
+                                                lib_blockchain::transaction::WalletTransactionData {
+                                                    wallet_id: lib_blockchain::Hash::from_slice(
+                                                        &wallet_bytes[..32],
                                                     ),
-                                                ),
-                                                seed_commitment:
-                                                    lib_blockchain::types::hash::blake3_hash(
-                                                        b"migrated_wallet",
+                                                    wallet_type: "Savings".to_string(),
+                                                    wallet_name: "Savings Wallet".to_string(),
+                                                    alias: Some("savings".to_string()),
+                                                    public_key: pk_bytes_for_migration.clone(),
+                                                    owner_identity_id: Some(
+                                                        lib_blockchain::Hash::from_slice(
+                                                            &identity_hash.0,
+                                                        ),
                                                     ),
-                                                created_at,
-                                                registration_fee: 0,
-                                                capabilities: 0x02,
-                                                initial_balance: 0,
-                                            };
-                                        let _ = bc.register_wallet(wallet_data);
+                                                    seed_commitment:
+                                                        lib_blockchain::types::hash::blake3_hash(
+                                                            b"migrated_wallet",
+                                                        ),
+                                                    created_at,
+                                                    registration_fee: 0,
+                                                    capabilities: 0x02,
+                                                    initial_balance: 0,
+                                                };
+                                            let _ = bc.register_wallet(wallet_data);
+                                        }
                                     }
                                 }
                             }
@@ -1249,6 +1308,31 @@ mod tests {
     use super::*;
     use lib_blockchain::transaction::{IdentityTransactionData, WalletTransactionData};
     use lib_blockchain::Hash;
+    use std::sync::{Mutex, OnceLock};
+
+    fn migrate_env_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn dht_authority_mutations_default_off() {
+        // Default: no env → cache warm only, no register_wallet / mint from DHT.
+        // Serialise env mutation: parallel tests may also read/write this var.
+        let _guard = migrate_env_test_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var_os("ZHTP_MIGRATE_IDENTITIES");
+        std::env::remove_var("ZHTP_MIGRATE_IDENTITIES");
+        assert!(
+            !dht_authority_mutations_enabled(),
+            "DHT must not mutate chain authority without ZHTP_MIGRATE_IDENTITIES"
+        );
+        match previous {
+            Some(v) => std::env::set_var("ZHTP_MIGRATE_IDENTITIES", v),
+            None => std::env::remove_var("ZHTP_MIGRATE_IDENTITIES"),
+        }
+    }
 
     #[test]
     fn reconstruct_identity_manager_from_blockchain_state_restores_wallets() {
