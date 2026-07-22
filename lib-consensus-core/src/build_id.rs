@@ -20,9 +20,10 @@
 /// - Consensus admission rules change in a way that requires homogeneous binaries
 ///
 /// Do **not** bump for docs-only, CLI-only, or unrelated crate changes.
-// Epoch 6: RewardClaim mempool gates (UnregisteredSender fix + spend-delegate
-// admission). Homogeneous cluster required so nodes agree on mempool admits.
-pub const CONSENSUS_BUILD_ID: &str = "6";
+// Epoch 7: ZHTP-AUTH Phase 2+4 (#2924/#2925) — identity projection rebuild,
+// RewardClaim soft-drop, DHT cache-only warm, chain-first PoUW, ownership_proof
+// verify. Homogeneous cluster required for mempool/apply parity.
+pub const CONSENSUS_BUILD_ID: &str = "7";
 
 /// Marker assigned when decoding codec v1 frames (no epoch field on wire).
 pub const LEGACY_BUILD_ID: &str = "";
