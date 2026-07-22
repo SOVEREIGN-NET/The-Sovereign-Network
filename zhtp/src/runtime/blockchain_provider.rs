@@ -48,6 +48,12 @@ impl BlockchainProvider {
         Ok(())
     }
 
+    /// Drop the blockchain instance (tests that need a deterministic "chain down" path).
+    #[cfg(test)]
+    pub async fn clear_blockchain_for_tests(&self) {
+        *self.blockchain.write().await = None;
+    }
+
     /// Refresh the sync council cache from live `blockchain.council_members`.
     ///
     /// Council membership is in-memory only (not sled-persisted). A
@@ -554,6 +560,14 @@ pub fn initialize_global_blockchain_provider() -> &'static BlockchainProvider {
 /// Get the global blockchain provider
 pub fn get_global_blockchain_provider() -> Option<&'static BlockchainProvider> {
     GLOBAL_BLOCKCHAIN_PROVIDER.get()
+}
+
+/// Clear the global blockchain instance (unit tests only).
+#[cfg(test)]
+pub async fn clear_global_blockchain_for_tests() {
+    if let Some(provider) = get_global_blockchain_provider() {
+        provider.clear_blockchain_for_tests().await;
+    }
 }
 
 /// Set the global blockchain instance
