@@ -458,7 +458,15 @@ impl RewardsHandler {
 
         let bc = self.blockchain.read().await;
 
-        let welcome_available = !bc.reward_welcome_claimed(&token_id, did);
+        // Settlement requires a hot treasury keystore AND either a rewards
+        // module or legacy token contract. Do not advertise claimable events
+        // when plan_reward_claim / apply would fail closed.
+        let claims_settleable = self.treasury.is_some()
+            && (bc.get_rewards_module_state(&token_id).is_some()
+                || bc.get_token_contract(&token_id).is_some());
+
+        let welcome_available =
+            claims_settleable && !bc.reward_welcome_claimed(&token_id, did);
         let checkin_done =
             bc.reward_daily_claimed(&token_id, &date, did, RewardEventKind::DailyCheckin);
         let streak = bc.reward_streak(&token_id, did);
@@ -497,13 +505,13 @@ impl RewardsHandler {
                     "amount_display": (welcome_amount / ATOM_18).to_string(),
                 },
                 "daily_checkin": {
-                    "available": !checkin_done,
+                    "available": claims_settleable && !checkin_done,
                     "amount_display": (checkin_amount / ATOM_18).to_string(),
                     "next_streak_day": next_streak,
                     "next_eligible_at": if checkin_done { Some(next_midnight) } else { None },
                 },
                 "active_session": {
-                    "available": !session_done,
+                    "available": claims_settleable && !session_done,
                     "amount_display": (session_amount / ATOM_18).to_string(),
                     "next_eligible_at": if session_done { Some(next_midnight) } else { None },
                 },

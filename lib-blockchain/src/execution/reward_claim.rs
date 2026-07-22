@@ -96,17 +96,11 @@ pub fn apply_reward_claim(
 
     let token = TokenId::new(data.token_id);
 
-    let contract = match mutator.get_token_contract(&token)? {
-        Some(c) => c,
-        None => {
-            warn!(
-                "RewardClaim rejected at height {}: token contract not found",
-                block_height
-            );
-            return reject_claim("token contract not found");
-        }
-    };
-
+    // Authorization:
+    // - Rewards-module assets (pure AssetLaunch): require spend-delegate match.
+    //   These have no `token_contracts` row; balances live in sled alone and
+    //   `apply_token_transfer` does not need a contract object.
+    // - Legacy TokenContract path: require token_contracts row + creator signer.
     if let Some(rewards_state) = mutator.get_rewards_module_state(&data.token_id)? {
         if data.from != rewards_state.spend_delegate_key_id {
             warn!(
@@ -118,12 +112,24 @@ pub fn apply_reward_claim(
             );
             return reject_claim("signer is not on-chain spend delegate");
         }
-    } else if contract.creator.key_id != data.from {
-        warn!(
-            "RewardClaim rejected at height {}: signer is not token creator (legacy path)",
-            block_height
-        );
-        return reject_claim("signer is not authorized token creator");
+    } else {
+        let contract = match mutator.get_token_contract(&token)? {
+            Some(c) => c,
+            None => {
+                warn!(
+                    "RewardClaim rejected at height {}: token contract not found",
+                    block_height
+                );
+                return reject_claim("token contract not found");
+            }
+        };
+        if contract.creator.key_id != data.from {
+            warn!(
+                "RewardClaim rejected at height {}: signer is not token creator (legacy path)",
+                block_height
+            );
+            return reject_claim("signer is not authorized token creator");
+        }
     }
 
     // Day/week bucketing rejects chrono-unrepresentable timestamps. On the apply

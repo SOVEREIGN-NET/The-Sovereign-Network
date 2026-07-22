@@ -115,10 +115,10 @@ fn recipient_key_id_mismatch_rejected_from_mempool() {
 }
 
 #[test]
-fn rewards_module_without_token_contract_rejected_from_mempool() {
-    // GENESIS-3 H=1920 halt: pure AssetLaunch writes rewards_module_state but
-    // no token_contracts row. Old mempool order checked rewards_module first and
-    // admitted the claim; apply then failed and halted consensus after BFT.
+fn rewards_module_without_token_contract_admitted_to_mempool() {
+    // Pure AssetLaunch writes rewards_module_state without a token_contracts
+    // row. Apply authorizes via spend-delegate + balance transfer (no contract
+    // object needed), so mempool must admit matching claims.
     let actors = RewardClaimActors::generate();
     let mut blockchain = mempool_blockchain_rewards_module_without_token_contract(&actors);
 
@@ -131,18 +131,10 @@ fn rewards_module_without_token_contract_rejected_from_mempool() {
         "fixture must omit token_contracts row"
     );
 
-    let err = blockchain
+    blockchain
         .add_pending_transaction(welcome_claim_tx(&actors, 0))
-        .expect_err("RewardClaim without token contract must not enter mempool");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("verification failed") || msg.contains("Invalid"),
-        "expected mempool rejection for missing token contract, got: {msg}"
-    );
-    assert!(
-        blockchain.get_pending_transactions().is_empty(),
-        "unapplyable RewardClaim must not enter mempool"
-    );
+        .expect("RewardClaim with rewards module + spend delegate must enter mempool");
+    assert_eq!(blockchain.get_pending_transactions().len(), 1);
 }
 
 #[test]

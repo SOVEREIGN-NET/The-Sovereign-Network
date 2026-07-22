@@ -125,7 +125,7 @@ fn install_bubl_mempool_fixtures(blockchain: &mut Blockchain, actors: &RewardCla
 }
 
 /// Identities + rewards-module state for `token_id`, but **no** `token_contracts`
-/// row — mirrors pure AssetLaunch (discoverable rewards, un-applyable claims).
+/// row — mirrors pure AssetLaunch (discoverable rewards, applyable via module).
 pub fn mempool_blockchain_rewards_module_without_token_contract(
     actors: &RewardClaimActors,
 ) -> Blockchain {

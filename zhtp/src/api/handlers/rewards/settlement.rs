@@ -105,10 +105,12 @@ pub fn plan_reward_claim(
         Ok(false) => return Err("owner_did_not_registered".into()),
         Err(_) => return Err("owner_did_not_registered".into()),
     }
-    // Apply requires a token_contracts row; rewards-module state alone is not
-    // enough (pure AssetLaunch). Fail closed here so the API never signs a claim
-    // that would pass mempool and halt consensus on block apply.
-    if bc.get_token_contract(token_id).is_none() {
+    // Apply accepts either a rewards-module asset (AssetLaunch / pure sovereign
+    // asset — no token_contracts row) or a legacy TokenContract. Fail closed
+    // only when neither is present so we never sign an un-applyable claim.
+    let has_rewards_module = bc.get_rewards_module_state(token_id).is_some();
+    let has_token_contract = bc.get_token_contract(token_id).is_some();
+    if !has_rewards_module && !has_token_contract {
         return Err("token_contract_not_found".into());
     }
     let ts = claim_unix_ts();
