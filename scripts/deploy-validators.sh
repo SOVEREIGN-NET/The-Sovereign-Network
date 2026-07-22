@@ -151,9 +151,15 @@ if [[ $DRY_RUN -eq 0 ]]; then
             fail "mixed build_id cluster detected — halt manually and redeploy all validators together"
         fi
         BASELINE_ID=$(printf '%s\n' "${PREFLIGHT_IDS[@]}" | head -1 | cut -d: -f2)
+        # Same consensus epoch can still need a binary refresh (bugfix /
+        # feature builds that do not bump epoch). Compare remote md5.
         if [[ -n "$BASELINE_ID" && "$BASELINE_ID" == "$LOCAL_BUILD_ID" ]]; then
-            ok "cluster already on target build_id $LOCAL_BUILD_ID — nothing to deploy"
-            exit 0
+            REMOTE_MD5_SAMPLE=$(ssh "zhtp-g1" "md5sum $REMOTE_BIN 2>/dev/null | awk '{print \$1}'" 2>/dev/null || true)
+            if [[ -n "$REMOTE_MD5_SAMPLE" && "$REMOTE_MD5_SAMPLE" == "$LOCAL_MD5" ]]; then
+                ok "cluster already on target build_id $LOCAL_BUILD_ID and md5 $LOCAL_MD5 — nothing to deploy"
+                exit 0
+            fi
+            log "build_id matches ($LOCAL_BUILD_ID) but binary md5 differs (remote=${REMOTE_MD5_SAMPLE:-?}, local=$LOCAL_MD5) — same-epoch binary deploy"
         fi
         ok "pre-flight: homogeneous cluster (build_id=${BASELINE_ID:-unknown}), proceeding with upgrade to $LOCAL_BUILD_ID"
     else
