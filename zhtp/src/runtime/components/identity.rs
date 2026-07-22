@@ -966,6 +966,22 @@ async fn bootstrap_identities_from_dht(
                         _ => lib_identity::IdentityType::Human,
                     };
 
+                    // When the chain projection is available, only warm the manager
+                    // for DIDs that exist on-chain. Stale local DHT rows must not
+                    // invent IdentityManager entries that diverge from authority.
+                    if let Ok(bc_arc) =
+                        crate::runtime::blockchain_provider::get_global_blockchain().await
+                    {
+                        let bc = bc_arc.read().await;
+                        if !bc.identity_exists(did_str) {
+                            debug!(
+                                "Skipping DHT cache warm for {} — not in chain identity projection",
+                                id_preview
+                            );
+                            continue;
+                        }
+                    }
+
                     // Register into IdentityManager
                     let mut mgr = identity_manager.write().await;
                     if let Err(e) = mgr.register_external_identity(

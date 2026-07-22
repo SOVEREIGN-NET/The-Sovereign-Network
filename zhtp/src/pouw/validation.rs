@@ -551,18 +551,21 @@ impl ReceiptValidator {
             return Ok(()); // Age check disabled
         };
 
-        let mgr = self.identity_manager.read().await;
-        let identity = mgr
-            .get_identity_by_did(client_did)
-            .ok_or(RejectionReason::ClientInvalid)?;
+        let view = crate::runtime::resolve_pouw_client_identity(
+            client_did,
+            &self.identity_manager,
+        )
+        .await
+        .map_err(|_| RejectionReason::ClientInvalid)?;
 
         let now = self.now_secs();
-        let age_secs = now.saturating_sub(identity.created_at);
+        let age_secs = now.saturating_sub(view.created_at);
         if age_secs < min_age {
             warn!(
                 client = %client_did,
                 age_secs = age_secs,
                 min_age_secs = min_age,
+                source = ?view.source,
                 "Receipt rejected: identity too new for reward eligibility"
             );
             return Err(RejectionReason::ClientInvalid);
@@ -616,13 +619,15 @@ impl ReceiptValidator {
         bincode::serialize(receipt).context("Failed to serialize receipt")
     }
 
-    /// Get client's Dilithium5 public key from DID
+    /// Get client's Dilithium5 public key from DID (chain-first).
     async fn get_client_pubkey_dilithium(&self, client_did: &str) -> Result<Vec<u8>> {
-        let mgr = self.identity_manager.read().await;
-        let identity = mgr
-            .get_identity_by_did(client_did)
-            .ok_or_else(|| anyhow::anyhow!("DID not registered: {}", client_did))?;
-        Ok(identity.public_key.dilithium_pk.to_vec())
+        let view = crate::runtime::resolve_pouw_client_identity(
+            client_did,
+            &self.identity_manager,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(view.dilithium_pk)
     }
 
     /// Parse Web4 context fields from receipt aux JSON

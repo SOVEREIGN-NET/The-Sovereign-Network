@@ -69,6 +69,7 @@ pub mod components;
 pub mod dht_indexing;
 pub mod did_startup;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
+pub mod chain_identity_resolve;
 pub mod identity_manager_provider;
 pub mod manifest_pin_bridge;
 pub mod mesh_router_provider;
@@ -98,6 +99,9 @@ pub use blockchain_provider::{
     set_global_catchup_trigger, trigger_global_catchup,
 };
 pub use components::*;
+pub use chain_identity_resolve::{
+    resolve_pouw_client_identity, PouwClientIdentity, PouwIdentitySource,
+};
 pub use identity_manager_provider::{
     get_global_identity_manager, initialize_global_identity_manager_provider,
     set_global_identity_manager,
