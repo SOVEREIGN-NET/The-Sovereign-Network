@@ -148,6 +148,16 @@ pub enum TxApplyError {
     #[error("Replay nonce dropped: expected {expected}, got {actual} (replay protection)")]
     ReplayDropped { expected: u64, actual: u64 },
 
+    /// RewardClaim ineligible or invalid at apply height. Soft-dropped like
+    /// [`Self::ReplayDropped`]: skip the tx, keep the block valid.
+    ///
+    /// Stateful eligibility (welcome/daily/partner already claimed, tip moved)
+    /// cannot be closed by mempool mirroring alone — admission and apply see
+    /// different heights. Fatal apply would halt consensus after BFT finality
+    /// (GENESIS-3 class). Mempool checks remain best-effort early reject.
+    #[error("RewardClaim dropped at apply: {0}")]
+    RewardClaimDropped(String),
+
     #[error("Account not found: {0}")]
     AccountNotFound(Address),
 

@@ -949,9 +949,37 @@ impl BlockExecutor {
             }
 
             // apply_tx (writes)
-            let tx_result = self
-                .apply_tx(&mutator, tx, block_height, block_timestamp)
-                .map_err(|e| BlockApplyError::TxFailed { index, reason: e })?;
+            // Soft-drop RewardClaim ineligibility / nonce-replay races so a
+            // finalized block never halts on apply rejects that mempool cannot
+            // fully prevent (stateful eligibility at different heights).
+            let tx_result = match self.apply_tx(&mutator, tx, block_height, block_timestamp) {
+                Ok(outcome) => outcome,
+                Err(TxApplyError::ReplayDropped {
+                    expected,
+                    actual,
+                }) => {
+                    tracing::warn!(
+                        index = index,
+                        height = block_height,
+                        expected_nonce = expected,
+                        actual_nonce = actual,
+                        "dropping replay tx during apply_tx (soft drop)"
+                    );
+                    continue;
+                }
+                Err(TxApplyError::RewardClaimDropped(reason)) => {
+                    tracing::warn!(
+                        index = index,
+                        height = block_height,
+                        reason = %reason,
+                        "RewardClaim dropped during apply (soft drop; block continues)"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    return Err(BlockApplyError::TxFailed { index, reason: e });
+                }
+            };
 
             // Accumulate results
             match tx_result {
@@ -3548,9 +3576,13 @@ impl BlockExecutor {
                     block_timestamp,
                     &fee_sink,
                 )?;
-                Ok(TxOutcome::TokenTransfer(
-                    outcome.expect("apply_reward_claim returns Err on ineligibility"),
-                ))
+                // Ineligibility returns Err(RewardClaimDropped) → soft-dropped
+                // in the apply loop. Ok(None) is not used for rejects.
+                Ok(TxOutcome::TokenTransfer(outcome.ok_or_else(|| {
+                    TxApplyError::RewardClaimDropped(
+                        "apply_reward_claim returned Ok(None)".to_string(),
+                    )
+                })?))
             }
             TransactionType::TokenMint => {
                 let mint_data = tx.token_mint_data().ok_or_else(|| {

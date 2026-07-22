@@ -2554,18 +2554,35 @@ impl<'a> StatefulTransactionValidator<'a> {
             tracing::debug!("[BREADCRUMB] validate_zk_proofs OK");
         }
 
-        // RewardClaim: must match apply (`reward_claim::apply_reward_claim`) so a
-        // claim that cannot execute never enters the mempool or a BFT proposal.
-        // Order is intentional and identical to apply:
-        //   1) owner_did registered in sled
-        //   2) token_contract MUST exist (rewards-module alone is not enough —
-        //      AssetLaunch can write rewards state without a token_contracts row;
-        //      admitting such claims caused the GENESIS-3 H=1920 halt)
-        //   3) spend-delegate (if rewards module) else legacy token-creator
+        // RewardClaim mempool filter (best-effort early reject).
+        // Stateless / tip-stable checks mirror apply. Stateful eligibility
+        // (welcome/daily/partner already claimed) can race tip vs apply height
+        // and is soft-dropped at apply (`TxApplyError::RewardClaimDropped`)
+        // so unmirrored rejects cannot halt consensus after BFT finality.
+        //
+        // Order for tip-stable checks (matches apply):
+        //   0) amount > 0
+        //   1) recipient_key_id == key_id_from_did(owner_did)
+        //   2) owner_did registered in sled
+        //   3) token_contract exists (GENESIS-3 H=1920: rewards-module alone
+        //      is not enough — pure AssetLaunch has no token_contracts row)
+        //   4) spend-delegate (if rewards module) else legacy token-creator
         if transaction.transaction_type == TransactionType::RewardClaim {
             let data = transaction
                 .reward_claim_data()
                 .ok_or(ValidationError::MissingRequiredData)?;
+            if data.amount == 0 {
+                tracing::warn!("[REWARD_CLAIM] amount must be greater than 0");
+                return Err(ValidationError::InvalidTransaction);
+            }
+            if crate::transaction::reward_claim::key_id_from_did(&data.owner_did)
+                != Some(data.recipient_key_id)
+            {
+                tracing::warn!(
+                    "[REWARD_CLAIM] recipient_key_id does not match owner_did"
+                );
+                return Err(ValidationError::InvalidTransaction);
+            }
             let blockchain = self
                 .blockchain
                 .ok_or(ValidationError::InvalidTransaction)?;
@@ -2582,10 +2599,6 @@ impl<'a> StatefulTransactionValidator<'a> {
                 );
                 return Err(ValidationError::InvalidTransaction);
             }
-            // Apply hard-requires token_contract first. Checking rewards_module
-            // before contract previously admitted pure-AssetLaunch BUBL claims
-            // that then failed apply with "token contract not found" and halted
-            // consensus after BFT finality.
             let Some(contract) = blockchain.get_token_contract(&data.token_id) else {
                 tracing::warn!(
                     "[REWARD_CLAIM] token contract not found for claim token_id={}",

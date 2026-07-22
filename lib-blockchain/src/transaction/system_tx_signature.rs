@@ -134,10 +134,25 @@ pub fn allows_empty_system_signature(transaction: &Transaction) -> bool {
             let expected_did = format!("did:zhtp:{}", hex::encode(key_id.as_bytes()));
             data.did == expected_did
         }
-        TransactionType::WalletRegistration => transaction
-            .wallet_data()
-            .map(|w| w.initial_balance == 0)
-            .unwrap_or(false),
+        TransactionType::WalletRegistration => {
+            // Zero-balance auto wallets only. Bind wallet_id + tx.signature.pk
+            // to the payload public key so an empty signature cannot admit a
+            // forged WalletRegistration with arbitrary wallet_id (Copilot #2924).
+            let Some(w) = transaction.wallet_data() else {
+                return false;
+            };
+            if w.initial_balance != 0 || w.public_key.len() != 2592 {
+                return false;
+            }
+            let Ok(wallet_pk): Result<[u8; 2592], _> = w.public_key.as_slice().try_into() else {
+                return false;
+            };
+            if transaction.signature.public_key.dilithium_pk != wallet_pk {
+                return false;
+            }
+            let key_id = crate::types::hash::blake3_hash(wallet_pk.as_slice());
+            w.wallet_id.as_bytes() == key_id.as_bytes()
+        }
         _ => false,
     }
 }
@@ -228,5 +243,61 @@ mod tests {
         );
         assert!(allows_empty_system_signature(&tx));
         assert!(requires_system_tx_signature(&tx));
+    }
+
+    #[test]
+    fn wallet_registration_empty_sig_requires_wallet_id_pk_binding() {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::core::WalletTransactionData;
+        use crate::types::Hash;
+
+        let dilithium_pk = [0xCDu8; 2592];
+        let key_id = crate::types::hash::blake3_hash(&dilithium_pk);
+        let good = WalletTransactionData {
+            wallet_id: key_id,
+            wallet_type: "Primary".to_string(),
+            wallet_name: "p".to_string(),
+            alias: None,
+            public_key: dilithium_pk.to_vec(),
+            owner_identity_id: None,
+            seed_commitment: Hash::default(),
+            created_at: 1,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+        let good_tx = Transaction::new_wallet_registration(
+            good,
+            vec![],
+            Signature {
+                signature: Vec::new(),
+                public_key: PublicKey::new(dilithium_pk),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 1,
+            },
+            b"wallet-reg".to_vec(),
+        );
+        assert!(allows_empty_system_signature(&good_tx));
+
+        let mut forged = good_tx.clone();
+        if let Some(w) = forged.wallet_data().cloned() {
+            let mut bad = w;
+            bad.wallet_id = Hash::new([0x11; 32]);
+            forged = Transaction::new_wallet_registration(
+                bad,
+                vec![],
+                Signature {
+                    signature: Vec::new(),
+                    public_key: PublicKey::new(dilithium_pk),
+                    algorithm: SignatureAlgorithm::DEFAULT,
+                    timestamp: 1,
+                },
+                b"wallet-reg".to_vec(),
+            );
+        }
+        assert!(
+            !allows_empty_system_signature(&forged),
+            "empty sig must not allow wallet_id unbound from public_key"
+        );
     }
 }
