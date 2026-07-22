@@ -1592,6 +1592,14 @@ pub enum DomainAction {
         #[arg(short, long)]
         metadata: Option<String>,
 
+        /// Optional sovereign asset id (64-char hex) — DAO-scoped DomainRegistration V3 (Q10 / #2810)
+        #[arg(long)]
+        asset_id: Option<String>,
+
+        /// Chain id for fee payment + domain system tx (default: 2 testnet)
+        #[arg(long, default_value = "2", env = "ZHTP_CHAIN_ID")]
+        chain_id: u8,
+
         /// Path to identity keystore directory
         #[arg(short, long)]
         keystore: Option<String>,
@@ -1977,6 +1985,14 @@ pub struct AssetArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum AssetAction {
+    /// List sovereign assets (`GET /api/v1/assets`)
+    List,
+    /// Fetch one sovereign asset (`GET /api/v1/assets/{id}`)
+    Get {
+        /// Sovereign asset id (64-char hex)
+        #[arg(long)]
+        asset_id: String,
+    },
     /// Rewards spend-delegate operations
     Rewards(AssetRewardsArgs),
 }
@@ -1989,7 +2005,7 @@ pub struct AssetRewardsArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum AssetRewardsAction {
-    /// Rotate rewards spend delegate to a new keystore (creator authority / pre-handoff)
+    /// Rotate rewards spend delegate to a new keystore (creator or governance authority)
     RotateDelegate {
         /// Sovereign asset id (64-char hex, launch tx hash)
         #[arg(long)]
@@ -1997,11 +2013,20 @@ pub enum AssetRewardsAction {
         /// Keystore directory for the new spend delegate
         #[arg(long)]
         new_keystore: String,
-        /// Creator keystore directory (default: ~/.zhtp/keystore)
+        /// Signer keystore directory (creator pre-handoff, or governance signer post-handoff)
         #[arg(long)]
         keystore: Option<String>,
-        /// Chain id byte for signed tx (default: 3 / testnet dev)
-        #[arg(long, default_value = "3", env = "ZHTP_CHAIN_ID")]
+        /// Post-handoff: attach GovernanceProof (multisig over delegate-rotate message hash)
+        #[arg(long)]
+        governance: bool,
+        /// Extra governance approvals as `<key_id_hex>:<dilithium_sig_hex>` (repeatable)
+        #[arg(long = "approval", value_name = "KEY_ID_HEX:SIG_HEX")]
+        approvals: Vec<String>,
+        /// Multisig threshold when `--governance` (default 1 = single governance signer)
+        #[arg(long, default_value = "1")]
+        threshold: u8,
+        /// Chain id byte for signed tx (default: 2 testnet)
+        #[arg(long, default_value = "2", env = "ZHTP_CHAIN_ID")]
         chain_id: u8,
     },
     /// Fund the rewards delegate via TokenTransfer from creator (token_id = asset_id)
@@ -2018,8 +2043,8 @@ pub enum AssetRewardsAction {
         /// Creator keystore directory (default: ~/.zhtp/keystore)
         #[arg(long)]
         keystore: Option<String>,
-        /// Chain id byte for signed tx (default: 3 / testnet dev)
-        #[arg(long, default_value = "3", env = "ZHTP_CHAIN_ID")]
+        /// Chain id byte for signed tx (default: 2 testnet)
+        #[arg(long, default_value = "2", env = "ZHTP_CHAIN_ID")]
         chain_id: u8,
     },
 }
