@@ -57,6 +57,9 @@ struct AssetListItem {
     total_supply: u128,
     supply_mode: String,
     module_bitmask: u8,
+    /// For-profit (`fp`) or non-profit (`np`) class (Q7).
+    dao_class: String,
+    burn_bps: u16,
     launched_at_height: Option<u64>,
     manifest_cid: Option<String>,
     manifest_hash: Option<String>,
@@ -78,6 +81,9 @@ struct AssetDetailResponse {
     creator_key_id: String,
     creator_did: Option<String>,
     treasury_key_id: Option<String>,
+    /// For-profit (`fp`) or non-profit (`np`) class (Q7).
+    dao_class: String,
+    burn_bps: u16,
     launched_at_height: Option<u64>,
     schema_version: u16,
     module_bitmask: u8,
@@ -92,6 +98,13 @@ struct AssetDetailResponse {
     manifest: Option<serde_json::Value>,
     dao_registry: Option<serde_json::Value>,
     governance_status: serde_json::Value,
+}
+
+fn dao_class_label(c: lib_blockchain::contracts::sovereign_asset::DaoClass) -> &'static str {
+    match c {
+        lib_blockchain::contracts::sovereign_asset::DaoClass::Fp => "fp",
+        lib_blockchain::contracts::sovereign_asset::DaoClass::Np => "np",
+    }
 }
 
 fn id_source_label(s: AssetIdSource) -> &'static str {
@@ -158,6 +171,8 @@ fn to_list_item(asset: &SovereignAsset) -> AssetListItem {
         total_supply: asset.total_supply,
         supply_mode: supply_mode_label(asset.supply_mode).to_string(),
         module_bitmask: asset.module_bitmask(),
+        dao_class: dao_class_label(asset.dao_class).to_string(),
+        burn_bps: asset.burn_bps,
         launched_at_height: asset.launched_at_height,
         manifest_cid: asset.manifest_cid.map(hex::encode),
         manifest_hash: asset.manifest_hash.map(hex::encode),
@@ -331,6 +346,8 @@ fn to_detail(
         creator_key_id: hex::encode(asset.creator_key_id),
         creator_did: asset.creator_did.clone(),
         treasury_key_id: asset.treasury_key_id.map(hex::encode),
+        dao_class: dao_class_label(asset.dao_class).to_string(),
+        burn_bps: asset.burn_bps,
         launched_at_height: asset.launched_at_height,
         schema_version: asset.schema_version,
         module_bitmask: asset.module_bitmask(),

@@ -96,6 +96,8 @@ async fn handle_domain_command_impl(
             domain,
             duration,
             metadata,
+            asset_id,
+            chain_id,
             keystore,
             trust,
         } => {
@@ -105,12 +107,18 @@ async fn handle_domain_command_impl(
             output.header("Register Domain")?;
             output.print(&format!("Domain: {}", domain))?;
             output.print(&format!("Duration (days): {}", duration))?;
+            if let Some(ref id) = asset_id {
+                output.print(&format!("Bound asset_id: {}", id))?;
+            }
+            output.print(&format!("Chain id: {}", chain_id))?;
 
             // Imperative: Network communication
             register_domain_impl(
                 &domain,
                 duration,
                 metadata.as_ref(),
+                asset_id.as_deref(),
+                chain_id,
                 keystore.as_ref().map(|s| s.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
@@ -263,6 +271,8 @@ async fn register_domain_impl(
     domain: &str,
     duration: u64,
     metadata: Option<&String>,
+    asset_id: Option<&str>,
+    chain_id: u8,
     keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
@@ -282,15 +292,29 @@ async fn register_domain_impl(
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
 
-    // Build the fee_payment_tx: signed TokenTransfer of 10 SOV from Primary wallet to DAO treasury
-    output.info("Building fee payment transaction...")?;
-    let fee_payment_tx_hex = build_domain_fee_payment_tx(&loaded, &client, output).await?;
+    // Build the fee_payment_tx: signed TokenTransfer of 100 SOV (Q10) to protocol treasury
+    output.info("Building fee payment transaction (100 SOV, Q10)...")?;
+    let fee_payment_tx_hex =
+        build_domain_fee_payment_tx(&loaded, &client, chain_id, output).await?;
 
     let metadata_json = match metadata {
         Some(raw) => Some(
             serde_json::from_str::<serde_json::Value>(raw)
                 .map_err(|e| CliError::ConfigError(format!("Invalid metadata JSON: {}", e)))?,
         ),
+        None => None,
+    };
+
+    let asset_id_hex = match asset_id {
+        Some(raw) => {
+            let cleaned = raw.trim().trim_start_matches("0x");
+            if cleaned.len() != 64 || !cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(CliError::ConfigError(
+                    "--asset-id must be 64-char hex (32-byte sovereign asset id)".to_string(),
+                ));
+            }
+            Some(cleaned.to_ascii_lowercase())
+        }
         None => None,
     };
 
@@ -307,15 +331,14 @@ async fn register_domain_impl(
         created_at: loaded.identity.created_at,
     };
 
-    // asset_id_hex: None — plain domain registration (not DAO-scoped V3).
     let body_json = zhtp_client::token_tx::build_domain_register_request_with_fee_payment_and_metadata(
         &identity,
         domain,
         None,
         Some(fee_payment_tx_hex),
         metadata_json,
-        3,
-        None,
+        chain_id,
+        asset_id_hex.as_deref(),
     )
     .map_err(|e| CliError::ConfigError(format!("Failed to build registration request: {}", e)))?;
 
@@ -342,17 +365,19 @@ async fn register_domain_impl(
 
 /// Build a signed SOV fee payment transaction for domain registration.
 ///
-/// Queries the node for the user's Primary wallet and the DAO treasury wallet,
+/// Queries the node for the user's Primary wallet and the protocol treasury wallet,
 /// fetches the current nonce, then builds and returns a hex-encoded signed
-/// TokenTransfer of 10 SOV from Primary wallet to DAO treasury.
+/// TokenTransfer of **100 SOV** (Q10 / `DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS`).
 async fn build_domain_fee_payment_tx(
     loaded: &crate::commands::web4_utils::LoadedIdentity,
     client: &ZhtpClient,
+    chain_id: u8,
     output: &dyn Output,
 ) -> CliResult<String> {
     use lib_blockchain::contracts::utils::generate_lib_token_id;
+    use lib_blockchain::transaction::fee::DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
 
-    let fee_amount_atoms: u128 = 10 * 1_000_000_000_000_000_000u128; // 10 SOV in 18-decimal atoms
+    let fee_amount_atoms: u128 = DEFAULT_DOMAIN_REGISTRATION_FEE_ATOMS;
 
     // 1. Find user's Primary wallet
     let identity_id_hex = hex::encode(loaded.identity.id.0);
@@ -437,20 +462,18 @@ async fn build_domain_fee_payment_tx(
         created_at: loaded.identity.created_at,
     };
 
-    // 5. Build signed SOV transfer: Primary wallet -> DAO treasury, 10 SOV in atoms
+    // 5. Build signed SOV transfer: Primary wallet -> protocol treasury (100 SOV Q10)
     let tx_hex = zhtp_client::token_tx::build_sov_wallet_transfer_tx(
         &identity,
         &primary_wallet_id_bytes,
         &treasury_wallet_id,
         fee_amount_atoms,
-        3, // chain_id = 0x03 (testnet/mainnet)
+        chain_id,
         nonce,
     )
     .map_err(|e| CliError::ConfigError(format!("Failed to build fee payment tx: {}", e)))?;
 
-    output.success(&format!(
-        "Fee payment tx built: 10 SOV transfer"
-    ))?;
+    output.success("Fee payment tx built: 100 SOV transfer (Q10 domain claim fee)")?;
 
     Ok(tx_hex)
 }
@@ -761,6 +784,8 @@ mod tests {
             domain: "test.zhtp".to_string(),
             duration: 365,
             metadata: None,
+            asset_id: None,
+            chain_id: 2,
             keystore: None,
             trust: TrustFlags {
                 pin_spki: None,
