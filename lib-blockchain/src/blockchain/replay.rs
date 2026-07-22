@@ -237,7 +237,9 @@ impl Blockchain {
                     );
                 }
             }
-            let (consensus, metadata) = crate::storage::convert_legacy_identity(data);
+            let height = self.identity_blocks.get(did).copied().unwrap_or(0);
+            let (mut consensus, metadata) = crate::storage::convert_legacy_identity(data);
+            consensus.registered_at_height = height;
             if let Err(e) = store.put_identity_direct(&did_hash, &consensus) {
                 tracing::warn!("backfill: put_identity_direct({}): {}", did, e);
                 continue;
@@ -246,12 +248,84 @@ impl Blockchain {
                 tracing::warn!("backfill: put_identity_metadata_direct({}): {}", did, e);
                 continue;
             }
+            if let Err(e) = store.put_identity_owner_index_direct(&consensus.owner, &did_hash) {
+                tracing::warn!("backfill: put_identity_owner_index_direct({}): {}", did, e);
+                continue;
+            }
             written += 1;
         }
         if written > 0 {
             tracing::info!(
                 "Backfilled {} genesis identities into sled identity store",
                 written
+            );
+        }
+    }
+
+    /// Rebuild sled identity trees from the in-memory registry after
+    /// block-scan replay (#1985 / #1999).
+    ///
+    /// Mirrors wallet `replace_wallet_projections`: when the scan path rebuilt
+    /// `identity_registry` / `identity_blocks` from committed blocks, write the
+    /// full projection (consensus + metadata + owner index) so stale sled rows
+    /// cannot remain implicit authority. Uses direct (non-tx) store APIs only.
+    pub(crate) fn rebuild_identity_projections_from_registry(&self) {
+        let Some(ref store) = self.store else {
+            return;
+        };
+
+        let mut written = 0usize;
+        let mut errors = 0usize;
+        for (did, data) in &self.identity_registry {
+            // Skip revocation tombstones kept under `{did}_revoked` keys.
+            if did.ends_with("_revoked") {
+                continue;
+            }
+            let height = self.identity_blocks.get(did).copied().unwrap_or(0);
+            let did_hash = crate::storage::did_to_hash(did);
+            let (mut consensus, metadata) = crate::storage::convert_legacy_identity(data);
+            consensus.registered_at_height = height;
+
+            if let Err(e) = store.put_identity_direct(&did_hash, &consensus) {
+                tracing::warn!(
+                    target: "legacy_fixup",
+                    path = "rebuild_identity_projections",
+                    did = %did,
+                    "put_identity_direct failed: {e}"
+                );
+                errors += 1;
+                continue;
+            }
+            if let Err(e) = store.put_identity_metadata_direct(&did_hash, &metadata) {
+                tracing::warn!(
+                    target: "legacy_fixup",
+                    path = "rebuild_identity_projections",
+                    did = %did,
+                    "put_identity_metadata_direct failed: {e}"
+                );
+                errors += 1;
+                continue;
+            }
+            if let Err(e) = store.put_identity_owner_index_direct(&consensus.owner, &did_hash) {
+                tracing::warn!(
+                    target: "legacy_fixup",
+                    path = "rebuild_identity_projections",
+                    did = %did,
+                    "put_identity_owner_index_direct failed: {e}"
+                );
+                errors += 1;
+                continue;
+            }
+            written += 1;
+        }
+
+        if written > 0 || errors > 0 {
+            tracing::info!(
+                target: "legacy_fixup",
+                path = "rebuild_identity_projections",
+                identities_written = written,
+                errors,
+                "🔁 Rebuilt identity sled projection from block-scan replay"
             );
         }
     }

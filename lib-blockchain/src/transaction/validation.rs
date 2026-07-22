@@ -9,7 +9,9 @@ use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
 use crate::transaction::mint_authorization::validate_token_mint_authorization;
-use crate::transaction::system_tx_signature::requires_system_tx_signature;
+use crate::transaction::system_tx_signature::{
+    allows_empty_system_signature, requires_system_tx_signature,
+};
 use crate::transaction::asset_tx::{
     AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
     AssetBurnBpsUpdatePayloadV1, AssetRewardsDelegateRotatePayloadV1,
@@ -682,7 +684,8 @@ impl TransactionValidator {
             transaction.transaction_type,
             TransactionType::RecordOnRampTrade | TransactionType::TreasuryAllocation
         );
-        if !is_threshold_only && (require_signature || has_nonempty_sig) {
+        let allow_empty = allows_empty_system_signature(transaction);
+        if !is_threshold_only && !allow_empty && (require_signature || has_nonempty_sig) {
             self.validate_signature(transaction)?;
         }
 
@@ -1004,7 +1007,8 @@ impl TransactionValidator {
             transaction.transaction_type,
             TransactionType::RecordOnRampTrade | TransactionType::TreasuryAllocation
         );
-        if !is_threshold_only_sflag && (require_signature || has_nonempty_sig) {
+        let allow_empty = allows_empty_system_signature(transaction);
+        if !is_threshold_only_sflag && !allow_empty && (require_signature || has_nonempty_sig) {
             self.validate_signature(transaction)?;
         }
 
@@ -2525,6 +2529,9 @@ impl<'a> StatefulTransactionValidator<'a> {
         if is_threshold_type {
             skip_signature = true;
         }
+        if allows_empty_system_signature(transaction) {
+            skip_signature = true;
+        }
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
                 if blockchain.is_applying_genesis_state()
@@ -2547,15 +2554,35 @@ impl<'a> StatefulTransactionValidator<'a> {
             tracing::debug!("[BREADCRUMB] validate_zk_proofs OK");
         }
 
-        // RewardClaim: signer is the spend delegate (system tx), but beneficiary
-        // `owner_did` must exist in durable sled — same oracle as executor apply.
-        // Spend-delegate (or legacy token-creator) authorization must also match
-        // apply (`reward_claim.rs`) so a non-delegate claim is rejected at
-        // mempool admission instead of halting block apply (#2859 class).
+        // RewardClaim mempool filter (best-effort early reject).
+        // Stateless / tip-stable checks mirror apply. Stateful eligibility
+        // (welcome/daily/partner already claimed) can race tip vs apply height
+        // and is soft-dropped at apply (`TxApplyError::RewardClaimDropped`)
+        // so unmirrored rejects cannot halt consensus after BFT finality.
+        //
+        // Order for tip-stable checks (matches apply):
+        //   0) amount > 0
+        //   1) recipient_key_id == key_id_from_did(owner_did)
+        //   2) owner_did registered in sled
+        //   3) token_contract exists (GENESIS-3 H=1920: rewards-module alone
+        //      is not enough — pure AssetLaunch has no token_contracts row)
+        //   4) spend-delegate (if rewards module) else legacy token-creator
         if transaction.transaction_type == TransactionType::RewardClaim {
             let data = transaction
                 .reward_claim_data()
                 .ok_or(ValidationError::MissingRequiredData)?;
+            if data.amount == 0 {
+                tracing::warn!("[REWARD_CLAIM] amount must be greater than 0");
+                return Err(ValidationError::InvalidTransaction);
+            }
+            if crate::transaction::reward_claim::key_id_from_did(&data.owner_did)
+                != Some(data.recipient_key_id)
+            {
+                tracing::warn!(
+                    "[REWARD_CLAIM] recipient_key_id does not match owner_did"
+                );
+                return Err(ValidationError::InvalidTransaction);
+            }
             let blockchain = self
                 .blockchain
                 .ok_or(ValidationError::InvalidTransaction)?;
@@ -2572,6 +2599,13 @@ impl<'a> StatefulTransactionValidator<'a> {
                 );
                 return Err(ValidationError::InvalidTransaction);
             }
+            let Some(contract) = blockchain.get_token_contract(&data.token_id) else {
+                tracing::warn!(
+                    "[REWARD_CLAIM] token contract not found for claim token_id={}",
+                    hex::encode(data.token_id)
+                );
+                return Err(ValidationError::InvalidTransaction);
+            };
             if let Some(rewards_state) = blockchain.get_rewards_module_state(&data.token_id) {
                 if data.from != rewards_state.spend_delegate_key_id {
                     tracing::warn!(
@@ -2581,21 +2615,13 @@ impl<'a> StatefulTransactionValidator<'a> {
                     );
                     return Err(ValidationError::Unauthorized);
                 }
-            } else if let Some(contract) = blockchain.get_token_contract(&data.token_id) {
-                if contract.creator.key_id != data.from {
-                    tracing::warn!(
-                        "[REWARD_CLAIM] signer is not token creator (legacy path): from={} creator={}",
-                        hex::encode(data.from),
-                        hex::encode(contract.creator.key_id)
-                    );
-                    return Err(ValidationError::Unauthorized);
-                }
-            } else {
+            } else if contract.creator.key_id != data.from {
                 tracing::warn!(
-                    "[REWARD_CLAIM] token contract not found for claim token_id={}",
-                    hex::encode(data.token_id)
+                    "[REWARD_CLAIM] signer is not token creator (legacy path): from={} creator={}",
+                    hex::encode(data.from),
+                    hex::encode(contract.creator.key_id)
                 );
-                return Err(ValidationError::InvalidTransaction);
+                return Err(ValidationError::Unauthorized);
             }
             return Ok(());
         }

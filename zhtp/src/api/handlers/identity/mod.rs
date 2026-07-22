@@ -1954,6 +1954,15 @@ impl IdentityHandler {
 
             /// Timestamp when signature was created (Unix seconds)
             timestamp: u64,
+
+            /// When true, hold the response until the identity is committed
+            /// (or timeout). Default false → immediate `status: "queued"`.
+            #[serde(default)]
+            wait_for_inclusion: bool,
+
+            /// Max seconds to wait when `wait_for_inclusion` is true (default 30, max 120).
+            #[serde(default)]
+            wait_timeout_secs: Option<u64>,
         }
 
         fn default_identity_type() -> String {
@@ -2168,7 +2177,8 @@ impl IdentityHandler {
             if on_chain {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Conflict,
-                    "Identity already exists on chain; retry with the same keys or contact support"
+                    "Identity already exists or registration is already pending; \
+                     retry with the same keys after inclusion, or contact support"
                         .to_string(),
                 ));
             }
@@ -2186,12 +2196,19 @@ impl IdentityHandler {
             drop(identity_manager);
         }
 
+        let wait_for_inclusion = req_data.wait_for_inclusion;
+        let wait_timeout = req_data
+            .wait_timeout_secs
+            .unwrap_or(30)
+            .clamp(1, 120);
+
         // Create identity record (without private key - client keeps it)
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        // Register identity with full citizenship (creates 3 wallets)
+        // Provisional identity_manager entry for wallet-id derivation only.
+        // Canonical chain state is only written on block commit (#1990 / #1982).
         let citizenship_result = {
             let mut identity_manager = self.identity_manager.write().await;
             let mut economic_model = lib_identity::economics::EconomicModel::new();
@@ -2288,7 +2305,8 @@ impl IdentityHandler {
             if blockchain.identity_exists(&did_string) {
                 return Err((
                     ZhtpStatus::Conflict,
-                    "Identity already exists on chain; retry with the same keys or contact support"
+                    "Identity already exists or registration is already pending; \
+                     retry with the same keys after inclusion, or contact support"
                         .to_string(),
                 ));
             }
@@ -2345,11 +2363,8 @@ impl IdentityHandler {
                 ));
             }
             queued_txs.push(identity_tx);
-            let pending_height = blockchain.get_height() + 1;
-            blockchain.insert_identity_shadow(did_string.clone(), identity_transaction_data);
-            blockchain
-                .identity_blocks
-                .insert(did_string.clone(), pending_height);
+            // No insert_identity_shadow / identity_blocks — committed block
+            // processing is the only authority (#1990 / #1982).
             tracing::info!(
                 "⛓️ Identity registration queued on blockchain: {}",
                 &identity_tx_hash[..16.min(identity_tx_hash.len())]
@@ -2487,10 +2502,40 @@ impl IdentityHandler {
             &did[..32.min(did.len())]
         );
 
-        // Return success response with server-derived DID, node_id, and wallet IDs
-        // IMPORTANT: Client must use the DID and node_id from this response (server-derived)
+        // Optional: wait until process_identity_transactions has committed the DID.
+        let mut status = "queued";
+        let mut committed_height: Option<u64> = None;
+        if wait_for_inclusion {
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_secs(wait_timeout);
+            loop {
+                if let Ok(blockchain_arc) =
+                    crate::runtime::blockchain_provider::get_global_blockchain().await
+                {
+                    let blockchain = blockchain_arc.read().await;
+                    if blockchain.identity_committed(&did) {
+                        status = "confirmed";
+                        committed_height = blockchain.identity_blocks.get(&did).copied();
+                        break;
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    tracing::warn!(
+                        did = %&did[..did.len().min(32)],
+                        wait_timeout_secs = wait_timeout,
+                        "identity register wait_for_inclusion timed out; returning queued"
+                    );
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+
+        // Return queue-aware response with server-derived DID, node_id, and wallet IDs.
+        // IMPORTANT: Client must use the DID and node_id from this response (server-derived).
+        // `status: "queued"` means mempool only; `"confirmed"` means committed on-chain.
         let response_body = json!({
-            "status": "queued",
+            "status": status,
             "identity_id": identity_id.to_string(),
             "did": did,
             "node_id": hex::encode(&node_id_bytes),
@@ -2502,7 +2547,8 @@ impl IdentityHandler {
             "pqc_enabled": req_data.kyber_public_key.is_some(),
             "primary_wallet_id": primary_wallet_id,
             "ubi_wallet_id": ubi_wallet_id,
-            "savings_wallet_id": savings_wallet_id
+            "savings_wallet_id": savings_wallet_id,
+            "committed_height": committed_height,
         });
 
         Ok(ZhtpResponse::json(&response_body, None)?)

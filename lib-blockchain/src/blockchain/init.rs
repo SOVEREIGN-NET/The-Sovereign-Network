@@ -426,6 +426,7 @@ impl Blockchain {
                 ownership_proof,
                 controlled_nodes,
                 owned_wallets,
+                kyber_public_key,
             ) = match metadata {
                 Some(m) => {
                     let did = if m.did.is_empty() {
@@ -440,11 +441,13 @@ impl Blockchain {
                         m.ownership_proof,
                         m.controlled_nodes,
                         m.owned_wallets,
+                        m.kyber_public_key,
                     )
                 }
                 None => (
                     hex::encode(consensus.did_hash),
                     String::new(),
+                    Vec::new(),
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
@@ -467,7 +470,7 @@ impl Blockchain {
                     dao_fee: consensus.dao_fee,
                     controlled_nodes,
                     owned_wallets,
-                    kyber_public_key: Vec::new(),
+                    kyber_public_key,
                 },
             );
         }
@@ -793,11 +796,18 @@ impl Blockchain {
                 match store.backfill_token_balances_from_contract(&token_id, &entries) {
                     Ok(0) => {}
                     Ok(n) => info!(
+                        target: "legacy_fixup",
+                        path = "backfill_token_balances_from_contract",
+                        token = %hex::encode(&token_id.0[..8]),
+                        entries_written = n,
                         "💰 Backfilled {} balances for token {} into token_balances tree",
                         n,
                         hex::encode(&token_id.0[..8])
                     ),
                     Err(e) => warn!(
+                        target: "legacy_fixup",
+                        path = "backfill_token_balances_from_contract",
+                        token = %hex::encode(&token_id.0[..8]),
                         "⚠️ Failed to backfill token_balances for {}: {}",
                         hex::encode(&token_id.0[..8]),
                         e
@@ -1030,6 +1040,10 @@ impl Blockchain {
                     e
                 ),
             }
+
+            // #1985 / #1999: same for identities — sled trees must match
+            // block-derived registry, not pre-existing projection content.
+            blockchain.rebuild_identity_projections_from_registry();
         }
 
         match blockchain.repair_missing_token_creation_balances(store.as_ref()) {
@@ -1047,8 +1061,6 @@ impl Blockchain {
         // #56: backfill durable validators tree on normal startup (not replay-only).
         // Gated by schema version; regenerates from the loaded/replayed registry.
         blockchain.migrate_validator_records_schema();
-        blockchain.backfill_genesis_identities_to_store();
-        blockchain.migrate_identity_metadata_schema();
 
         // Genesis allocations are direct inserts in build_block0(), not block txs.
         // After executor-only block-0 import the in-memory registries are empty until
@@ -1062,21 +1074,8 @@ impl Blockchain {
             }
         }
 
-        blockchain.backfill_genesis_identities_to_store();
-        blockchain.migrate_identity_metadata_schema();
-
-        // Genesis allocations are direct inserts in build_block0(), not block txs.
-        // After executor-only block-0 import the in-memory registries are empty until
-        // we re-apply embedded genesis metadata (replay determinism / g4 bootstrap).
-        if let Ok(cfg) = crate::genesis::GenesisConfig::from_embedded() {
-            if let Err(e) = cfg.apply_genesis_state(&mut blockchain) {
-                warn!(
-                    "apply_genesis_state during load_from_store failed (non-fatal): {}",
-                    e
-                );
-            }
-        }
-
+        // Fill any genesis identities still missing from sled, then regenerate
+        // metadata schema if needed. (Replay path already rewrote projections.)
         blockchain.backfill_genesis_identities_to_store();
         blockchain.migrate_identity_metadata_schema();
 

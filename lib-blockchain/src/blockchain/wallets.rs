@@ -355,6 +355,9 @@ impl Blockchain {
 
         if migrated_total > 0 {
             info!(
+                target: "legacy_fixup",
+                path = "migrate_sov_key_balances_to_wallets",
+                amount_atomic = migrated_total,
                 "🪙 Migrated {} SOV from key-based balances to Primary wallets",
                 migrated_total
             );
@@ -690,8 +693,19 @@ impl Blockchain {
         let count = corrections.len();
         if count > 0 {
             match store.force_set_token_balances(&corrections) {
-                Ok(_) => info!("🔧 Repaired backfill inflation for {} wallets", count),
-                Err(e) => warn!("⚠️ Failed to write backfill corrections: {}", e),
+                Ok(_) => info!(
+                    target: "legacy_fixup",
+                    path = "repair_backfill_inflation",
+                    wallets_corrected = count,
+                    "🔧 Repaired backfill inflation for {} wallets",
+                    count
+                ),
+                Err(e) => warn!(
+                    target: "legacy_fixup",
+                    path = "repair_backfill_inflation",
+                    "⚠️ Failed to write backfill corrections: {}",
+                    e
+                ),
             }
         }
         count
@@ -735,7 +749,11 @@ impl Blockchain {
             .collect()
     }
 
-    /// Register a wallet via the trusted system-injection path.
+    /// Register a wallet via the trusted system-injection path (**enqueue only**).
+    ///
+    /// Canonical wallet state is materialised only when a committed block is
+    /// processed (`process_wallet_transactions` + executor `put_wallet_projection`).
+    /// This method must not insert `wallet_registry` / mint SOV (#1989 / #1982).
     ///
     /// **Trusted callers** (in-process only — not mempool-admitted):
     /// - `zhtp` citizenship / identity handlers (`identity/mod.rs`)
@@ -744,9 +762,9 @@ impl Blockchain {
     /// - `zhtp` wallet provisioning handler (`api/handlers/wallet/mod.rs`)
     /// - Genesis allocation replay (`blockchain/contracts.rs`)
     ///
-    /// Welcome-bonus SOV (`initial_balance > 0`) is only minted in-memory during
-    /// `apply_genesis_state`. At `height > 0`, callers must set `initial_balance = 0`
-    /// and submit a separate treasury-signed [`TransactionType::TokenMint`].
+    /// Welcome-bonus SOV must be a separate treasury-signed
+    /// [`TransactionType::TokenMint`]. `initial_balance` on the registration
+    /// payload is forced to 0 (executor rejects non-zero).
     pub fn register_wallet(
         &mut self,
         wallet_data: crate::transaction::WalletTransactionData,
@@ -758,18 +776,30 @@ impl Blockchain {
                 wallet_id_str
             ));
         }
+        if wallet_data.initial_balance > 0 {
+            return Err(anyhow::anyhow!(
+                "register_wallet initial_balance={} rejected: \
+                 submit a treasury-signed TokenMint instead of embedding balance \
+                 (block-authoritative path #1989)",
+                wallet_data.initial_balance,
+            ));
+        }
 
         // Never embed SOV mint amount in the WalletRegistration tx — executor and
-        // mempool reject initial_balance > 0 unless treasury-authorized. Bonus
-        // SOV is credited via the trusted in-memory mint path below.
+        // mempool reject initial_balance > 0 unless treasury-authorized.
         let mut registration_data = wallet_data.clone();
         registration_data.initial_balance = 0;
 
+        // Empty Dilithium signature: AutoWalletRegistration is authenticated at
+        // system-injection time; commit validation allows empty sig for
+        // zero-balance WalletRegistration (see allows_empty_system_signature).
+        // Do NOT put the public key bytes in `signature` — that is not a valid
+        // Dilithium sig and poisons block commit (InvalidSignature).
         let registration_tx = Transaction::new_wallet_registration(
             registration_data,
             vec![],
             Signature {
-                signature: wallet_data.public_key.clone(),
+                signature: Vec::new(),
                 public_key: PublicKey::new(
                     wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
                 ),
@@ -783,44 +813,7 @@ impl Blockchain {
             registration_tx.clone(),
             super::SystemOriginator::AutoWalletRegistration,
         )?;
-        self.wallet_registry
-            .insert(wallet_id_str.clone(), wallet_data.clone());
-        self.wallet_blocks
-            .insert(wallet_id_str.clone(), self.height + 1);
-
-        if wallet_data.initial_balance > 0 {
-            if !self.is_applying_genesis_state() {
-                return Err(anyhow::anyhow!(
-                    "register_wallet initial_balance={} rejected at height {}: \
-                     submit a treasury-signed TokenMint instead of in-memory mint",
-                    wallet_data.initial_balance,
-                    self.height
-                ));
-            }
-            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-            self.ensure_sov_token_contract();
-            let mut wallet_id_bytes_arr = [0u8; 32];
-            wallet_id_bytes_arr.copy_from_slice(wallet_data.wallet_id.as_bytes());
-            let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes_arr);
-            if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
-                if token.balance_of(&recipient_pk) == 0 {
-                    if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance as u128) {
-                        warn!(
-                            "register_wallet: genesis bootstrap mint failed {} SOV for {}: {}",
-                            wallet_data.initial_balance,
-                            &wallet_id_str[..16.min(wallet_id_str.len())],
-                            e
-                        );
-                    } else {
-                        info!(
-                            "💰 register_wallet: genesis bootstrap minted {} SOV for wallet {}",
-                            wallet_data.initial_balance,
-                            &wallet_id_str[..16.min(wallet_id_str.len())]
-                        );
-                    }
-                }
-            }
-        }
+        // No wallet_registry / wallet_blocks / token mint here — block commit only.
 
         Ok(registration_tx.hash())
     }
@@ -888,7 +881,8 @@ impl Blockchain {
                 return false;
             };
             match store.get_wallet_projection(&wallet_id_bytes) {
-                Ok(found) => return found.is_some(),
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
                 Err(e) => {
                     tracing::warn!(
                         wallet_id = %wallet_id,
@@ -898,7 +892,17 @@ impl Blockchain {
                 }
             }
         }
-        false
+        // Pending (not yet committed) registrations occupy the id so a second
+        // enqueue cannot race (#1989).
+        self.pending_transactions.iter().any(|tx| {
+            matches!(
+                tx.transaction_type,
+                TransactionType::WalletRegistration | TransactionType::WalletUpdate
+            ) && tx
+                .wallet_data()
+                .map(|w| hex::encode(w.wallet_id.as_bytes()) == wallet_id)
+                .unwrap_or(false)
+        })
     }
 
     /// Sled-first wallet record for handlers needing full `WalletTransactionData` (#2639).
@@ -1005,6 +1009,17 @@ impl Blockchain {
                         .insert(wallet_id_str.clone(), wallet_data.clone());
                     self.wallet_blocks
                         .insert(wallet_id_str.clone(), block.height());
+
+                    if transaction.transaction_type == TransactionType::WalletRegistration {
+                        let tx_hash_arr = transaction.hash().as_array();
+                        self.event_publisher.publish(
+                            crate::events::BlockchainEvent::WalletRegistered {
+                                tx_hash: tx_hash_arr,
+                                block_height: block.height(),
+                                wallet_data: wallet_data.clone(),
+                            },
+                        );
+                    }
 
                     // Executor mode mints initial SOV to sled in apply_block; in-memory
                     // mint here would be a second write source (#2641).

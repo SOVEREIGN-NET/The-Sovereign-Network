@@ -1194,6 +1194,44 @@ impl BlockchainStore for SledStore {
     // Block Operations
     // =========================================================================
 
+    fn replace_block(&self, block: &Block) -> StorageResult<()> {
+        // Must not run inside an open begin_block/commit_block transaction —
+        // this is a post-commit repair of an already-written height.
+        if self.tx_active.load(Ordering::SeqCst) {
+            return Err(StorageError::TransactionAlreadyActive);
+        }
+
+        let height = block.header.height;
+        let height_key = keys::block_height_key(height);
+        let new_hash_bytes: [u8; 32] = block.header.block_hash.as_array();
+        let new_hash = BlockHash::new(new_hash_bytes);
+        let block_bytes = Self::serialize(block)?;
+
+        if let Some(old_hash_bytes) = self
+            .blocks_by_height
+            .get(height_key)
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        {
+            if old_hash_bytes.as_ref() != new_hash_bytes.as_ref() {
+                self.blocks_by_hash
+                    .remove(old_hash_bytes.as_ref())
+                    .map_err(|e| StorageError::Database(e.to_string()))?;
+            }
+        }
+
+        self.blocks_by_height
+            .insert(height_key, new_hash_bytes.as_ref())
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.blocks_by_hash
+            .insert(keys::block_hash_key(&new_hash).as_ref(), block_bytes)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
     fn append_block(&self, block: &Block) -> StorageResult<()> {
         self.require_transaction()?;
 
@@ -2743,6 +2781,21 @@ impl BlockchainStore for SledStore {
             .insert(did_hash.as_ref(), value)
             .map_err(|e| StorageError::Database(e.to_string()))?;
         self.identity_metadata
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn put_identity_owner_index_direct(
+        &self,
+        addr: &Address,
+        did_hash: &[u8; 32],
+    ) -> StorageResult<()> {
+        let key = keys::identity_by_owner_key(addr);
+        self.identity_by_owner
+            .insert(key.as_ref(), did_hash.as_ref())
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.identity_by_owner
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())

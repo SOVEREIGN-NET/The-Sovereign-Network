@@ -28,13 +28,13 @@ fn resolve_rewards_policy(
     if let Some(state) = mutator.get_rewards_module_state(&token_id)? {
         if let Some(doc) = mutator.get_rewards_policy_document(&state.policy_hash)? {
             let policy = validate_rewards_policy(&doc).map_err(|e| {
-                TxApplyError::InvalidType(format!("invalid stored rewards policy: {e}"))
+                TxApplyError::RewardClaimDropped(format!("invalid stored rewards policy: {e}"))
             })?;
             let hash = policy_hash(&policy).map_err(|e| {
-                TxApplyError::InvalidType(format!("rewards policy hash failed: {e}"))
+                TxApplyError::RewardClaimDropped(format!("rewards policy hash failed: {e}"))
             })?;
             if hash.as_array() != state.policy_hash {
-                return Err(TxApplyError::InvalidType(
+                return Err(TxApplyError::RewardClaimDropped(
                     "stored rewards policy hash mismatch".to_string(),
                 ));
             }
@@ -44,19 +44,20 @@ fn resolve_rewards_policy(
             "RewardClaim: rewards module present but policy document missing for token {}",
             hex::encode(token_id)
         );
-        return Err(TxApplyError::InvalidType(
+        return Err(TxApplyError::RewardClaimDropped(
             "rewards module present but policy document missing".to_string(),
         ));
     }
     if is_legacy_bubl_token(token_id) {
         return Ok(legacy_bubl_policy());
     }
-    Err(TxApplyError::InvalidType(
+    Err(TxApplyError::RewardClaimDropped(
         "rewards module state required for reward claims".to_string(),
     ))
 }
 fn reject_claim(msg: impl Into<String>) -> TxApplyResult<Option<TokenTransferOutcome>> {
-    Err(TxApplyError::InvalidType(msg.into()))
+    // Soft-drop at block apply (executor maps this to skip-tx, not halt).
+    Err(TxApplyError::RewardClaimDropped(msg.into()))
 }
 
 /// Apply a `RewardClaim` inside the executor block window.
@@ -131,9 +132,10 @@ pub fn apply_reward_claim(
     // 2h) and enforces monotonicity, so a validated block cannot reach the
     // ~8.2e12 chrono ceiling. Safety is therefore coupled to that config staying
     // far below chrono's range — not to these helpers being infallible.
-    let date = utc_date_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
-    let week = iso_week_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
-    let today_ord = utc_day_ordinal_from_ts(block_timestamp).map_err(TxApplyError::InvalidType)?;
+    let date = utc_date_from_ts(block_timestamp).map_err(TxApplyError::RewardClaimDropped)?;
+    let week = iso_week_from_ts(block_timestamp).map_err(TxApplyError::RewardClaimDropped)?;
+    let today_ord =
+        utc_day_ordinal_from_ts(block_timestamp).map_err(TxApplyError::RewardClaimDropped)?;
     let token_id = &data.token_id;
 
     let mut streak_day = 1u32;
@@ -248,10 +250,10 @@ pub fn apply_reward_claim(
         });
     }
     if data.nonce > expected_nonce {
-        return Err(TxApplyError::InvalidType(format!(
+        return reject_claim(format!(
             "RewardClaim nonce gap: expected {}, got {}",
             expected_nonce, data.nonce
-        )));
+        ));
     }
 
     let cbe_token_id_arr = crate::Blockchain::derive_cbe_token_id_pub();
@@ -273,7 +275,9 @@ pub fn apply_reward_claim(
                 fee_sink,
             )
         {
-            return Err(TxApplyError::InsufficientRewardLiquidity { have, need });
+            return reject_claim(format!(
+                "insufficient reward liquidity: have {have}, need {need}"
+            ));
         }
     } else {
         tx_apply::apply_token_transfer(

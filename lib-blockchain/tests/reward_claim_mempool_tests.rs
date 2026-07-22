@@ -14,9 +14,10 @@ mod common;
 
 use common::block_builders;
 use common::reward_claim_harness::{
-    mempool_blockchain, mempool_blockchain_shadow_phantom_beneficiary,
-    mempool_blockchain_unregistered_beneficiary, mempool_blockchain_unregistered_treasury,
-    seed_executor_store, welcome_claim_tx, welcome_claim_tx_from, RewardClaimActors,
+    mempool_blockchain, mempool_blockchain_rewards_module_without_token_contract,
+    mempool_blockchain_shadow_phantom_beneficiary, mempool_blockchain_unregistered_beneficiary,
+    mempool_blockchain_unregistered_treasury, seed_executor_store, welcome_claim_tx,
+    welcome_claim_tx_from, RewardClaimActors,
 };
 
 #[test]
@@ -63,6 +64,84 @@ fn non_delegate_signer_rejected_from_mempool() {
     assert!(
         blockchain.get_pending_transactions().is_empty(),
         "non-delegate claim must not enter mempool"
+    );
+}
+
+#[test]
+fn recipient_key_id_mismatch_rejected_from_mempool() {
+    // Apply rejects recipient_key_id != key_id_from_did(owner_did). Must not
+    // admit at mempool (halt vector #2924 review).
+    use lib_blockchain::transaction::reward_claim::{
+        expected_amount_for_event, RewardClaimData, RewardEventKind, REWARD_CLAIM_MEMO,
+    };
+    use lib_blockchain::transaction::signing::sign_transaction;
+    use lib_blockchain::transaction::Transaction;
+    use lib_crypto::SignatureAlgorithm;
+
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain(&actors);
+    let data = RewardClaimData {
+        event: RewardEventKind::Welcome,
+        owner_did: actors.owner_did.clone(),
+        recipient_key_id: [0xABu8; 32], // deliberately not key_id of owner_did
+        token_id: actors.token_id,
+        from: actors.treasury.public_key.key_id,
+        amount: expected_amount_for_event(RewardEventKind::Welcome, 1),
+        nonce: 0,
+        peer_did: None,
+    };
+    let mut tx = Transaction::new_reward_claim_with_chain_id(
+        0x03,
+        data,
+        lib_crypto::Signature {
+            signature: Vec::new(),
+            public_key: actors.treasury.public_key.clone(),
+            algorithm: SignatureAlgorithm::DEFAULT,
+            timestamp: 0,
+        },
+        REWARD_CLAIM_MEMO.to_vec(),
+    );
+    sign_transaction(&mut tx, &actors.treasury.private_key).expect("sign");
+
+    let err = blockchain
+        .add_pending_transaction(tx)
+        .expect_err("mismatched recipient_key_id must not enter mempool");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("verification failed") || msg.contains("Invalid"),
+        "expected mempool rejection for recipient_key_id binding, got: {msg}"
+    );
+    assert!(blockchain.get_pending_transactions().is_empty());
+}
+
+#[test]
+fn rewards_module_without_token_contract_rejected_from_mempool() {
+    // GENESIS-3 H=1920 halt: pure AssetLaunch writes rewards_module_state but
+    // no token_contracts row. Old mempool order checked rewards_module first and
+    // admitted the claim; apply then failed and halted consensus after BFT.
+    let actors = RewardClaimActors::generate();
+    let mut blockchain = mempool_blockchain_rewards_module_without_token_contract(&actors);
+
+    assert!(
+        blockchain.get_rewards_module_state(&actors.token_id).is_some(),
+        "fixture must expose rewards module (AssetLaunch path)"
+    );
+    assert!(
+        blockchain.get_token_contract(&actors.token_id).is_none(),
+        "fixture must omit token_contracts row"
+    );
+
+    let err = blockchain
+        .add_pending_transaction(welcome_claim_tx(&actors, 0))
+        .expect_err("RewardClaim without token contract must not enter mempool");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("verification failed") || msg.contains("Invalid"),
+        "expected mempool rejection for missing token contract, got: {msg}"
+    );
+    assert!(
+        blockchain.get_pending_transactions().is_empty(),
+        "unapplyable RewardClaim must not enter mempool"
     );
 }
 
@@ -144,7 +223,9 @@ fn duplicate_welcome_claim_rejected_from_mempool() {
 }
 
 #[test]
-fn executor_rejects_duplicate_welcome_claim_after_first_applied() {
+fn executor_soft_drops_duplicate_welcome_claim_after_first_applied() {
+    // #2924 review / #2908 option b: stateful eligibility fails at apply must
+    // soft-drop the tx (block stays valid), not halt consensus.
     let actors = RewardClaimActors::generate();
     let temp = tempdir().expect("tempdir");
     let store: Arc<dyn BlockchainStore> = Arc::new(
@@ -176,24 +257,26 @@ fn executor_rejects_duplicate_welcome_claim_after_first_applied() {
         "welcome claim must be recorded on-chain after first apply"
     );
 
-    // Nonce 1 so stateful validation reaches apply_reward_claim (nonce 0 would
-    // be soft-dropped as ReplayDropped after the first claim increments treasury nonce).
+    // Nonce 1 so we reach eligibility (nonce 0 would soft-drop as ReplayDropped).
     let duplicate_block = block_builders::block_at_height_with_txs(
         3,
         welcome_block.header.block_hash,
         vec![welcome_claim_tx(&actors, 1)],
     );
-    let err = executor
+    executor
         .apply_block(&duplicate_block)
-        .expect_err("duplicate welcome claim must fail block apply");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("welcome already claimed"),
-        "expected hard rejection, not silent no-op; got: {msg}"
-    );
+        .expect("duplicate welcome must soft-drop — block remains valid");
     assert_eq!(
         store.latest_height().unwrap(),
-        2,
-        "failed duplicate must roll back — chain stays at first committed claim"
+        3,
+        "soft-dropped claim still advances height (tx in block, no state write)"
+    );
+    // Welcome marker set once; soft-drop must not re-write / double-pay.
+    assert!(
+        store
+            .get_bubl_reward_welcome(&welcome_key)
+            .expect("read welcome marker")
+            .is_some(),
+        "welcome marker must still be present after soft-dropped duplicate"
     );
 }

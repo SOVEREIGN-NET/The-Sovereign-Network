@@ -314,10 +314,31 @@ impl GenesisFundingService {
             );
         genesis_block.header.data_helix_root = updated_merkle_root.as_array();
         genesis_block.header.block_hash = genesis_block.header.calculate_hash();
+        let funded_genesis_hash = genesis_block.header.block_hash;
         info!(
             "Genesis block merkle root updated: {}",
             hex::encode(updated_merkle_root.as_bytes())
         );
+        info!(
+            "Genesis block hash after funding: {}",
+            hex::encode(funded_genesis_hash.as_bytes())
+        );
+
+        // Empty genesis was already persisted before funding. Re-write height 0 so
+        // the store tip hash matches the in-memory block proposers use as previous_hash.
+        // Without this, observers apply store-genesis (pre-funding hash) then reject
+        // block 1 (parents the post-funding hash).
+        if let Some(store) = blockchain.store.as_ref() {
+            store.replace_block(genesis_block).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to re-persist funded genesis block to store: {e}"
+                )
+            })?;
+            info!(
+                "💾 Re-persisted funded genesis (height 0) to SledStore: {}",
+                hex::encode(funded_genesis_hash.as_bytes())
+            );
+        }
 
         // Create UTXOs from genesis transaction outputs and add to UTXO set
         let genesis_tx_id =

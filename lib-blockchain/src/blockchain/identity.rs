@@ -240,12 +240,42 @@ impl Blockchain {
         if let Some(store) = self.get_store() {
             let did_hash = crate::storage::did_to_hash(did);
             match store.get_identity(&did_hash) {
-                Ok(found) => return found.is_some(),
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
                 Err(e) => {
                     tracing::warn!(
                         did = %did,
                         error = %e,
                         "identity_exists: sled read failed; treating as not-in-sled"
+                    );
+                }
+            }
+        }
+        // Pending IdentityRegistration occupies the DID until commit or abort (#1990).
+        self.pending_transactions.iter().any(|tx| {
+            tx.transaction_type == TransactionType::IdentityRegistration
+                && tx
+                    .identity_data()
+                    .map(|d| d.did == did)
+                    .unwrap_or(false)
+        })
+    }
+
+    /// True when the DID is present in committed state (in-mem registry or sled),
+    /// ignoring the pending mempool. Used for inclusion wait / confirmation.
+    pub fn identity_committed(&self, did: &str) -> bool {
+        if self.identity_registry.contains_key(did) {
+            return true;
+        }
+        if let Some(store) = self.get_store() {
+            let did_hash = crate::storage::did_to_hash(did);
+            match store.get_identity(&did_hash) {
+                Ok(found) => return found.is_some(),
+                Err(e) => {
+                    tracing::warn!(
+                        did = %did,
+                        error = %e,
+                        "identity_committed: sled read failed; treating as not committed"
                     );
                 }
             }
@@ -728,8 +758,18 @@ impl Blockchain {
                 }
             }
         }
-        self.identity_registry.values().any(|id| {
+        if self.identity_registry.values().any(|id| {
             id.display_name.to_lowercase() == display_name_lower
+        }) {
+            return true;
+        }
+        // Pending registrations reserve the display name until commit/abort (#1990).
+        self.pending_transactions.iter().any(|tx| {
+            tx.transaction_type == TransactionType::IdentityRegistration
+                && tx
+                    .identity_data()
+                    .map(|d| d.display_name.to_lowercase() == display_name_lower)
+                    .unwrap_or(false)
         })
     }
 
@@ -891,6 +931,16 @@ impl Blockchain {
                                     block.height(),
                                 )?;
                             }
+
+                            // Post-commit projection listeners (DHT / local index) (#1990).
+                            let tx_hash_arr = transaction.hash().as_array();
+                            self.event_publisher.publish(
+                                crate::events::BlockchainEvent::IdentityRegistered {
+                                    tx_hash: tx_hash_arr,
+                                    block_height: block.height(),
+                                    identity_data: new_identity_data.clone(),
+                                },
+                            );
 
                             if identity_data.identity_type == "verified_citizen"
                                 || identity_data.identity_type == "citizen"
