@@ -103,12 +103,13 @@ pub fn requires_system_tx_signature(transaction: &Transaction) -> bool {
 }
 
 /// Client / auto-bootstrap system txs that are intentionally unsigned at the
-/// Dilithium tx layer. Authentication is elsewhere:
-/// - [`TransactionType::IdentityRegistration`]: API verifies `ZHTP_REGISTER`
-///   proof; payload carries `ownership_proof` + DID/pk binding (see
-///   `SystemOriginator::ClientIdentityRegistration`).
-/// - [`TransactionType::WalletRegistration`]: zero-balance auto wallets from
-///   the same registration path (`SystemOriginator::AutoWalletRegistration`).
+/// Dilithium tx layer. Authentication is carried in the payload:
+/// - [`TransactionType::IdentityRegistration`]: Dilithium verify of
+///   `ownership_proof` over `ZHTP_REGISTER:{created_at}` (same message the
+///   registration API signs), plus DID/pk binding. Consensus must not trust
+///   arbitrary proof bytes when skipping tx-level signature verification.
+/// - [`TransactionType::WalletRegistration`]: zero-balance auto wallets with
+///   wallet_id + pk binding (`SystemOriginator::AutoWalletRegistration`).
 ///
 /// Non-empty signatures still always go through full crypto verify.
 pub fn allows_empty_system_signature(transaction: &Transaction) -> bool {
@@ -128,6 +129,18 @@ pub fn allows_empty_system_signature(transaction: &Transaction) -> bool {
                 return false;
             };
             if transaction.signature.public_key.dilithium_pk != identity_pk {
+                return false;
+            }
+            // Cryptographic ownership (not just non-empty bytes): client signs
+            // "ZHTP_REGISTER:{timestamp}" with the identity private key.
+            let ownership_msg = format!("ZHTP_REGISTER:{}", data.created_at);
+            if !lib_crypto::verify_signature(
+                ownership_msg.as_bytes(),
+                &data.ownership_proof,
+                &data.public_key,
+            )
+            .unwrap_or(false)
+            {
                 return false;
             }
             let key_id = crate::types::hash::blake3_hash(identity_pk.as_slice());
@@ -213,17 +226,63 @@ mod tests {
         use crate::transaction::core::IdentityTransactionData;
         use crate::types::Hash;
 
-        let dilithium_pk = [0xABu8; 2592];
+        let keypair = lib_crypto::generate_keypair().expect("keypair");
+        let dilithium_pk = keypair.public_key.dilithium_pk;
+        let created_at = 1_700_000_000u64;
+        let ownership_msg = format!("ZHTP_REGISTER:{}", created_at);
+        let ownership_proof = lib_crypto::sign_message(&keypair, ownership_msg.as_bytes())
+            .expect("sign ownership")
+            .signature;
         let key_id = crate::types::hash::blake3_hash(&dilithium_pk);
         let did = format!("did:zhtp:{}", hex::encode(key_id.as_bytes()));
         let identity_data = IdentityTransactionData {
             did,
             display_name: "test_user".to_string(),
             public_key: dilithium_pk.to_vec(),
-            ownership_proof: vec![0x01, 0x02],
+            ownership_proof,
             identity_type: "human".to_string(),
             did_document_hash: Hash::default(),
-            created_at: 1,
+            created_at,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+            kyber_public_key: vec![],
+        };
+        let tx = Transaction::new_identity_registration(
+            identity_data,
+            vec![],
+            Signature {
+                signature: Vec::new(),
+                public_key: PublicKey::new(dilithium_pk),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: created_at,
+            },
+            b"client-identity-register:test".to_vec(),
+        );
+        assert!(allows_empty_system_signature(&tx));
+        assert!(requires_system_tx_signature(&tx));
+    }
+
+    #[test]
+    fn client_identity_registration_rejects_forged_ownership_proof() {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::core::IdentityTransactionData;
+        use crate::types::Hash;
+
+        let keypair = lib_crypto::generate_keypair().expect("keypair");
+        let dilithium_pk = keypair.public_key.dilithium_pk;
+        let key_id = crate::types::hash::blake3_hash(&dilithium_pk);
+        let did = format!("did:zhtp:{}", hex::encode(key_id.as_bytes()));
+        let identity_data = IdentityTransactionData {
+            did,
+            display_name: "squatter".to_string(),
+            public_key: dilithium_pk.to_vec(),
+            // Non-empty garbage — previously admitted under empty tx-sig bypass.
+            ownership_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            identity_type: "human".to_string(),
+            did_document_hash: Hash::default(),
+            created_at: 1_700_000_000,
             registration_fee: 0,
             dao_fee: 0,
             controlled_nodes: vec![],
@@ -239,10 +298,12 @@ mod tests {
                 algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: 1,
             },
-            b"client-identity-register:test".to_vec(),
+            b"client-identity-register:forged".to_vec(),
         );
-        assert!(allows_empty_system_signature(&tx));
-        assert!(requires_system_tx_signature(&tx));
+        assert!(
+            !allows_empty_system_signature(&tx),
+            "empty tx-sig must not admit IdentityRegistration with unverified ownership_proof"
+        );
     }
 
     #[test]

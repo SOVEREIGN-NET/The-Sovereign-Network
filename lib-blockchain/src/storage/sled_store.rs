@@ -1228,6 +1228,13 @@ impl BlockchainStore for SledStore {
         self.db
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        // If we change an already-indexed block hash (notably genesis funding),
+        // keep the nullifier index checkpoint consistent so it can advance.
+        // Checkpoint value includes (height, block_hash); leaving the pre-replace
+        // hash makes subsequent append_block treat the index as "not current".
+        if height == 0 {
+            self.mark_nullifier_index_current(height, &new_hash)?;
+        }
 
         Ok(())
     }
@@ -5235,6 +5242,56 @@ mod tests {
         store.append_block(&block1).unwrap();
         store.commit_block().unwrap();
         assert!(store.nullifier_index_is_current(1, &block1_hash).unwrap());
+    }
+
+    /// Genesis funding rewrites block 0 via `replace_block`. Without refreshing
+    /// the nullifier checkpoint (height, hash), the next `append_block` sees a
+    /// stale (0, old_hash) pair and never advances the index again.
+    #[test]
+    fn test_replace_block_updates_nullifier_checkpoint_at_genesis() {
+        let store = SledStore::open_temporary().unwrap();
+        let mut genesis = create_test_block_with_transactions(
+            0,
+            Hash::default(),
+            vec![transaction_with_nullifier(Hash::new([0xA1; 32]))],
+        );
+        let old_hash = BlockHash::new(genesis.header.block_hash.as_array());
+
+        store.begin_block(0).unwrap();
+        store.append_block(&genesis).unwrap();
+        store.commit_block().unwrap();
+        assert!(store.nullifier_index_is_current(0, &old_hash).unwrap());
+
+        // Simulate genesis funding rewrite: same height, new block hash.
+        let mut new_hash_bytes = [0u8; 32];
+        new_hash_bytes[0] = 0xFF;
+        new_hash_bytes[1] = 0xEE;
+        genesis.header.block_hash = Hash::new(new_hash_bytes);
+        let new_hash = BlockHash::new(new_hash_bytes);
+        store.replace_block(&genesis).unwrap();
+
+        assert!(
+            store.nullifier_index_is_current(0, &new_hash).unwrap(),
+            "replace_block must retarget NULLIFIER_INDEX_CHECKPOINT to the new genesis hash"
+        );
+        assert!(
+            !store.nullifier_index_is_current(0, &old_hash).unwrap(),
+            "checkpoint must not remain pinned to the pre-replace genesis hash"
+        );
+
+        let block1 = create_test_block_with_transactions(
+            1,
+            genesis.header.block_hash,
+            vec![transaction_with_nullifier(Hash::new([0xA2; 32]))],
+        );
+        let block1_hash = BlockHash::new(block1.header.block_hash.as_array());
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.commit_block().unwrap();
+        assert!(
+            store.nullifier_index_is_current(1, &block1_hash).unwrap(),
+            "append after genesis replace must advance the nullifier checkpoint"
+        );
     }
 
     #[test]
