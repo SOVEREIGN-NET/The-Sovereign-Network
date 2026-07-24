@@ -16,8 +16,13 @@ use common::block_builders;
 use common::reward_claim_harness::{
     mempool_blockchain, mempool_blockchain_rewards_module_without_token_contract,
     mempool_blockchain_shadow_phantom_beneficiary, mempool_blockchain_unregistered_beneficiary,
-    mempool_blockchain_unregistered_treasury, seed_executor_store, welcome_claim_tx,
+    mempool_blockchain_unregistered_treasury, seed_executor_store,
+    seed_executor_store_rewards_module_without_token_contract, welcome_claim_tx,
     welcome_claim_tx_from, RewardClaimActors,
+};
+use lib_blockchain::storage::{Address, TokenId};
+use lib_blockchain::transaction::reward_claim::{
+    expected_amount_for_event, RewardEventKind,
 };
 
 #[test]
@@ -115,10 +120,10 @@ fn recipient_key_id_mismatch_rejected_from_mempool() {
 }
 
 #[test]
-fn rewards_module_without_token_contract_rejected_from_mempool() {
-    // GENESIS-3 H=1920 halt: pure AssetLaunch writes rewards_module_state but
-    // no token_contracts row. Old mempool order checked rewards_module first and
-    // admitted the claim; apply then failed and halted consensus after BFT.
+fn rewards_module_without_token_contract_admitted_to_mempool() {
+    // Pure AssetLaunch writes rewards_module_state without a token_contracts
+    // row. Apply authorizes via spend-delegate + balance transfer (no contract
+    // object needed), so mempool must admit matching claims.
     let actors = RewardClaimActors::generate();
     let mut blockchain = mempool_blockchain_rewards_module_without_token_contract(&actors);
 
@@ -131,17 +136,75 @@ fn rewards_module_without_token_contract_rejected_from_mempool() {
         "fixture must omit token_contracts row"
     );
 
-    let err = blockchain
+    blockchain
         .add_pending_transaction(welcome_claim_tx(&actors, 0))
-        .expect_err("RewardClaim without token contract must not enter mempool");
-    let msg = err.to_string();
+        .expect("RewardClaim with rewards module + spend delegate must enter mempool");
+    assert_eq!(
+        blockchain.get_pending_transactions().len(),
+        1,
+        "structurally valid module-only claim must be admitted"
+    );
+}
+
+#[test]
+fn rewards_module_without_token_contract_apply_moves_beneficiary_balance() {
+    // Positive apply path for the headline BUBL AssetLaunch fix: no
+    // token_contracts row, rewards module + policy present, spend-delegate
+    // signed welcome claim credits the beneficiary.
+    let actors = RewardClaimActors::generate();
+    let temp = tempdir().expect("tempdir");
+    let store: Arc<dyn BlockchainStore> = Arc::new(
+        SledStore::open(temp.path().join("reward_claim_module_only")).expect("sled store"),
+    );
+    let executor = BlockExecutor::with_store(store.clone());
+
+    let genesis = block_builders::genesis_block();
+    executor.apply_block(&genesis).expect("apply genesis");
+
+    let setup_block =
+        seed_executor_store_rewards_module_without_token_contract(&store, &genesis, &actors);
+
     assert!(
-        msg.contains("verification failed") || msg.contains("Invalid"),
-        "expected mempool rejection for missing token contract, got: {msg}"
+        store
+            .get_token_contract(&TokenId::new(actors.token_id))
+            .expect("read contract")
+            .is_none(),
+        "fixture must omit token_contracts row"
     );
     assert!(
-        blockchain.get_pending_transactions().is_empty(),
-        "unapplyable RewardClaim must not enter mempool"
+        store
+            .get_rewards_module_state(&actors.token_id)
+            .expect("read module")
+            .is_some(),
+        "fixture must expose rewards module"
+    );
+
+    let welcome_amount = expected_amount_for_event(RewardEventKind::Welcome, 1);
+    let welcome_block = block_builders::block_at_height_with_txs(
+        2,
+        setup_block.header.block_hash,
+        vec![welcome_claim_tx(&actors, 0)],
+    );
+    executor
+        .apply_block(&welcome_block)
+        .expect("module-only welcome claim must apply");
+
+    let beneficiary = Address::new(actors.beneficiary.public_key.key_id);
+    let bal = store
+        .get_token_balance(&TokenId::new(actors.token_id), &beneficiary)
+        .expect("read beneficiary balance");
+    assert_eq!(
+        bal, welcome_amount,
+        "beneficiary must receive policy welcome amount after apply"
+    );
+
+    let welcome_key = welcome_claim_key(&actors.token_id, &actors.owner_did);
+    assert!(
+        store
+            .get_bubl_reward_welcome(&welcome_key)
+            .expect("read welcome marker")
+            .is_some(),
+        "welcome claim marker must be recorded"
     );
 }
 

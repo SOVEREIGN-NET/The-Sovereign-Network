@@ -124,39 +124,119 @@ fn install_bubl_mempool_fixtures(blockchain: &mut Blockchain, actors: &RewardCla
     );
 }
 
-/// Identities + rewards-module state for `token_id`, but **no** `token_contracts`
-/// row — mirrors pure AssetLaunch (discoverable rewards, un-applyable claims).
-pub fn mempool_blockchain_rewards_module_without_token_contract(
+/// Seed rewards module + policy document (legacy BUBL policy) with no token contract.
+fn put_rewards_module_with_legacy_policy(
+    store: &dyn BlockchainStore,
     actors: &RewardClaimActors,
-) -> Blockchain {
+    block_height: u64,
+) {
     use lib_blockchain::contracts::sovereign_asset::RewardsModuleState;
+    use lib_blockchain::rewards_policy::{legacy_bubl_policy, policy_hash, validate_rewards_policy_value};
 
-    let mut blockchain = Blockchain::new().expect("blockchain construct");
-    let store = attach_ephemeral_store(&mut blockchain);
-    register_actor_identities_store(store.as_ref(), actors);
-    register_actor_identities_shadow(&mut blockchain, actors);
-    // put_rewards_module_state requires an active block transaction.
-    // Empty store expects height 0 (genesis slot) for the first begin_block.
-    store.begin_block(0).expect("begin rewards fixture block");
+    let policy = legacy_bubl_policy();
+    validate_rewards_policy_value(&policy).expect("legacy policy valid");
+    let policy_hash_arr = policy_hash(&policy).expect("policy hash").as_array();
+    let policy_document = serde_json::to_vec(&policy).expect("policy json");
+    let mut policy_cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
+    policy_cid_input.extend_from_slice(&policy_document);
+    let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
+
+    store
+        .begin_block(block_height)
+        .expect("begin rewards fixture block");
     store
         .put_rewards_module_state(
             &actors.token_id,
             &RewardsModuleState {
                 spend_delegate_key_id: actors.treasury.public_key.key_id,
-                policy_cid: [0u8; 32],
-                policy_hash: [0u8; 32],
+                policy_cid,
+                policy_hash: policy_hash_arr,
                 nonce: 0,
                 pending_policy: None,
             },
         )
         .expect("seed rewards module without token contract");
+    store
+        .put_rewards_policy_document(&policy_hash_arr, &policy_document)
+        .expect("seed rewards policy document");
     store.commit_block().expect("commit rewards fixture block");
+}
+
+/// Identities + rewards-module state for `token_id`, but **no** `token_contracts`
+/// row — mirrors pure AssetLaunch (discoverable rewards, applyable via module).
+pub fn mempool_blockchain_rewards_module_without_token_contract(
+    actors: &RewardClaimActors,
+) -> Blockchain {
+    let mut blockchain = Blockchain::new().expect("blockchain construct");
+    let store = attach_ephemeral_store(&mut blockchain);
+    register_actor_identities_store(store.as_ref(), actors);
+    register_actor_identities_shadow(&mut blockchain, actors);
+    // Empty store expects height 0 (genesis slot) for the first begin_block.
+    put_rewards_module_with_legacy_policy(store.as_ref(), actors, 0);
     blockchain.insert_token_nonce_shadow(
         actors.token_id,
         actors.treasury.public_key.key_id,
         0,
     );
     blockchain
+}
+
+/// Executor fixture: identities + rewards module + policy + treasury balance,
+/// **no** `token_contracts` row. Returns the setup block at height 1.
+pub fn seed_executor_store_rewards_module_without_token_contract(
+    store: &Arc<dyn BlockchainStore>,
+    genesis: &Block,
+    actors: &RewardClaimActors,
+) -> Block {
+    register_actor_identities_store(store.as_ref(), actors);
+
+    let treasury_addr = Address::new(actors.treasury.public_key.key_id);
+    let welcome_amount = expected_amount_for_event(RewardEventKind::Welcome, 1);
+
+    // Height 1: fund treasury balances (no TokenContract object).
+    store.begin_block(1).expect("begin setup block");
+    store
+        .set_token_balance(
+            &TokenId::new(actors.token_id),
+            &treasury_addr,
+            welcome_amount.saturating_mul(2),
+        )
+        .expect("fund treasury");
+    // Install rewards module + policy inside same block window.
+    {
+        use lib_blockchain::contracts::sovereign_asset::RewardsModuleState;
+        use lib_blockchain::rewards_policy::{
+            legacy_bubl_policy, policy_hash, validate_rewards_policy_value,
+        };
+
+        let policy = legacy_bubl_policy();
+        validate_rewards_policy_value(&policy).expect("legacy policy valid");
+        let policy_hash_arr = policy_hash(&policy).expect("policy hash").as_array();
+        let policy_document = serde_json::to_vec(&policy).expect("policy json");
+        let mut policy_cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
+        policy_cid_input.extend_from_slice(&policy_document);
+        let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
+
+        store
+            .put_rewards_module_state(
+                &actors.token_id,
+                &RewardsModuleState {
+                    spend_delegate_key_id: actors.treasury.public_key.key_id,
+                    policy_cid,
+                    policy_hash: policy_hash_arr,
+                    nonce: 0,
+                    pending_policy: None,
+                },
+            )
+            .expect("seed rewards module");
+        store
+            .put_rewards_policy_document(&policy_hash_arr, &policy_document)
+            .expect("seed policy document");
+    }
+    let setup_block = block_builders::block_at_height(1, genesis.header.block_hash);
+    store.append_block(&setup_block).expect("append setup block");
+    store.commit_block().expect("commit setup block");
+    setup_block
 }
 
 /// In-memory blockchain with treasury identity + BUBL contract, but beneficiary

@@ -2564,9 +2564,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         //   0) amount > 0
         //   1) recipient_key_id == key_id_from_did(owner_did)
         //   2) owner_did registered in sled
-        //   3) token_contract exists (GENESIS-3 H=1920: rewards-module alone
-        //      is not enough — pure AssetLaunch has no token_contracts row)
-        //   4) spend-delegate (if rewards module) else legacy token-creator
+        //   3) rewards-module present → spend-delegate; else token_contract
+        //      + creator (AssetLaunch has rewards module without token_contracts)
         if transaction.transaction_type == TransactionType::RewardClaim {
             let data = transaction
                 .reward_claim_data()
@@ -2599,29 +2598,52 @@ impl<'a> StatefulTransactionValidator<'a> {
                 );
                 return Err(ValidationError::InvalidTransaction);
             }
-            let Some(contract) = blockchain.get_token_contract(&data.token_id) else {
-                tracing::warn!(
-                    "[REWARD_CLAIM] token contract not found for claim token_id={}",
-                    hex::encode(data.token_id)
-                );
-                return Err(ValidationError::InvalidTransaction);
-            };
-            if let Some(rewards_state) = blockchain.get_rewards_module_state(&data.token_id) {
-                if data.from != rewards_state.spend_delegate_key_id {
+            // Shared ladder with apply + settlement (authorize_reward_claim).
+            let spend_delegate = blockchain
+                .get_rewards_module_state(&data.token_id)
+                .map(|s| s.spend_delegate_key_id);
+            let token_creator = blockchain
+                .get_token_contract(&data.token_id)
+                .map(|c| c.creator.key_id);
+            match crate::transaction::reward_claim::authorize_reward_claim(
+                data.from,
+                spend_delegate,
+                token_creator,
+            ) {
+                Ok(_) => {}
+                Err(crate::transaction::reward_claim::RewardClaimAuthError::TokenContractNotFound) => {
+                    tracing::warn!(
+                        "[REWARD_CLAIM] token contract not found for claim token_id={}",
+                        hex::encode(data.token_id)
+                    );
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                Err(
+                    crate::transaction::reward_claim::RewardClaimAuthError::NotSpendDelegate {
+                        expected,
+                        got,
+                    },
+                ) => {
                     tracing::warn!(
                         "[REWARD_CLAIM] signer is not on-chain spend delegate: from={} expected={}",
-                        hex::encode(data.from),
-                        hex::encode(rewards_state.spend_delegate_key_id)
+                        hex::encode(got),
+                        hex::encode(expected)
                     );
                     return Err(ValidationError::Unauthorized);
                 }
-            } else if contract.creator.key_id != data.from {
-                tracing::warn!(
-                    "[REWARD_CLAIM] signer is not token creator (legacy path): from={} creator={}",
-                    hex::encode(data.from),
-                    hex::encode(contract.creator.key_id)
-                );
-                return Err(ValidationError::Unauthorized);
+                Err(
+                    crate::transaction::reward_claim::RewardClaimAuthError::NotTokenCreator {
+                        expected,
+                        got,
+                    },
+                ) => {
+                    tracing::warn!(
+                        "[REWARD_CLAIM] signer is not token creator (legacy path): from={} creator={}",
+                        hex::encode(got),
+                        hex::encode(expected)
+                    );
+                    return Err(ValidationError::Unauthorized);
+                }
             }
             return Ok(());
         }

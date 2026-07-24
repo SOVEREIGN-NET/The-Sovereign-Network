@@ -974,14 +974,156 @@ impl WalletHandler {
 
     // Helper functions
 
-    /// Get identity by ID from the identity manager
+    /// Get identity by ID from the identity manager, with chain-backed hydrate.
+    ///
+    /// The in-memory IdentityManager is only populated on the node that handled
+    /// registration (or a live handshake). Other validators still have the DID
+    /// in sled / wallet_registry after block apply — hydrate a read-only view
+    /// for wallet balance/list when the manager misses. Never overwrites an
+    /// existing manager entry (avoids the wallet-ownership migration bug that
+    /// forced full startup backfill to stay disabled).
     async fn get_identity_by_id(&self, identity_id: &[u8; 32]) -> Option<Identity> {
-        // Convert bytes to Hash for identity lookup
         let identity_hash = Hash(*identity_id);
 
-        // Look up in identity manager
-        let identity_manager = self.identity_manager.read().await;
-        identity_manager.get_identity(&identity_hash).cloned()
+        {
+            let identity_manager = self.identity_manager.read().await;
+            if let Some(identity) = identity_manager.get_identity(&identity_hash).cloned() {
+                return Some(identity);
+            }
+        }
+
+        self.hydrate_identity_from_chain(identity_id).await
+    }
+
+    /// Reconstruct a single identity + owned wallets from chain snapshots.
+    ///
+    /// Fails closed on malformed public keys (no zero-key fallback). Wallet
+    /// balances are synced from authoritative sled/token balances (not
+    /// `initial_balance`).
+    async fn hydrate_identity_from_chain(&self, identity_id: &[u8; 32]) -> Option<Identity> {
+        let identity_hash = Hash(*identity_id);
+
+        let blockchain = self.blockchain.read().await;
+        let identity_registry = blockchain.identity_registry_snapshot();
+        let wallet_registry = blockchain.wallet_registry_snapshot();
+
+        // Snapshot is keyed by DID (`did:zhtp:<64-hex>`). O(1) lookup first;
+        // fall back to value scan only if a non-canonical key was stored.
+        let did_key = format!("did:zhtp:{}", hex::encode(identity_id));
+        let identity_data = identity_registry
+            .get(&did_key)
+            .cloned()
+            .or_else(|| {
+                identity_registry.values().find(|data| {
+                    lib_identity::did::parse_did_to_identity_id(&data.did)
+                        .map(|id| id.as_bytes() == identity_id.as_slice())
+                        .unwrap_or(false)
+                }).cloned()
+            })?;
+
+        let identity_type = match identity_data.identity_type.to_ascii_lowercase().as_str() {
+            "human" => lib_identity::IdentityType::Human,
+            "device" => lib_identity::IdentityType::Device,
+            "organization" => lib_identity::IdentityType::Organization,
+            "agent" => lib_identity::IdentityType::Agent,
+            "contract" => lib_identity::IdentityType::Contract,
+            _ => lib_identity::IdentityType::Human,
+        };
+        if matches!(identity_type, lib_identity::IdentityType::Device) {
+            return None;
+        }
+
+        // Fail closed: never cache a zero/forged Dilithium key.
+        let dilithium_pk: [u8; 2592] = identity_data.public_key.as_slice().try_into().ok()?;
+        let public_key = if identity_data.kyber_public_key.len() == 1568 {
+            let kyber_pk: [u8; 1568] = identity_data.kyber_public_key.as_slice().try_into().ok()?;
+            lib_crypto::PublicKey::new_with_kyber(dilithium_pk, kyber_pk)
+        } else {
+            lib_crypto::PublicKey::new(dilithium_pk)
+        };
+
+        let display_name = if identity_data.display_name.is_empty() {
+            None
+        } else {
+            Some(identity_data.display_name.clone())
+        };
+        let mut identity = lib_identity::ZhtpIdentity::new_external(
+            identity_data.did.clone(),
+            public_key,
+            identity_type,
+            identity_data
+                .did
+                .trim_start_matches("did:zhtp:")
+                .to_string(),
+            display_name,
+            identity_data.created_at,
+        )
+        .ok()?;
+        identity.did_document_hash = Some(lib_crypto::Hash::from_bytes(
+            identity_data.did_document_hash.as_bytes(),
+        ));
+        identity.wallet_manager.wallets.clear();
+        identity.wallet_manager.total_balance = 0;
+
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+
+        for wallet_data in wallet_registry.values() {
+            let owned = wallet_data
+                .owner_identity_id
+                .map(|owner| owner.as_bytes() == identity_id.as_slice())
+                .unwrap_or(false);
+            if !owned {
+                continue;
+            }
+            let wallet_type = match wallet_data.wallet_type.to_ascii_lowercase().as_str() {
+                "primary" => lib_identity::wallets::WalletType::Primary,
+                "ubi" => lib_identity::wallets::WalletType::UBI,
+                "savings" => lib_identity::wallets::WalletType::Savings,
+                "business" => lib_identity::wallets::WalletType::Business,
+                "stealth" => lib_identity::wallets::WalletType::Stealth,
+                "dao" | "nonprofitdao" | "non_profit_dao" | "non-profit-dao" => {
+                    lib_identity::wallets::WalletType::NonProfitDAO
+                }
+                "forprofitdao" | "for_profit_dao" | "for-profit-dao" => {
+                    lib_identity::wallets::WalletType::ForProfitDAO
+                }
+                "standard" => lib_identity::wallets::WalletType::Standard,
+                _ => lib_identity::wallets::WalletType::Primary,
+            };
+            if let Ok(wallet_id) = identity.wallet_manager.add_restored_wallet(
+                &hex::encode(wallet_data.wallet_id.as_bytes()),
+                wallet_type,
+                wallet_data.created_at,
+            ) {
+                if let Some(wallet) = identity.wallet_manager.get_wallet_mut(&wallet_id) {
+                    wallet.name = wallet_data.wallet_name.clone();
+                    wallet.alias = wallet_data.alias.clone();
+                    wallet.public_key = wallet_data.public_key.clone();
+                    wallet.seed_commitment =
+                        Some(hex::encode(wallet_data.seed_commitment.as_bytes()));
+                    // Authoritative balance: sled/token tree for native SOV.
+                    // Do not use wallet_data.initial_balance (registration-time only).
+                    let key_id = wallet_data.wallet_id.as_array();
+                    wallet.balance = blockchain
+                        .token_balance(&sov_token_id, &key_id)
+                        .unwrap_or(0);
+                }
+            }
+        }
+        identity.wallet_manager.calculate_total_balance();
+        drop(blockchain);
+
+        // Cache only if still missing — never overwrite live registration state.
+        {
+            let mut identity_manager = self.identity_manager.write().await;
+            if identity_manager.get_identity(&identity_hash).is_none() {
+                identity_manager.add_identity(identity.clone());
+            } else if let Some(existing) = identity_manager.get_identity(&identity_hash).cloned() {
+                return Some(existing);
+            }
+        }
+
+        Some(identity)
     }
 
     /// Parse wallet type string to WalletType enum

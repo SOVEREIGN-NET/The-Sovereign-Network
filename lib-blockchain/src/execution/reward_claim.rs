@@ -96,34 +96,29 @@ pub fn apply_reward_claim(
 
     let token = TokenId::new(data.token_id);
 
-    let contract = match mutator.get_token_contract(&token)? {
-        Some(c) => c,
-        None => {
-            warn!(
-                "RewardClaim rejected at height {}: token contract not found",
-                block_height
-            );
-            return reject_claim("token contract not found");
-        }
+    // Authorization ladder — shared with mempool + settlement
+    // (`transaction::reward_claim::authorize_reward_claim`). Do not re-inline.
+    let spend_delegate = mutator
+        .get_rewards_module_state(&data.token_id)?
+        .map(|s| s.spend_delegate_key_id);
+    let token_creator = match mutator.get_token_contract(&token)? {
+        Some(c) => Some(c.creator.key_id),
+        None => None,
     };
-
-    if let Some(rewards_state) = mutator.get_rewards_module_state(&data.token_id)? {
-        if data.from != rewards_state.spend_delegate_key_id {
-            warn!(
-                "RewardClaim rejected at height {}: signer {} is not spend delegate {} for token {}",
-                block_height,
-                hex::encode(data.from),
-                hex::encode(rewards_state.spend_delegate_key_id),
-                hex::encode(data.token_id)
-            );
-            return reject_claim("signer is not on-chain spend delegate");
-        }
-    } else if contract.creator.key_id != data.from {
+    if let Err(auth_err) =
+        crate::transaction::reward_claim::authorize_reward_claim(
+            data.from,
+            spend_delegate,
+            token_creator,
+        )
+    {
         warn!(
-            "RewardClaim rejected at height {}: signer is not token creator (legacy path)",
-            block_height
+            "RewardClaim rejected at height {}: {} (token={})",
+            block_height,
+            auth_err.as_str(),
+            hex::encode(data.token_id)
         );
-        return reject_claim("signer is not authorized token creator");
+        return reject_claim(auth_err.as_str());
     }
 
     // Day/week bucketing rejects chrono-unrepresentable timestamps. On the apply
