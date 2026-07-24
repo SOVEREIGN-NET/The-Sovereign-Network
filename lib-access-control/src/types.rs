@@ -98,8 +98,8 @@ pub enum AccessOperation {
 
 /// Granular capability that may be granted via delegation or attestation.
 ///
-/// This is intentionally simpler than the mobile-delegation `Capability` enum
-/// in `lib-identity` to keep the access-control crate dependency-light.
+/// Product feature gates (Web4 / DAO / DEX / economic) live here as axis-B
+/// capabilities — not a second UnifiedAccessControl mega-enum (#2935 Phase 3).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Capability {
     /// Read on-chain balance or state.
@@ -110,6 +110,8 @@ pub enum Capability {
     VoteGovernance,
     /// Deploy or update Web4 content.
     Web4Deploy,
+    /// Publish Web4 content (subset of deploy).
+    Web4Publish,
     /// Read identity metadata.
     ReadIdentity,
     /// Access limited service endpoints.
@@ -118,4 +120,12 @@ pub enum Capability {
     Investigate,
     /// Break-glass emergency override.
     EmergencyOverride,
+    /// DAO product participation (membership-scoped actions).
+    DaoParticipate,
+    /// Read DEX / marketplace listings (non-sensitive).
+    DexRead,
+    /// Place DEX trades (requires additional economic authority on chain).
+    DexTrade,
+    /// Economic admin surfaces (treasury ops via grant, not god-mode).
+    EconomicAdmin,
 }

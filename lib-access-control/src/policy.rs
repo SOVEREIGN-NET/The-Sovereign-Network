@@ -17,12 +17,30 @@ pub struct AccessPolicy;
 impl AccessPolicy {
     /// Evaluate whether `principal` may perform `operation` on `domain`
     /// with respect to a subject identity having `relation` to the principal.
+    ///
+    /// Uses current wall-clock for grant expiry when `now_unix` is not provided.
     pub fn check_access(
         &self,
         principal: &SecurityPrincipal,
         relation: SubjectRelation,
         domain: AccessDomain,
         op: AccessOperation,
+    ) -> AccessDecision {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.check_access_at(principal, relation, domain, op, now)
+    }
+
+    /// Same as [`check_access`] with explicit time (tests / deterministic replay).
+    pub fn check_access_at(
+        &self,
+        principal: &SecurityPrincipal,
+        relation: SubjectRelation,
+        domain: AccessDomain,
+        op: AccessOperation,
+        now_unix: u64,
     ) -> AccessDecision {
         use AccessDecision::{Allow, Deny};
         use AccessDomain::*;
@@ -31,9 +49,19 @@ impl AccessPolicy {
         use Role::*;
         use SubjectRelation::*;
 
-        // System bypass — internal maintenance only.
+        // Phase 3: ScopedGrant elevation (before role deny paths, after explicit denies).
+        // Evaluated early so grants can authorize cross-identity ops without System god-mode.
+        if principal.grant_allows(domain, op, now_unix) {
+            return Allow(AllowScopedGrant);
+        }
+
+        // Phase 3: System is no longer god-mode. Self-only + grants (above).
         if principal.role == System {
-            return Allow(AllowSystemProcess);
+            return match (relation, domain, op) {
+                (Self_, ZkProofPrivate, _) => Deny(DenyPrivateZk),
+                (Self_, _, _) => Allow(AllowSystemProcess),
+                (_, _, _) => Deny(DenyInsufficientRole),
+            };
         }
 
         // ── Citizen ─────────────────────────────────────────────────────
@@ -191,12 +219,29 @@ fn capability_allows(
         (ReadIdentity, ServiceEndpoints, Resolve) => true,
         (ReadBalance, WalletGraph, Read | Resolve) => true,
         (VoteGovernance, Governance, Read | Resolve) => true,
-        (Web4Deploy, ServiceEndpoints, _) => true,
+        (DaoParticipate, Governance, Read | Resolve | Enumerate) => true,
+        (Web4Deploy | Web4Publish, ServiceEndpoints, _) => true,
         (ServiceAccess, ServiceEndpoints, Resolve) => true,
+        (DexRead, ServiceEndpoints, Resolve | Read) => true,
+        (DexTrade, ServiceEndpoints, _) => true,
+        (EconomicAdmin, WalletGraph | Governance, Read | Resolve | Enumerate) => true,
         (Investigate, NodeGraph | WalletGraph | Governance, Read | Resolve) => true,
         (EmergencyOverride, _, _) => true,
         _ => false,
     })
+}
+
+/// Per-edge graph traversal check (#2935 Phase 3).
+///
+/// Call once per edge when expanding owner → wallets → nodes so callers cannot
+/// infer cardinality by bulk Traverse without authorization.
+pub fn check_graph_edge(
+    policy: &AccessPolicy,
+    principal: &SecurityPrincipal,
+    relation: SubjectRelation,
+    edge_domain: AccessDomain,
+) -> AccessDecision {
+    policy.check_access(principal, relation, edge_domain, AccessOperation::Traverse)
 }
 
 fn node_may_read_core_identity(node_type: &lib_types::NodeType) -> bool {
@@ -374,12 +419,40 @@ mod tests {
     }
 
     #[test]
-    fn system_role_bypasses_all() {
+    fn system_role_is_not_god_mode() {
         let p = SecurityPrincipal::system();
         let policy = AccessPolicy;
 
+        // Phase 3: System cannot freely read others' private material.
         assert!(policy
             .check_access(&p, External, ZkProofPrivate, Read)
+            .is_denied());
+        assert!(policy
+            .check_access(&p, External, WalletGraph, Read)
+            .is_denied());
+        // Self maintenance still allowed (except private ZK).
+        assert!(policy
+            .check_access(&p, Self_, CoreIdentity, Read)
             .is_allowed());
+    }
+
+    #[test]
+    fn scoped_grant_elevates_without_system() {
+        use crate::grant::ScopedGrant;
+        let grant = ScopedGrant::new(
+            "g1",
+            "did:zhtp:test",
+            "did:zhtp:council",
+            vec![AccessDomain::WalletGraph],
+            vec![AccessOperation::Read, AccessOperation::Enumerate],
+        );
+        let p = principal(Role::Citizen).with_grants(vec![grant]);
+        let policy = AccessPolicy;
+        assert!(policy
+            .check_access_at(&p, External, WalletGraph, Read, 1_000)
+            .is_allowed());
+        assert!(policy
+            .check_access_at(&p, External, Governance, Read, 1_000)
+            .is_denied());
     }
 }

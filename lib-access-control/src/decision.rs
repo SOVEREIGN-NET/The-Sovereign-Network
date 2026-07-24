@@ -57,8 +57,12 @@ pub enum ReasonCode {
     AllowDelegatedCapability,
     /// System process performing internal maintenance.
     AllowSystemProcess,
+    /// Active ScopedGrant covers this domain/operation.
+    AllowScopedGrant,
 
     // ── Deny reasons ─────────────────────────────────────────────────
+    /// ScopedGrant missing, expired, or consumed.
+    DenyGrantInactive,
     /// Attempt to access sensitive data across identities.
     DenyCrossIdentitySensitive,
     /// Attempt to access private ZK witness material.

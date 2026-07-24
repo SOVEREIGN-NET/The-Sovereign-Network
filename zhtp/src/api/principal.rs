@@ -209,25 +209,43 @@ pub fn may_read_wallet_subject(principal: &SecurityPrincipal, subject_identity_i
         return true;
     }
     match principal.role {
-        Role::Council | Role::InfraAdmin | Role::System => true,
-        Role::Citizen | Role::Device | Role::PolicyAdmin | Role::Emergency | Role::Node => {
-            identity_id_matches_caller(subject_identity_id, &principal.did)
+        Role::Council | Role::InfraAdmin => true,
+        Role::Citizen
+        | Role::Device
+        | Role::PolicyAdmin
+        | Role::Emergency
+        | Role::Node
+        | Role::System => {
+            if identity_id_matches_caller(subject_identity_id, &principal.did) {
+                return true;
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            principal.grant_allows(
+                lib_access_control::AccessDomain::WalletGraph,
+                lib_access_control::AccessOperation::Read,
+                now,
+            )
         }
         Role::Public => false,
     }
 }
 
 /// Ops surfaces (halt, export/import, provision): Council or InfraAdmin.
-///
-/// `Role::System` is included for internal/policy compatibility until Phase 3
-/// removes god-mode, but it is **inert for HTTP**: `extract_principal_from_request`
-/// only yields Council / InfraAdmin / Citizen / Public — never System.
+/// Phase 3: `Role::System` is not accepted — use InfraAdmin allowlist or grants.
 pub fn is_ops_elevated(principal: &SecurityPrincipal) -> bool {
-    use lib_access_control::Role;
-    matches!(
-        principal.role,
-        Role::Council | Role::InfraAdmin | Role::System
-    )
+    use lib_access_control::{AccessDomain, AccessOperation, Role};
+    if matches!(principal.role, Role::Council | Role::InfraAdmin) {
+        return true;
+    }
+    // ScopedGrant may authorize ops-class NodeGraph traverse as stand-in for ops.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    principal.grant_allows(AccessDomain::NodeGraph, AccessOperation::Traverse, now)
 }
 
 /// Structured access-decision audit log (#2935 Phase 2). Denies at INFO.
