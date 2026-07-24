@@ -238,9 +238,167 @@ pub fn partner_count_key(token_id: &[u8; 32], week: &str, did: &str) -> String {
     format!("{}|{}|{}", token_key_prefix(token_id), week, did)
 }
 
+// ── Shared authorization ladder (apply / mempool / settlement) ─────────────
+//
+// Keep these three surfaces byte-aligned forever: module present → spend
+// delegate; else token_contract + creator. Do not re-inline this ladder.
+
+/// Which authorization path authorized a `RewardClaim` signer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewardClaimAuthPath {
+    /// Pure AssetLaunch / rewards-module asset (may have no `token_contracts` row).
+    RewardsModuleSpendDelegate,
+    /// Legacy TokenContract creator path.
+    LegacyTokenCreator,
+}
+
+/// Resolved authority for a claim token (before signer check).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewardClaimAuthSource {
+    RewardsModule { spend_delegate_key_id: [u8; 32] },
+    LegacyToken { creator_key_id: [u8; 32] },
+}
+
+/// Authorization failures shared across mempool, apply, and settlement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RewardClaimAuthError {
+    /// Neither rewards module nor token contract for this token_id.
+    TokenContractNotFound,
+    /// Module path: `data.from` is not the on-chain spend delegate.
+    NotSpendDelegate {
+        expected: [u8; 32],
+        got: [u8; 32],
+    },
+    /// Legacy path: `data.from` is not the token contract creator.
+    NotTokenCreator {
+        expected: [u8; 32],
+        got: [u8; 32],
+    },
+}
+
+impl RewardClaimAuthError {
+    /// Stable human message (apply soft-drop / logs).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::TokenContractNotFound => "token contract not found",
+            Self::NotSpendDelegate { .. } => "signer is not on-chain spend delegate",
+            Self::NotTokenCreator { .. } => "signer is not authorized token creator",
+        }
+    }
+}
+
+impl std::fmt::Display for RewardClaimAuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Resolve which authority governs claims for this asset.
+///
+/// Rewards-module presence wins over a legacy token contract when both exist
+/// (AssetLaunch path).
+pub fn resolve_reward_claim_auth(
+    spend_delegate_key_id: Option<[u8; 32]>,
+    token_creator_key_id: Option<[u8; 32]>,
+) -> Result<RewardClaimAuthSource, RewardClaimAuthError> {
+    if let Some(spend_delegate_key_id) = spend_delegate_key_id {
+        return Ok(RewardClaimAuthSource::RewardsModule {
+            spend_delegate_key_id,
+        });
+    }
+    if let Some(creator_key_id) = token_creator_key_id {
+        return Ok(RewardClaimAuthSource::LegacyToken { creator_key_id });
+    }
+    Err(RewardClaimAuthError::TokenContractNotFound)
+}
+
+/// Check that `from` is the authorized signer for a resolved auth source.
+pub fn authorize_reward_claim_signer(
+    from: [u8; 32],
+    source: RewardClaimAuthSource,
+) -> Result<RewardClaimAuthPath, RewardClaimAuthError> {
+    match source {
+        RewardClaimAuthSource::RewardsModule {
+            spend_delegate_key_id,
+        } => {
+            if from != spend_delegate_key_id {
+                return Err(RewardClaimAuthError::NotSpendDelegate {
+                    expected: spend_delegate_key_id,
+                    got: from,
+                });
+            }
+            Ok(RewardClaimAuthPath::RewardsModuleSpendDelegate)
+        }
+        RewardClaimAuthSource::LegacyToken { creator_key_id } => {
+            if from != creator_key_id {
+                return Err(RewardClaimAuthError::NotTokenCreator {
+                    expected: creator_key_id,
+                    got: from,
+                });
+            }
+            Ok(RewardClaimAuthPath::LegacyTokenCreator)
+        }
+    }
+}
+
+/// Full ladder: resolve module/contract → require signer match.
+///
+/// **Single source of truth** for apply, mempool validation, and settlement.
+pub fn authorize_reward_claim(
+    from: [u8; 32],
+    spend_delegate_key_id: Option<[u8; 32]>,
+    token_creator_key_id: Option<[u8; 32]>,
+) -> Result<RewardClaimAuthPath, RewardClaimAuthError> {
+    let source = resolve_reward_claim_auth(spend_delegate_key_id, token_creator_key_id)?;
+    authorize_reward_claim_signer(from, source)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authorize_module_path_requires_spend_delegate() {
+        let delegate = [0x11; 32];
+        let creator = [0x22; 32];
+        assert_eq!(
+            authorize_reward_claim(delegate, Some(delegate), Some(creator)).unwrap(),
+            RewardClaimAuthPath::RewardsModuleSpendDelegate
+        );
+        assert!(matches!(
+            authorize_reward_claim(creator, Some(delegate), Some(creator)),
+            Err(RewardClaimAuthError::NotSpendDelegate { .. })
+        ));
+    }
+
+    #[test]
+    fn authorize_legacy_path_when_no_module() {
+        let creator = [0x22; 32];
+        assert_eq!(
+            authorize_reward_claim(creator, None, Some(creator)).unwrap(),
+            RewardClaimAuthPath::LegacyTokenCreator
+        );
+        assert!(matches!(
+            authorize_reward_claim([0x33; 32], None, Some(creator)),
+            Err(RewardClaimAuthError::NotTokenCreator { .. })
+        ));
+        assert!(matches!(
+            authorize_reward_claim(creator, None, None),
+            Err(RewardClaimAuthError::TokenContractNotFound)
+        ));
+    }
+
+    #[test]
+    fn resolve_prefers_module_over_contract() {
+        let delegate = [0x11; 32];
+        let creator = [0x22; 32];
+        assert_eq!(
+            resolve_reward_claim_auth(Some(delegate), Some(creator)).unwrap(),
+            RewardClaimAuthSource::RewardsModule {
+                spend_delegate_key_id: delegate
+            }
+        );
+    }
 
     #[test]
     fn checkin_amount_streak_schedule() {

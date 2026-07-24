@@ -105,13 +105,26 @@ pub fn plan_reward_claim(
         Ok(false) => return Err("owner_did_not_registered".into()),
         Err(_) => return Err("owner_did_not_registered".into()),
     }
-    // Apply accepts either a rewards-module asset (AssetLaunch / pure sovereign
-    // asset — no token_contracts row) or a legacy TokenContract. Fail closed
-    // only when neither is present so we never sign an un-applyable claim.
-    let has_rewards_module = bc.get_rewards_module_state(token_id).is_some();
-    let has_token_contract = bc.get_token_contract(token_id).is_some();
-    if !has_rewards_module && !has_token_contract {
-        return Err("token_contract_not_found".into());
+    // Shared ladder with apply + mempool: asset must resolve to module or
+    // legacy token contract (signer checked at submit with treasury key).
+    let spend_delegate = bc
+        .get_rewards_module_state(token_id)
+        .map(|s| s.spend_delegate_key_id);
+    let token_creator = bc
+        .get_token_contract(token_id)
+        .map(|c| c.creator.key_id);
+    if let Err(e) =
+        lib_blockchain::transaction::reward_claim::resolve_reward_claim_auth(
+            spend_delegate,
+            token_creator,
+        )
+    {
+        return Err(match e {
+            lib_blockchain::transaction::reward_claim::RewardClaimAuthError::TokenContractNotFound => {
+                "token_contract_not_found".into()
+            }
+            other => other.as_str().into(),
+        });
     }
     let ts = claim_unix_ts();
     // Map conversion failures to a stable snake_case reason for clients /
@@ -252,6 +265,20 @@ async fn submit_reward_claim(
 ) -> Result<String> {
     let nonce = {
         let bc = blockchain.read().await;
+        // Same authorize_reward_claim ladder as apply/mempool — refuse to sign
+        // if this treasury key would be soft-dropped on-chain.
+        let spend_delegate = bc
+            .get_rewards_module_state(&treasury.rewards_asset_id)
+            .map(|s| s.spend_delegate_key_id);
+        let token_creator = bc
+            .get_token_contract(&treasury.rewards_asset_id)
+            .map(|c| c.creator.key_id);
+        lib_blockchain::transaction::reward_claim::authorize_reward_claim(
+            treasury.signer_key_id,
+            spend_delegate,
+            token_creator,
+        )
+        .map_err(|e| anyhow!("reward claim signer not authorized: {}", e.as_str()))?;
         bc.token_nonce(&treasury.rewards_asset_id, &treasury.signer_key_id)
             .map_err(|e| anyhow!("nonce lookup failed: {e}"))?
     };
