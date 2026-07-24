@@ -191,6 +191,50 @@ pub fn may_read_wallet_subject(principal: &SecurityPrincipal, subject_identity_i
     }
 }
 
+/// Ops surfaces (halt, export/import, provision): Council or InfraAdmin.
+/// `System` remains accepted until Phase 3 removes god-mode.
+pub fn is_ops_elevated(principal: &SecurityPrincipal) -> bool {
+    use lib_access_control::Role;
+    matches!(
+        principal.role,
+        Role::Council | Role::InfraAdmin | Role::System
+    )
+}
+
+/// Structured access-decision audit log (#2935 Phase 2). Denies at INFO.
+pub fn log_access_decision(
+    principal: &SecurityPrincipal,
+    subject: &str,
+    domain: &str,
+    op: &str,
+    allowed: bool,
+    reason: &str,
+) {
+    if allowed {
+        tracing::debug!(
+            target: "access_control",
+            principal_did = %principal.did,
+            principal_role = ?principal.role,
+            subject = %subject,
+            domain = %domain,
+            op = %op,
+            reason = %reason,
+            "access allow"
+        );
+    } else {
+        tracing::info!(
+            target: "access_control",
+            principal_did = %principal.did,
+            principal_role = ?principal.role,
+            subject = %subject,
+            domain = %domain,
+            op = %op,
+            reason = %reason,
+            "access deny"
+        );
+    }
+}
+
 /// Determine the role for an authenticated DID by checking on-chain state
 /// and the optional ops allowlist.
 ///

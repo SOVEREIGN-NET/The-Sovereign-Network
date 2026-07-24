@@ -1732,12 +1732,18 @@ impl WalletHandler {
     /// - Provisioning wallets for observed-only identities
     async fn handle_provision_wallet(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let principal = self.extract_principal(&request);
-        if principal.role != lib_access_control::Role::Council
-            && principal.role != lib_access_control::Role::System
-        {
+        if !crate::api::principal::is_ops_elevated(&principal) {
+            crate::api::principal::log_access_decision(
+                &principal,
+                "wallet",
+                "Ops",
+                "ProvisionWallet",
+                false,
+                "requires Council or InfraAdmin",
+            );
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
-                "Wallet provisioning requires council authorization".to_string(),
+                "Wallet provisioning requires Council or InfraAdmin authorization".to_string(),
             ));
         }
 
