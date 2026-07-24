@@ -458,12 +458,15 @@ impl RewardsHandler {
 
         let bc = self.blockchain.read().await;
 
-        // Settlement requires a hot treasury keystore AND either a rewards
-        // module or legacy token contract. Do not advertise claimable events
-        // when plan_reward_claim / apply would fail closed.
+        // Settlement requires a hot treasury keystore, a rewards module or
+        // legacy token contract, AND a resolvable rewards policy (so amounts
+        // are non-zero and plan_reward_claim will not fail closed).
         let claims_settleable = self.treasury.is_some()
             && (bc.get_rewards_module_state(&token_id).is_some()
-                || bc.get_token_contract(&token_id).is_some());
+                || bc.get_token_contract(&token_id).is_some())
+            && bc
+                .reward_expected_amount(&token_id, RewardEventKind::Welcome, 1)
+                .is_some_and(|amt| amt > 0);
 
         let welcome_available =
             claims_settleable && !bc.reward_welcome_claimed(&token_id, did);

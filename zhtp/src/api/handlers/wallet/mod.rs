@@ -996,14 +996,16 @@ impl WalletHandler {
     }
 
     /// Reconstruct a single identity + owned wallets from chain snapshots.
+    ///
+    /// Fails closed on malformed public keys (no zero-key fallback). Wallet
+    /// balances are synced from authoritative sled/token balances (not
+    /// `initial_balance`).
     async fn hydrate_identity_from_chain(&self, identity_id: &[u8; 32]) -> Option<Identity> {
         let identity_hash = Hash(*identity_id);
-        let owner_hex = hex::encode(identity_id);
 
         let blockchain = self.blockchain.read().await;
         let identity_registry = blockchain.identity_registry_snapshot();
         let wallet_registry = blockchain.wallet_registry_snapshot();
-        drop(blockchain);
 
         let identity_data = identity_registry.values().find(|data| {
             lib_identity::did::parse_did_to_identity_id(&data.did)
@@ -1023,13 +1025,15 @@ impl WalletHandler {
             return None;
         }
 
-        let public_key = lib_crypto::PublicKey::new(
-            identity_data
-                .public_key
-                .as_slice()
-                .try_into()
-                .unwrap_or([0u8; 2592]),
-        );
+        // Fail closed: never cache a zero/forged Dilithium key.
+        let dilithium_pk: [u8; 2592] = identity_data.public_key.as_slice().try_into().ok()?;
+        let public_key = if identity_data.kyber_public_key.len() == 1568 {
+            let kyber_pk: [u8; 1568] = identity_data.kyber_public_key.as_slice().try_into().ok()?;
+            lib_crypto::PublicKey::new_with_kyber(dilithium_pk, kyber_pk)
+        } else {
+            lib_crypto::PublicKey::new(dilithium_pk)
+        };
+
         let display_name = if identity_data.display_name.is_empty() {
             None
         } else {
@@ -1053,10 +1057,12 @@ impl WalletHandler {
         identity.wallet_manager.wallets.clear();
         identity.wallet_manager.total_balance = 0;
 
+        let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+
         for wallet_data in wallet_registry.values() {
             let owned = wallet_data
                 .owner_identity_id
-                .map(|owner| hex::encode(owner.as_bytes()) == owner_hex)
+                .map(|owner| owner.as_bytes() == identity_id.as_slice())
                 .unwrap_or(false);
             if !owned {
                 continue;
@@ -1087,10 +1093,17 @@ impl WalletHandler {
                     wallet.public_key = wallet_data.public_key.clone();
                     wallet.seed_commitment =
                         Some(hex::encode(wallet_data.seed_commitment.as_bytes()));
-                    wallet.balance = wallet_data.initial_balance;
+                    // Authoritative balance: sled/token tree for native SOV.
+                    // Do not use wallet_data.initial_balance (registration-time only).
+                    let key_id = wallet_data.wallet_id.as_array();
+                    wallet.balance = blockchain
+                        .token_balance(&sov_token_id, &key_id)
+                        .unwrap_or(0);
                 }
             }
         }
+        identity.wallet_manager.calculate_total_balance();
+        drop(blockchain);
 
         // Cache only if still missing — never overwrite live registration state.
         {
