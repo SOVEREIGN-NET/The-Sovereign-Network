@@ -1,6 +1,7 @@
 //! Security principal — the "who" in every access control decision.
 
-use crate::types::{Capability, Did, Role};
+use crate::grant::ScopedGrant;
+use crate::types::{AccessDomain, AccessOperation, Capability, Did, Role};
 use lib_types::NodeType;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,9 @@ pub struct SecurityPrincipal {
     pub node_type: NodeType,
     /// Delegated or attested capabilities.
     pub capabilities: Vec<Capability>,
+    /// Active scoped grants (Phase 3). Evaluated early as elevation over role deny.
+    #[serde(default)]
+    pub grants: Vec<ScopedGrant>,
 }
 
 impl SecurityPrincipal {
@@ -29,6 +33,7 @@ impl SecurityPrincipal {
             role,
             node_type,
             capabilities: Vec::new(),
+            grants: Vec::new(),
         }
     }
 
@@ -44,9 +49,23 @@ impl SecurityPrincipal {
         self
     }
 
+    /// Attach scoped grants (truncated to [`crate::grant::MAX_GRANTS_PER_PRINCIPAL`]).
+    pub fn with_grants(mut self, mut grants: Vec<ScopedGrant>) -> Self {
+        if grants.len() > crate::grant::MAX_GRANTS_PER_PRINCIPAL {
+            grants.truncate(crate::grant::MAX_GRANTS_PER_PRINCIPAL);
+        }
+        self.grants = grants;
+        self
+    }
+
     /// Check if the principal possesses a specific capability.
     pub fn has_capability(&self, cap: &Capability) -> bool {
         self.capabilities.contains(cap)
+    }
+
+    /// Whether an active grant covers domain/op at `now_unix`.
+    pub fn grant_allows(&self, domain: AccessDomain, op: AccessOperation, now_unix: u64) -> bool {
+        crate::grant::grants_allow(&self.grants, &self.did, domain, op, now_unix)
     }
 
     /// Convenience constructor for an unauthenticated public principal.
@@ -55,6 +74,9 @@ impl SecurityPrincipal {
     }
 
     /// Convenience constructor for a system process principal.
+    ///
+    /// Phase 3: `Role::System` is **not** god-mode. Prefer ScopedGrant for
+    /// privileged maintenance paths.
     pub fn system() -> Self {
         Self::new("did:zhtp:system", Role::System, NodeType::FullNode)
     }

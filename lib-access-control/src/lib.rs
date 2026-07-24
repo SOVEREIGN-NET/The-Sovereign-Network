@@ -11,6 +11,7 @@
 //! - Every decision produces a machine-readable reason code.
 
 pub mod decision;
+pub mod grant;
 pub mod policy;
 pub mod principal;
 pub mod types;
@@ -19,7 +20,8 @@ pub mod types;
 mod matrix_tests;
 
 pub use decision::{AccessDecision, ReasonCode};
-pub use policy::AccessPolicy;
+pub use grant::{grants_allow, ScopedGrant, MAX_GRANTS_PER_PRINCIPAL};
+pub use policy::{check_graph_edge, AccessPolicy};
 pub use principal::SecurityPrincipal;
 pub use types::{
     AccessDomain, AccessOperation, Capability, Did, Role, SubjectRelation,
