@@ -83,6 +83,15 @@ Device QUIC key → canonical DID binding remains required for owner-gated endpo
 3. Structured access-decision logging (denies INFO).
 4. Subset of E2E matrix in CI.
 
+**Ops note — `ZHTP_INFRA_ADMIN_DIDS` is consensus-critical.** Comma-separated
+DIDs that receive `Role::InfraAdmin`. Blast radius after Phase 2: halt consensus
+(network DoS), full chain export (exfiltration), chain import, wallet provision,
+and cross-user wallet read (Phase 1). Treat the variable as secret-grade
+allowlist config; log the granted DIDs at node startup (`access_control` target).
+Bootstrap keeps **export under Council | InfraAdmin** so ops can recover nodes
+without Council keys; Phase 3 may tighten export to Council-only or ScopedGrant
+if product policy requires a higher bar.
+
 #### Phase 3 — Mature access
 
 1. **ScopedGrant**: council-issued, scoped, expiring; remove `Role::System` bypass.
