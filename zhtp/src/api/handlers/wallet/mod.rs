@@ -1007,11 +1007,19 @@ impl WalletHandler {
         let identity_registry = blockchain.identity_registry_snapshot();
         let wallet_registry = blockchain.wallet_registry_snapshot();
 
-        let identity_data = identity_registry.values().find(|data| {
-            lib_identity::did::parse_did_to_identity_id(&data.did)
-                .map(|id| id.as_bytes() == identity_id.as_slice())
-                .unwrap_or(false)
-        })?;
+        // Snapshot is keyed by DID (`did:zhtp:<64-hex>`). O(1) lookup first;
+        // fall back to value scan only if a non-canonical key was stored.
+        let did_key = format!("did:zhtp:{}", hex::encode(identity_id));
+        let identity_data = identity_registry
+            .get(&did_key)
+            .cloned()
+            .or_else(|| {
+                identity_registry.values().find(|data| {
+                    lib_identity::did::parse_did_to_identity_id(&data.did)
+                        .map(|id| id.as_bytes() == identity_id.as_slice())
+                        .unwrap_or(false)
+                }).cloned()
+            })?;
 
         let identity_type = match identity_data.identity_type.to_ascii_lowercase().as_str() {
             "human" => lib_identity::IdentityType::Human,
