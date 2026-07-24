@@ -16,6 +16,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // Operators must see who holds halt/export/import rights (Phase 2 #2935).
+    zhtp::api::principal::log_infra_admin_config_at_startup();
+
     // Parse command-line arguments
     let args = parse_cli_args();
 

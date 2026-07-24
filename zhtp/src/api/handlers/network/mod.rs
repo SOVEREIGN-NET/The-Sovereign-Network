@@ -1037,14 +1037,21 @@ impl NetworkHandler {
         Ok(ZhtpResponse::json(&response, None)?)
     }
 
-    /// POST /api/v1/node/halt-consensus — coordinated consensus halt (Council only)
+    /// POST /api/v1/node/halt-consensus — coordinated consensus halt (Council | InfraAdmin)
     async fn handle_halt_consensus(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        // Council-only gate
         let principal = crate::api::principal::extract_principal_from_request(&request);
-        if principal.role != lib_access_control::Role::Council {
+        if !crate::api::principal::is_ops_elevated(&principal) {
+            crate::api::principal::log_access_decision(
+                &principal,
+                "node",
+                "Ops",
+                "HaltConsensus",
+                false,
+                "requires Council or InfraAdmin",
+            );
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::Forbidden,
-                "Consensus halt requires Council role".to_string(),
+                "Consensus halt requires Council or InfraAdmin role".to_string(),
             ));
         }
 

@@ -15,6 +15,9 @@ pub mod policy;
 pub mod principal;
 pub mod types;
 
+#[cfg(test)]
+mod matrix_tests;
+
 pub use decision::{AccessDecision, ReasonCode};
 pub use policy::AccessPolicy;
 pub use principal::SecurityPrincipal;

@@ -147,6 +147,12 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 }
 
 /// Env-configured ops allowlist for `Role::InfraAdmin` (comma-separated DIDs).
+///
+/// **Consensus-critical.** Holders get Phase 2 ops: halt consensus, full chain
+/// export/import, wallet provision, plus cross-user wallet read (Phase 1).
+/// Treat like a secret-grade allowlist: typos/leaks enable network DoS and
+/// full-chain exfiltration. See ADR `docs/arch/authorization-bootstrap-adr.md`.
+///
 /// Example: `ZHTP_INFRA_ADMIN_DIDS=did:zhtp:abc...,did:zhtp:def...`
 pub fn infra_admin_dids_from_env() -> Vec<String> {
     std::env::var("ZHTP_INFRA_ADMIN_DIDS")
@@ -159,6 +165,26 @@ pub fn infra_admin_dids_from_env() -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Log configured InfraAdmin DIDs once at process start so operators can see
+/// who holds halt/export/import/provision rights. Safe: DIDs are public ids.
+pub fn log_infra_admin_config_at_startup() {
+    let dids = infra_admin_dids_from_env();
+    if dids.is_empty() {
+        tracing::info!(
+            target: "access_control",
+            count = 0u32,
+            "ZHTP_INFRA_ADMIN_DIDS unset/empty — no env InfraAdmin; Council-only for ops elevation"
+        );
+    } else {
+        tracing::info!(
+            target: "access_control",
+            count = dids.len(),
+            infra_admin_dids = ?dids,
+            "ZHTP_INFRA_ADMIN_DIDS grants InfraAdmin (halt/export/import/provision + wallet read)"
+        );
+    }
 }
 
 /// True when wallet read privacy filters are enforced (default: on).
@@ -188,6 +214,53 @@ pub fn may_read_wallet_subject(principal: &SecurityPrincipal, subject_identity_i
             identity_id_matches_caller(subject_identity_id, &principal.did)
         }
         Role::Public => false,
+    }
+}
+
+/// Ops surfaces (halt, export/import, provision): Council or InfraAdmin.
+///
+/// `Role::System` is included for internal/policy compatibility until Phase 3
+/// removes god-mode, but it is **inert for HTTP**: `extract_principal_from_request`
+/// only yields Council / InfraAdmin / Citizen / Public — never System.
+pub fn is_ops_elevated(principal: &SecurityPrincipal) -> bool {
+    use lib_access_control::Role;
+    matches!(
+        principal.role,
+        Role::Council | Role::InfraAdmin | Role::System
+    )
+}
+
+/// Structured access-decision audit log (#2935 Phase 2). Denies at INFO.
+pub fn log_access_decision(
+    principal: &SecurityPrincipal,
+    subject: &str,
+    domain: &str,
+    op: &str,
+    allowed: bool,
+    reason: &str,
+) {
+    if allowed {
+        tracing::debug!(
+            target: "access_control",
+            principal_did = %principal.did,
+            principal_role = ?principal.role,
+            subject = %subject,
+            domain = %domain,
+            op = %op,
+            reason = %reason,
+            "access allow"
+        );
+    } else {
+        tracing::info!(
+            target: "access_control",
+            principal_did = %principal.did,
+            principal_role = ?principal.role,
+            subject = %subject,
+            domain = %domain,
+            op = %op,
+            reason = %reason,
+            "access deny"
+        );
     }
 }
 

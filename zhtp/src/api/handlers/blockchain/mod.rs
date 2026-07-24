@@ -2642,8 +2642,19 @@ impl BlockchainHandler {
     /// Export entire blockchain for sync
     async fn handle_export_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let principal = self.extract_principal(&request);
-        if principal.role != lib_access_control::Role::Council && principal.role != lib_access_control::Role::System {
-            return Ok(ZhtpResponse::error(ZhtpStatus::Forbidden, "Chain export requires Council role".to_string()));
+        if !crate::api::principal::is_ops_elevated(&principal) {
+            crate::api::principal::log_access_decision(
+                &principal,
+                "blockchain",
+                "Ops",
+                "ExportChain",
+                false,
+                "requires Council or InfraAdmin",
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Chain export requires Council or InfraAdmin role".to_string(),
+            ));
         }
         let blockchain_arc = self
             .get_blockchain()
@@ -2666,8 +2677,19 @@ impl BlockchainHandler {
     /// Import blockchain from another node
     async fn handle_import_chain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let principal = self.extract_principal(&request);
-        if principal.role != lib_access_control::Role::Council && principal.role != lib_access_control::Role::System {
-            return Ok(ZhtpResponse::error(ZhtpStatus::Forbidden, "Chain import requires Council role".to_string()));
+        if !crate::api::principal::is_ops_elevated(&principal) {
+            crate::api::principal::log_access_decision(
+                &principal,
+                "blockchain",
+                "Ops",
+                "ImportChain",
+                false,
+                "requires Council or InfraAdmin",
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Chain import requires Council or InfraAdmin role".to_string(),
+            ));
         }
         // Validate that body is not empty
         if request.body.is_empty() {
