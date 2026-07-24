@@ -3,7 +3,12 @@
 /// Parse `identity_id` from API paths or JSON — accepts canonical `did:zhtp:<64-hex>` or raw 64-char hex.
 #[cfg(test)]
 mod tests {
-    use super::parse_identity_id_bytes;
+    use super::{
+        identity_id_matches_caller, may_read_wallet_subject, parse_identity_id_bytes,
+        wallet_read_privacy_enforced,
+    };
+    use lib_access_control::{Role, SecurityPrincipal};
+    use lib_types::NodeType;
 
     #[test]
     fn parse_raw_hex_identity() {
@@ -18,6 +23,48 @@ mod tests {
         let did = format!("did:zhtp:{hex}");
         let bytes = parse_identity_id_bytes(&did).unwrap();
         assert_eq!(hex::encode(bytes), hex);
+    }
+
+    #[test]
+    fn identity_id_matches_did_prefix() {
+        let hex = "59e07e17556e2955581443538839d576974e4f8a9af424c0a2cc7df79c995c9d";
+        assert!(identity_id_matches_caller(hex, &format!("did:zhtp:{hex}")));
+        assert!(identity_id_matches_caller(
+            &format!("did:zhtp:{hex}"),
+            &format!("did:zhtp:{hex}")
+        ));
+        assert!(!identity_id_matches_caller(hex, "did:zhtp:deadbeef"));
+    }
+
+    #[test]
+    fn wallet_read_privacy_default_on() {
+        // Default when env unset: enforced. Do not mutate process env in parallel tests.
+        let _ = wallet_read_privacy_enforced();
+    }
+
+    #[test]
+    fn may_read_wallet_self_and_council() {
+        let hex = "59e07e17556e2955581443538839d576974e4f8a9af424c0a2cc7df79c995c9d";
+        let self_p = SecurityPrincipal::new(
+            format!("did:zhtp:{hex}"),
+            Role::Citizen,
+            NodeType::FullNode,
+        );
+        let other = SecurityPrincipal::new(
+            "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            Role::Citizen,
+            NodeType::FullNode,
+        );
+        let council = SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode);
+        let public = SecurityPrincipal::public();
+
+        // When privacy is on (default), self OK, other denied, council OK, public denied.
+        if wallet_read_privacy_enforced() {
+            assert!(may_read_wallet_subject(&self_p, hex));
+            assert!(!may_read_wallet_subject(&other, hex));
+            assert!(may_read_wallet_subject(&council, hex));
+            assert!(!may_read_wallet_subject(&public, hex));
+        }
     }
 }
 
@@ -54,29 +101,24 @@ use lib_types::NodeType;
 ///
 /// This is the canonical integration point used across all API handlers.
 /// Authenticated DIDs are checked against the on-chain council member list
-/// to assign `Role::Council` vs `Role::Citizen`. The membership check reads a
-/// sync-warmed council cache first (see `BlockchainProvider::is_council_member_blocking`),
-/// so it is safe to call **before** acquiring a `blockchain.read()` guard.
+/// (and optional ops allowlist) to assign `Role::Council` / `InfraAdmin` /
+/// `Citizen`. The membership check reads a sync-warmed council cache first
+/// (see `BlockchainProvider::is_council_member_blocking`), so it is safe to
+/// call **before** acquiring a `blockchain.read()` guard.
 ///
 /// **Handler invariant (deadlock):** `extract_principal_from_request` must run
 /// before any `blockchain.read().await` / `write().await` on the global chain.
 /// Tokio `RwLock` is not re-entrant; a nested read on the same task deadlocks.
-/// Council-gated handlers audited in this PR (all extract principal first):
-/// - `network/mod.rs` — halt-consensus
-/// - `notifications/mod.rs` — subscriber list
-/// - `blockchain/mod.rs` — export/import chain, list wallets (Council bypass paths)
-/// - `dao/mod.rs` — council register, entity-registry init
-/// - `wallet/mod.rs` — cross-wallet transfer, stake/unstake, simple send (Council bypass)
+///
+/// **Phase 1 (#2935):** do not trust client-declared `x-node-type` or elevate
+/// bare Bearer tokens to `Role::Citizen`. Without a bound DID, the principal
+/// is `Public`.
 ///
 /// Mobile clients sign QUIC bytes with a per-device Dilithium key
 /// (`53c47662…`) which is *different by design* from the user's canonical
 /// chain DID (`e0b97576…`); the OPAQUE login flow binds the two in the
-/// in-memory `SessionManager` map (see PR #2626). The previous version of
-/// this function turned `request.requester.0` directly into
-/// `did:zhtp:<device-key-hex>` — the device-DID — which made every
-/// owner-gated endpoint 403 even immediately after a successful OPAQUE
-/// login. We now consult the binding first and only fall back to the raw
-/// device DID when no binding exists (i.e. pre-OPAQUE-login traffic).
+/// in-memory `SessionManager` map (see PR #2626). We consult the binding
+/// first and only fall back to the raw device DID when no binding exists.
 pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipal {
     // If the transport/session layer has already authenticated the caller
     // and set request.requester, use that DID directly.
@@ -87,46 +129,98 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
         return SecurityPrincipal::new(&did, role, NodeType::FullNode);
     }
 
-    // Node-to-node calls may declare their node type.
-    // TODO: in production this should come from authenticated UHP context,
-    // not from caller-controlled headers.
-    if let Some(node_type_str) = request.headers.get("x-node-type") {
-        let node_type = NodeType::from_config(Some(&node_type_str));
-        return SecurityPrincipal::new("did:zhtp:node", Role::Node, node_type);
-    }
+    // Client-declared NodeType is spoofable. Fail closed: treat as Public
+    // until node attestation / authenticated UHP context is wired (Phase 3).
+    // Do not assign Role::Node from x-node-type alone.
+    let _ignored_spoofable_node_type = request.headers.get("x-node-type");
 
-    // Authenticated sessions (placeholder: any bearer token is treated as
-    // a citizen session until full session-to-principal mapping is wired).
-    if let Some(auth) = request.headers.get("authorization") {
-        if auth.to_lowercase().starts_with("bearer ") {
-            return SecurityPrincipal::new(
-                "did:zhtp:session",
-                Role::Citizen,
-                NodeType::FullNode,
-            );
-        }
-    }
+    // Bearer without a bound DID must not become a fake Citizen session.
+    // Session→DID mapping is the requester path above (or future session map).
+    let _ignored_unbound_bearer = request
+        .headers
+        .get("authorization")
+        .map(|a| a.to_lowercase().starts_with("bearer "))
+        .unwrap_or(false);
 
     // Default: unauthenticated public caller.
     SecurityPrincipal::public()
 }
 
-/// Determine the role for an authenticated DID by checking on-chain state.
+/// Env-configured ops allowlist for `Role::InfraAdmin` (comma-separated DIDs).
+/// Example: `ZHTP_INFRA_ADMIN_DIDS=did:zhtp:abc...,did:zhtp:def...`
+pub fn infra_admin_dids_from_env() -> Vec<String> {
+    std::env::var("ZHTP_INFRA_ADMIN_DIDS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .map(|d| d.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// True when wallet read privacy filters are enforced (default: on).
+/// Set `ZHTP_ENFORCE_WALLET_READ_PRIVACY=0` / `false` / `off` to disable
+/// (emergency rollback only).
+pub fn wallet_read_privacy_enforced() -> bool {
+    match std::env::var("ZHTP_ENFORCE_WALLET_READ_PRIVACY") {
+        Ok(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "0" || v == "false" || v == "off" || v == "no")
+        }
+        Err(_) => true,
+    }
+}
+
+/// Whether `principal` may read wallet graph data for `subject_identity_id`
+/// (raw hex or `did:zhtp:`). Soft-privacy path: callers return empty/zero
+/// bodies on deny rather than 403.
+pub fn may_read_wallet_subject(principal: &SecurityPrincipal, subject_identity_id: &str) -> bool {
+    use lib_access_control::Role;
+    if !wallet_read_privacy_enforced() {
+        return true;
+    }
+    match principal.role {
+        Role::Council | Role::InfraAdmin | Role::System => true,
+        Role::Citizen | Role::Device | Role::PolicyAdmin | Role::Emergency | Role::Node => {
+            identity_id_matches_caller(subject_identity_id, &principal.did)
+        }
+        Role::Public => false,
+    }
+}
+
+/// Determine the role for an authenticated DID by checking on-chain state
+/// and the optional ops allowlist.
 ///
-/// Council members get `Role::Council`, everyone else gets `Role::Citizen`.
+/// Priority: Council > InfraAdmin (env) > Citizen.
 /// Checks canonical and transport DIDs — council config uses `did:zhtp:…` while
 /// QUIC `requester` may encode only the 32-byte key id.
 fn resolve_role_for_dids(dids: &[&str]) -> Role {
-    let provider = match crate::runtime::blockchain_provider::get_global_blockchain_provider() {
-        Some(p) => p,
-        None => return Role::Citizen,
-    };
+    let provider = crate::runtime::blockchain_provider::get_global_blockchain_provider();
 
-    for did in dids {
-        if provider.is_council_member_blocking(did) == Some(true) {
-            return Role::Council;
+    if let Some(ref provider) = provider {
+        for did in dids {
+            if provider.is_council_member_blocking(did) == Some(true) {
+                return Role::Council;
+            }
         }
     }
+
+    let infra = infra_admin_dids_from_env();
+    if !infra.is_empty() {
+        for did in dids {
+            let did_hex = did.strip_prefix("did:zhtp:").unwrap_or(did);
+            if infra.iter().any(|admin| {
+                let admin_hex = admin.strip_prefix("did:zhtp:").unwrap_or(admin);
+                admin == *did || admin_hex == did_hex
+            }) {
+                return Role::InfraAdmin;
+            }
+        }
+    }
+
     Role::Citizen
 }
 

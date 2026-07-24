@@ -2591,28 +2591,28 @@ mod principal_extraction_tests {
     }
 
     #[test]
-    fn test_extract_principal_bearer_returns_citizen() {
+    fn test_extract_principal_bearer_without_did_is_public() {
+        // #2935 Phase 1: bare Bearer must not elevate to Citizen.
         let request = request_with_header("authorization", "Bearer token123");
         let principal = extract_principal_from_request(&request);
-        assert_eq!(principal.role, Role::Citizen);
-        assert_eq!(principal.did, "did:zhtp:session");
+        assert_eq!(principal.role, Role::Public);
+        assert_eq!(principal.did, "did:zhtp:public");
     }
 
     #[test]
-    fn test_extract_principal_node_type_returns_node() {
+    fn test_extract_principal_node_type_header_not_trusted() {
+        // #2935 Phase 1: client-declared x-node-type must not yield Role::Node.
         let request = request_with_header("x-node-type", "validator");
         let principal = extract_principal_from_request(&request);
-        assert_eq!(principal.role, Role::Node);
-        assert_eq!(principal.did, "did:zhtp:node");
-        assert_eq!(principal.node_type, NodeType::Validator);
+        assert_eq!(principal.role, Role::Public);
+        assert_eq!(principal.did, "did:zhtp:public");
     }
 
     #[test]
-    fn test_extract_principal_relay_node_type() {
+    fn test_extract_principal_relay_node_type_header_not_trusted() {
         let request = request_with_header("x-node-type", "relay");
         let principal = extract_principal_from_request(&request);
-        assert_eq!(principal.role, Role::Node);
-        assert_eq!(principal.did, "did:zhtp:node");
-        assert_eq!(principal.node_type, NodeType::Relay);
+        assert_eq!(principal.role, Role::Public);
+        assert_eq!(principal.did, "did:zhtp:public");
     }
 }

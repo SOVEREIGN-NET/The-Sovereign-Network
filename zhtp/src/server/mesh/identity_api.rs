@@ -22,7 +22,6 @@ use crate::api::handlers::constants::SOV_WELCOME_BONUS;
 use crate::session_manager::SessionManager;
 use lib_access_control::{Role, SecurityPrincipal};
 use lib_identity::IdentityManager;
-use lib_types::NodeType;
 
 /// Safe string truncation for display (avoids panic on short strings)
 #[inline]
@@ -46,29 +45,11 @@ pub fn parse_mesh_request(mesh_data: &serde_json::Value) -> Result<MeshZhtpReque
 
 /// Extract a SecurityPrincipal from a mesh request context.
 ///
-/// Mesh requests default to Node role since they traverse the peer mesh.
-/// If the wrapped ZHTP request contains an authorization bearer token,
-/// we treat it as a citizen session (placeholder until full cert parsing).
+/// #2935 Phase 1: do not elevate bare Bearer to Citizen or trust client
+/// `x-node-type` alone. Unauthenticated mesh traffic is `Public` until
+/// peer attestation / bound DID is available.
 fn extract_mesh_principal(zhtp_request: &serde_json::Value) -> SecurityPrincipal {
-    if let Some(headers) = zhtp_request.get("headers") {
-        if let Some(auth) = headers.get("authorization").and_then(|v| v.as_str()) {
-            if auth.to_lowercase().starts_with("bearer ") {
-                return SecurityPrincipal::new(
-                    "did:zhtp:session",
-                    Role::Citizen,
-                    NodeType::FullNode,
-                );
-            }
-        }
-        if let Some(node_type) = headers.get("x-node-type").and_then(|v| v.as_str()) {
-            return SecurityPrincipal::new(
-                "did:zhtp:node",
-                Role::Node,
-                NodeType::from_config(Some(node_type)),
-            );
-        }
-    }
-    // Default: unauthenticated mesh traffic is treated as public.
+    let _ = zhtp_request; // headers intentionally not trusted for role elevation
     SecurityPrincipal::public()
 }
 
