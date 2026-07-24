@@ -2,14 +2,37 @@
 //!
 //! Replaces ad-hoc `Role::System` god-mode and overuse of Council for ops.
 //! Issuance is council-only at the API layer; this module is pure evaluation.
+//!
+//! # What is enforceable without a grant store
+//!
+//! Grants are attached to a per-request `SecurityPrincipal` and are **not**
+//! mutated across requests. Evaluation therefore only enforces:
+//! - domain / operation coverage
+//! - absolute time expiry (`expires_at_unix`)
+//! - sticky revoke (`consumed` already true when loaded)
+//!
+//! **Use limits (`max_uses`) are intentionally absent.** A counter on a
+//! throwaway principal cannot enforce "use once" across requests. When a
+//! server-side grant store exists (keyed by grant id, atomically decremented
+//! on successful use), reintroduce use limits there — not on this type.
+//!
+//! # Hot-path bound
+//!
+//! `MAX_GRANTS_PER_PRINCIPAL` caps grants attached to a principal so
+//! `grants_allow` stays O(1)-bounded on the authz path. Future council
+//! issuance must refuse to exceed this.
 
 use crate::types::{AccessDomain, AccessOperation, Did};
 use serde::{Deserialize, Serialize};
 
+/// Upper bound on grants attached to a single principal (authz hot path).
+/// Council-only issuance APIs must reject or truncate beyond this.
+pub const MAX_GRANTS_PER_PRINCIPAL: usize = 32;
+
 /// A council-issued (or future-governance-issued) scoped grant held by a principal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopedGrant {
-    /// Stable grant id (hex or uuid string).
+    /// Stable grant id (hex or uuid string). Used as key when a store lands.
     pub id: String,
     /// DID that may exercise this grant.
     pub grantee_did: Did,
@@ -21,16 +44,14 @@ pub struct ScopedGrant {
     pub operations: Vec<AccessOperation>,
     /// Optional absolute expiry (unix seconds). `None` = no time expiry.
     pub expires_at_unix: Option<u64>,
-    /// When true, grant is single-use and already spent.
+    /// Sticky revoke flag. Meaningful when set by a persistent store (or
+    /// issuer) **before** the grant is loaded onto a principal. Setting it
+    /// on an in-memory principal alone does not survive the next request.
     pub consumed: bool,
-    /// Optional max successful uses. `None` = unlimited until expiry/consume.
-    pub max_uses: Option<u32>,
-    /// Successful use count.
-    pub uses: u32,
 }
 
 impl ScopedGrant {
-    /// Create a multi-use grant without expiry.
+    /// Create a multi-use (until expiry / revoke) grant without time expiry.
     pub fn new(
         id: impl Into<String>,
         grantee_did: impl Into<Did>,
@@ -46,8 +67,6 @@ impl ScopedGrant {
             operations,
             expires_at_unix: None,
             consumed: false,
-            max_uses: None,
-            uses: 0,
         }
     }
 
@@ -56,8 +75,9 @@ impl ScopedGrant {
         self
     }
 
-    pub fn with_max_uses(mut self, max_uses: u32) -> Self {
-        self.max_uses = Some(max_uses);
+    /// Mark revoked (for store-backed loads or issuer revoke paths).
+    pub fn mark_consumed(mut self) -> Self {
+        self.consumed = true;
         self
     }
 
@@ -71,11 +91,6 @@ impl ScopedGrant {
                 return false;
             }
         }
-        if let Some(max) = self.max_uses {
-            if self.uses >= max {
-                return false;
-            }
-        }
         true
     }
 
@@ -83,19 +98,12 @@ impl ScopedGrant {
     pub fn covers(&self, domain: AccessDomain, op: AccessOperation) -> bool {
         self.domains.contains(&domain) && self.operations.contains(&op)
     }
-
-    /// Record a successful use. Marks `consumed` when max_uses is 1 or exhausted.
-    pub fn record_use(&mut self) {
-        self.uses = self.uses.saturating_add(1);
-        if let Some(max) = self.max_uses {
-            if self.uses >= max {
-                self.consumed = true;
-            }
-        }
-    }
 }
 
 /// Evaluate whether any active grant on the list covers the access.
+///
+/// Callers should pass at most [`MAX_GRANTS_PER_PRINCIPAL`] grants
+/// (`SecurityPrincipal::with_grants` truncates).
 pub fn grants_allow(
     grants: &[ScopedGrant],
     grantee_did: &str,
@@ -104,9 +112,7 @@ pub fn grants_allow(
     now_unix: u64,
 ) -> bool {
     grants.iter().any(|g| {
-        g.grantee_did == grantee_did
-            && g.is_active(now_unix)
-            && g.covers(domain, op)
+        g.grantee_did == grantee_did && g.is_active(now_unix) && g.covers(domain, op)
     })
 }
 
@@ -152,18 +158,23 @@ mod tests {
     }
 
     #[test]
-    fn single_use_grant_consumes() {
-        let mut g = ScopedGrant::new(
+    fn consumed_grant_denied_when_loaded_revoked() {
+        // `consumed` only works as a sticky flag set *before* attach (store).
+        let g = ScopedGrant::new(
             "g1",
             "did:zhtp:alice",
             "did:zhtp:council",
             vec![NodeGraph],
             vec![Traverse],
         )
-        .with_max_uses(1);
-        assert!(g.is_active(1));
-        g.record_use();
-        assert!(g.consumed);
-        assert!(!g.is_active(2));
+        .mark_consumed();
+        assert!(!g.is_active(1));
+        assert!(!grants_allow(&[g], "did:zhtp:alice", NodeGraph, Traverse, 1));
+    }
+
+    #[test]
+    fn max_grants_per_principal_is_bounded() {
+        assert!(MAX_GRANTS_PER_PRINCIPAL > 0);
+        assert!(MAX_GRANTS_PER_PRINCIPAL <= 128);
     }
 }

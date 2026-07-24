@@ -20,7 +20,7 @@ pub mod types;
 mod matrix_tests;
 
 pub use decision::{AccessDecision, ReasonCode};
-pub use grant::{grants_allow, ScopedGrant};
+pub use grant::{grants_allow, ScopedGrant, MAX_GRANTS_PER_PRINCIPAL};
 pub use policy::{check_graph_edge, AccessPolicy};
 pub use principal::SecurityPrincipal;
 pub use types::{

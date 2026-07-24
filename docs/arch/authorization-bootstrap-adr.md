@@ -100,6 +100,14 @@ if product policy requires a higher bar.
 4. Wire Organization / Device principals and `SameDao` when identity types ship.
 5. Optional mesh domain restrictions after Node attestation.
 
+**ScopedGrant evaluation model (enforceable now):** domain/op coverage + absolute
+time expiry + sticky `consumed` when loaded already revoked. Grants sit on a
+per-request principal and are not mutated across requests, so **use-count limits
+(`max_uses`) are not part of the type** until a server-side grant store exists
+(grant id key, atomic decrement on successful use). Issuance must bound
+grants-per-principal (`MAX_GRANTS_PER_PRINCIPAL`) so `grants_allow` cannot become
+an O(n) DoS on the authz hot path.
+
 ### 6. Non-goals
 
 - Replacing `lib-access-control` with a second UnifiedAccessControl Permission mega-enum.

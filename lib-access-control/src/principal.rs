@@ -49,8 +49,11 @@ impl SecurityPrincipal {
         self
     }
 
-    /// Attach scoped grants.
-    pub fn with_grants(mut self, grants: Vec<ScopedGrant>) -> Self {
+    /// Attach scoped grants (truncated to [`crate::grant::MAX_GRANTS_PER_PRINCIPAL`]).
+    pub fn with_grants(mut self, mut grants: Vec<ScopedGrant>) -> Self {
+        if grants.len() > crate::grant::MAX_GRANTS_PER_PRINCIPAL {
+            grants.truncate(crate::grant::MAX_GRANTS_PER_PRINCIPAL);
+        }
         self.grants = grants;
         self
     }
