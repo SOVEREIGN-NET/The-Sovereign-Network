@@ -25,7 +25,8 @@ use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
 
 // Access control imports
 use crate::api::principal::{
-    extract_principal_from_request, identity_id_matches_caller, parse_identity_id_bytes,
+    extract_principal_from_request, identity_id_matches_caller, may_read_wallet_subject,
+    parse_identity_id_bytes,
 };
 use lib_access_control::{AccessDomain, AccessOperation, SecurityPrincipal};
 
@@ -254,6 +255,73 @@ struct TransactionRecord {
 }
 
 impl WalletHandler {
+    /// Soft-privacy empty list when principal may not read subject wallets (#2935 Phase 1).
+    fn denied_wallet_list_response(identity_id: &str) -> Result<ZhtpResponse> {
+        create_json_response(json!({
+            "status": "success",
+            "identity_id": identity_id,
+            "total_wallets": 0,
+            "total_balance": "0",
+            "wallets": []
+        }))
+    }
+
+    /// Soft-privacy zero balance when principal may not read subject wallets.
+    fn denied_wallet_balance_response(
+        wallet_type_str: &str,
+        identity_id: &str,
+    ) -> Result<ZhtpResponse> {
+        create_json_response(json!({
+            "status": "success",
+            "wallet_type": wallet_type_str,
+            "identity_id": identity_id,
+            "balance": {
+                "available_balance": "0",
+                "staked_balance": "0",
+                "pending_rewards": "0",
+                "total_balance": "0"
+            },
+            "permissions": {
+                "can_transfer_external": false,
+                "can_vote": false,
+                "can_stake": false,
+                "can_receive_rewards": false,
+                "daily_transaction_limit": 0,
+                "requires_multisig_threshold": null
+            },
+            "created_at": 0
+        }))
+    }
+
+    /// Soft-privacy empty statistics when principal may not read subject wallets.
+    fn denied_wallet_statistics_response(identity_id: &str) -> Result<ZhtpResponse> {
+        create_json_response(json!({
+            "status": "success",
+            "identity_id": identity_id,
+            "statistics": {
+                "identity": null,
+                "total_balance": "0",
+                "wallet_count": 0,
+                "wallet_statistics": {},
+                "cross_wallet_transactions": 0,
+                "blockchain_context": {
+                    "current_height": 0,
+                    "is_synced": true,
+                    "peer_count": 0
+                }
+            }
+        }))
+    }
+
+    /// Soft-privacy empty history when principal may not read subject wallets.
+    fn denied_wallet_transactions_response(identity_id: &str) -> Result<ZhtpResponse> {
+        create_json_response(json!({
+            "identity_id": identity_id,
+            "total_transactions": 0,
+            "transactions": []
+        }))
+    }
+
     /// List all wallets for an identity
     async fn handle_list_wallets(
         &self,
@@ -266,8 +334,20 @@ impl WalletHandler {
         };
         let identity_hash = Hash(identity_id_bytes);
 
-        // TODO: Gate cross-identity wallet list once mobile app is updated.
-        // For now, return full data to maintain backward compatibility.
+        // #2935 Phase 1: cross-identity wallet list is soft-denied (200 + empty).
+        let principal = self.extract_principal(request);
+        if !may_read_wallet_subject(&principal, identity_id) {
+            tracing::info!(
+                target: "access_control",
+                principal_did = %principal.did,
+                principal_role = ?principal.role,
+                subject = %identity_id,
+                domain = "WalletGraph",
+                op = "Enumerate",
+                "wallet list denied (soft privacy)"
+            );
+            return Self::denied_wallet_list_response(identity_id);
+        }
 
         // The in-memory identity_manager is an optional fast-path for the rich
         // Identity object (it carries the WalletManager with staked/pending
@@ -468,8 +548,20 @@ impl WalletHandler {
         };
         let identity_hash = Hash(identity_id_bytes);
 
-        // TODO: Gate cross-identity balance once mobile app is updated.
-        // For now, return full data to maintain backward compatibility.
+        // #2935 Phase 1: cross-identity balance is soft-denied (200 + zeros).
+        let principal = self.extract_principal(request);
+        if !may_read_wallet_subject(&principal, identity_id) {
+            tracing::info!(
+                target: "access_control",
+                principal_did = %principal.did,
+                principal_role = ?principal.role,
+                subject = %identity_id,
+                domain = "WalletGraph",
+                op = "Read",
+                "wallet balance denied (soft privacy)"
+            );
+            return Self::denied_wallet_balance_response(wallet_type_str, identity_id);
+        }
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -603,8 +695,20 @@ impl WalletHandler {
         };
         let identity_hash = Hash(identity_id_bytes);
 
-        // TODO: Gate cross-identity statistics once mobile app is updated.
-        // For now, return full data to maintain backward compatibility.
+        // #2935 Phase 1: cross-identity statistics soft-denied (200 + empty).
+        let principal = self.extract_principal(request);
+        if !may_read_wallet_subject(&principal, identity_id) {
+            tracing::info!(
+                target: "access_control",
+                principal_did = %principal.did,
+                principal_role = ?principal.role,
+                subject = %identity_id,
+                domain = "WalletGraph",
+                op = "Read",
+                "wallet statistics denied (soft privacy)"
+            );
+            return Self::denied_wallet_statistics_response(identity_id);
+        }
 
         // Get the identity from stored state
         let identity = match self.get_identity_by_id(&identity_id_bytes).await {
@@ -1362,9 +1466,21 @@ impl WalletHandler {
         };
         let identity_hash = Hash(identity_id_bytes);
 
-        // Graph-traversal guard: WalletGraph / Read
-        // TODO: Gate cross-identity transaction history once mobile app is updated.
-        // For now, return full data to maintain backward compatibility.
+        // #2935 Phase 1: cross-identity history soft-denied (200 + empty).
+        // Tx-involvement expansion for non-owners is deferred (no balance leak).
+        let principal = self.extract_principal(request);
+        if !may_read_wallet_subject(&principal, identity_id) {
+            tracing::info!(
+                target: "access_control",
+                principal_did = %principal.did,
+                principal_role = ?principal.role,
+                subject = %identity_id,
+                domain = "WalletGraph",
+                op = "Read",
+                "wallet transactions denied (soft privacy)"
+            );
+            return Self::denied_wallet_transactions_response(identity_id);
+        }
 
         // The in-memory identity_manager is an optional fast-path only; a miss
         // must not hide on-chain transaction history. Fall through to the
