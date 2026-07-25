@@ -50,12 +50,33 @@ impl SecurityPrincipal {
     }
 
     /// Attach scoped grants (truncated to [`crate::grant::MAX_GRANTS_PER_PRINCIPAL`]).
+    ///
+    /// Prefer [`Self::with_authenticated_grants`] on production paths after
+    /// [`crate::grant_auth::verify_grant_proof`]. This method remains for tests
+    /// and trusted server-side attach of already-verified grants.
     pub fn with_grants(mut self, mut grants: Vec<ScopedGrant>) -> Self {
         if grants.len() > crate::grant::MAX_GRANTS_PER_PRINCIPAL {
             grants.truncate(crate::grant::MAX_GRANTS_PER_PRINCIPAL);
         }
         self.grants = grants;
         self
+    }
+
+    /// Attach grants derived from dual-auth-verified [`crate::grant_auth::GrantRecord`]s.
+    ///
+    /// Caller must have run `verify_grant_proof` for each record. Only Active
+    /// exercisable records are attached.
+    pub fn with_authenticated_grants(
+        self,
+        records: &[crate::grant_auth::GrantRecord],
+        now_unix: u64,
+    ) -> Self {
+        let grants: Vec<ScopedGrant> = records
+            .iter()
+            .filter(|r| r.is_exercisable(now_unix) && r.grantee_did == self.did)
+            .map(|r| r.to_scoped_grant())
+            .collect();
+        self.with_grants(grants)
     }
 
     /// Check if the principal possesses a specific capability.
