@@ -78,6 +78,7 @@ pub use keyfile_names as keystore_names;
 pub mod network_output_dispatcher;
 pub mod security;
 pub mod server;
+pub mod elevated_session;
 pub mod session_manager;
 pub mod storage_network_integration;
 pub mod sync_wire;
