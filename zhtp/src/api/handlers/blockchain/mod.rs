@@ -3205,16 +3205,24 @@ impl BlockchainHandler {
             None
         };
 
-        // Access control: unfiltered enumeration is restricted to elevated roles.
+        // Access control: unfiltered enumeration is audit-class (not ops-only InfraAdmin).
+        // Dual-auth plan Phase A: InfraAdmin = ops purity, no blanket wallet enum.
         if owner_filter.is_none() {
             let allowed = matches!(
                 principal.role,
                 lib_access_control::Role::System
                     | lib_access_control::Role::Node
-                    | lib_access_control::Role::InfraAdmin
                     | lib_access_control::Role::Council
                     | lib_access_control::Role::Emergency
-            );
+            )
+                || principal.grant_allows(
+                    AccessDomain::WalletGraph,
+                    AccessOperation::Enumerate,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                );
             if !allowed {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::Forbidden,

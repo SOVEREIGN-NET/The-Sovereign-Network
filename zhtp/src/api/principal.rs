@@ -56,13 +56,20 @@ mod tests {
             NodeType::FullNode,
         );
         let council = SecurityPrincipal::new("did:zhtp:council", Role::Council, NodeType::FullNode);
+        let infra = SecurityPrincipal::new(
+            "did:zhtp:infraadmin",
+            Role::InfraAdmin,
+            NodeType::FullNode,
+        );
         let public = SecurityPrincipal::public();
 
-        // When privacy is on (default), self OK, other denied, council OK, public denied.
+        // When privacy is on (default): self OK, other denied, council OK,
+        // InfraAdmin is ops-only (no cross-wallet via role), public denied.
         if wallet_read_privacy_enforced() {
             assert!(may_read_wallet_subject(&self_p, hex));
             assert!(!may_read_wallet_subject(&other, hex));
             assert!(may_read_wallet_subject(&council, hex));
+            assert!(!may_read_wallet_subject(&infra, hex));
             assert!(!may_read_wallet_subject(&public, hex));
         }
     }
@@ -148,10 +155,11 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
 
 /// Env-configured ops allowlist for `Role::InfraAdmin` (comma-separated DIDs).
 ///
-/// **Consensus-critical.** Holders get Phase 2 ops: halt consensus, full chain
-/// export/import, wallet provision, plus cross-user wallet read (Phase 1).
+/// **Consensus-critical.** Holders get ops: halt consensus, full chain
+/// export/import, wallet provision. Cross-user wallet audit is **not** included
+/// (ops purity — dual-auth plan Phase A); that remains Council or audit grants.
 /// Treat like a secret-grade allowlist: typos/leaks enable network DoS and
-/// full-chain exfiltration. See ADR `docs/arch/authorization-bootstrap-adr.md`.
+/// full-chain exfiltration.
 ///
 /// Example: `ZHTP_INFRA_ADMIN_DIDS=did:zhtp:abc...,did:zhtp:def...`
 pub fn infra_admin_dids_from_env() -> Vec<String> {
@@ -182,7 +190,7 @@ pub fn log_infra_admin_config_at_startup() {
             target: "access_control",
             count = dids.len(),
             infra_admin_dids = ?dids,
-            "ZHTP_INFRA_ADMIN_DIDS grants InfraAdmin (halt/export/import/provision + wallet read)"
+            "ZHTP_INFRA_ADMIN_DIDS grants InfraAdmin (halt/export/import/provision; no cross-wallet audit)"
         );
     }
 }
@@ -203,19 +211,24 @@ pub fn wallet_read_privacy_enforced() -> bool {
 /// Whether `principal` may read wallet graph data for `subject_identity_id`
 /// (raw hex or `did:zhtp:`). Soft-privacy path: callers return empty/zero
 /// bodies on deny rather than 403.
+///
+/// **Role purity (dual-auth plan Phase A):** `InfraAdmin` is ops-only — no
+/// cross-identity wallet audit via role alone. Council retains bootstrap audit
+/// until audit grants land. Elevation for non-Council is self or ScopedGrant.
 pub fn may_read_wallet_subject(principal: &SecurityPrincipal, subject_identity_id: &str) -> bool {
     use lib_access_control::Role;
     if !wallet_read_privacy_enforced() {
         return true;
     }
     match principal.role {
-        Role::Council | Role::InfraAdmin => true,
+        Role::Council => true,
         Role::Citizen
         | Role::Device
         | Role::PolicyAdmin
         | Role::Emergency
         | Role::Node
-        | Role::System => {
+        | Role::System
+        | Role::InfraAdmin => {
             if identity_id_matches_caller(subject_identity_id, &principal.did) {
                 return true;
             }

@@ -1020,9 +1020,27 @@ impl NetworkHandler {
     }
 
     /// POST /api/v1/node/shutdown — clean shutdown of the node process
-    async fn handle_node_shutdown(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        info!("API: Node shutdown requested");
-        // Signal the runtime to begin graceful shutdown
+    /// (ops-elevated only; was unauthenticated — dual-auth plan Phase A)
+    async fn handle_node_shutdown(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        let principal = crate::api::principal::extract_principal_from_request(&request);
+        if !crate::api::principal::is_ops_elevated(&principal) {
+            crate::api::principal::log_access_decision(
+                &principal,
+                "node",
+                "Ops",
+                "Shutdown",
+                false,
+                "requires Council or InfraAdmin",
+            );
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::Forbidden,
+                "Node shutdown requires Council or InfraAdmin role".to_string(),
+            ));
+        }
+        info!(
+            "API: Node shutdown requested by {} ({:?})",
+            principal.did, principal.role
+        );
         let response = serde_json::json!({
             "success": true,
             "message": "Shutdown initiated. Node will stop after current block is finalized.",
