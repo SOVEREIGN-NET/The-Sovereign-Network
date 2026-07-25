@@ -1,6 +1,32 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Cargo configuration for The Sovereign Network
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Per-thread stack size ────────────────────────────────────────────────────
 # Heavy end-to-end tests (e.g. zhtp's identity-migration tests that build a full
-# UnifiedStorageSystem) exceed the default 2MB stack of libtest / current-thread
+# UnifiedStorageSystem) exceed the default 2 MB stack of libtest / current-thread
 # tokio test threads and abort with a stack overflow. Bump the per-thread stack
 # for all cargo-invoked processes. Harmless in production (larger stacks only).
 [env]
-RUST_MIN_STACK = "16777216"
+RUST_MIN_STACK = "16777216"   # 16 MB
+
+# ── Windows linker stack reserve ─────────────────────────────────────────────
+# The default Windows PE linker reserves only 1 MB of stack space for the main
+# thread. During startup, the async runtime (tokio) pins several deep futures
+# (domain registration, IPC handshake, blockchain replay) on the main thread
+# before the first .await yields to the thread-pool. With debug symbols or
+# optimisations disabled, these frames can exceed 1 MB and cause a silent
+# STATUS_STACK_OVERFLOW (0xC00000FD) on Windows.
+#
+# Raising the linker /STACK:reserve to 16 MB matches the RUST_MIN_STACK value
+# above and guarantees that the main thread has enough headroom for deep
+# startup futures. The /STACK:commit value is left at the default (4 KB page)
+# so physical memory is committed lazily — there is no 16 MB up-front cost.
+#
+# This is a Windows-only setting. On Linux and macOS the kernel automatically
+# grows the stack via guard-page faults, so no linker flag is needed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:16777216"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=-Wl,--stack,16777216"]
