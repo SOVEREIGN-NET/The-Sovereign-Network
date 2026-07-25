@@ -108,6 +108,12 @@ per-request principal and are not mutated across requests, so **use-count limits
 grants-per-principal (`MAX_GRANTS_PER_PRINCIPAL`) so `grants_allow` cannot become
 an O(n) DoS on the authz hot path.
 
+**Concept target (not fully implemented):** one subject DID + **dual-auth grants**
+as meta-credentials — elevated power requires grant key proof separate from
+personal DID unlock; wallet stores DID keys only; grant keys are external /
+on-demand (optionally cold). See
+[did-grant-dual-auth-adr.md](./did-grant-dual-auth-adr.md).
+
 ### 6. Non-goals
 
 - Replacing `lib-access-control` with a second UnifiedAccessControl Permission mega-enum.
@@ -144,4 +150,5 @@ an O(n) DoS on the authz hot path.
 - `lib-access-control` (`Role`, `AccessDomain`, `AccessPolicy`)
 - `zhtp/src/api/principal.rs` (`extract_principal_from_request`)
 - Wallet ungated reads: historical #2299
+- [did-grant-dual-auth-adr.md](./did-grant-dual-auth-adr.md) — one DID, grant meta-credentials, separate unlock / cold grant keys
 - Sovereign assets / dao_class: `docs/arch/sovereign-asset.md`, `docs/arch/dao-launch-decision-register.md`
