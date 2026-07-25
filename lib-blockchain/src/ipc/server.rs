@@ -1,29 +1,51 @@
-//! IPC server — listens on a Unix domain socket and dispatches queries
+//! IPC server — listens on a platform-native transport and dispatches queries
 //! to the blockchain engine.
+//!
+//! - **Unix**: Unix domain socket
+//! - **Windows**: TCP loopback (port written to path file for client discovery)
 
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixListener;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
+use super::{TransportListener, TransportStream};
 use crate::blockchain::Blockchain;
 use crate::query::BlockchainQuery;
 use super::protocol::*;
 
-/// Start the IPC server on the given Unix socket path.
+/// Start the IPC server on the given socket path.
 ///
 /// Spawns a background task that accepts connections and dispatches
 /// requests to the blockchain. Each connection is handled concurrently.
+///
+/// - **Unix**: binds a `UnixListener` at `socket_path`
+/// - **Windows**: binds a `TcpListener` on `127.0.0.1:0`, writes the assigned
+///   port to `socket_path` as a text file for client discovery
 pub async fn start_ipc_server(
     socket_path: &Path,
     blockchain: Arc<RwLock<Blockchain>>,
 ) -> std::io::Result<()> {
-    // Remove stale socket file if it exists
+    // Remove stale socket file if it exists (Unix only)
+    #[cfg(unix)]
     let _ = std::fs::remove_file(socket_path);
 
-    let listener = UnixListener::bind(socket_path)?;
+    #[cfg(unix)]
+    let listener = TransportListener::bind(socket_path)?;
+
+    #[cfg(not(unix))]
+    let listener = {
+        let l = TransportListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap()).await?;
+        let local_addr = l.local_addr()?;
+        let port = local_addr.port();
+        // Write the assigned port to the path file so the client can discover it
+        tokio::fs::write(socket_path, port.to_string()).await?;
+        info!("IPC server listening on 127.0.0.1:{} (port file: {})", port, socket_path.display());
+        l
+    };
+
+    #[cfg(unix)]
     info!("IPC server listening on {}", socket_path.display());
 
     tokio::spawn(async move {
@@ -45,7 +67,7 @@ pub async fn start_ipc_server(
 }
 
 async fn handle_connection(
-    mut stream: tokio::net::UnixStream,
+    mut stream: TransportStream,
     blockchain: Arc<RwLock<Blockchain>>,
 ) {
     loop {
