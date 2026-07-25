@@ -1323,6 +1323,12 @@ impl ZhtpUnifiedServer {
             credentials_handler,
         );
 
+        // Dual-auth grants: offer / claim / elevate (Phase B2 skeleton).
+        // Process-local registry until sled/chain persistence.
+        let grants_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::GrantsHandler::new());
+        zhtp_router.register_handler("/api/v1/grants".to_string(), grants_handler);
+
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))
     }
