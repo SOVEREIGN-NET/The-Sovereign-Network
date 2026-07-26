@@ -79,6 +79,7 @@ pub mod network_output_dispatcher;
 pub mod security;
 pub mod server;
 pub mod elevated_session;
+pub mod grant_crypto;
 pub mod session_manager;
 pub mod storage_network_integration;
 pub mod sync_wire;
