@@ -16,7 +16,7 @@ use tracing::info;
 
 use lib_access_control::{
     AccessDomain, AccessOperation, GrantAuthDescriptor, GrantAuthScheme, GrantClass, GrantExerciseProof,
-    GrantRecord, GrantStatus, IssuerKind, RejectAllVerifier, Role,
+    GrantRecord, GrantStatus, IssuerKind, Role,
 };
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
@@ -25,6 +25,7 @@ use crate::api::principal::{extract_principal_from_request, is_ops_elevated};
 use crate::elevated_session::{
     get_global_elevated_sessions, session_binding_from_request, DEFAULT_ELEVATED_TTL_SECS,
 };
+use crate::grant_crypto::Dilithium5GrantVerifier;
 use crate::runtime::grant_registry_provider::get_global_grant_registry;
 
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -286,15 +287,14 @@ impl GrantsHandler {
             });
         }
         let reg = get_global_grant_registry();
-        // HARD GATE (Phase B3 before D): Signature needs a real Dilithium verifier.
-        // RejectAll keeps Signature fail-closed. DevAccept is not compiled into
-        // production (requires feature dev-grants). Do not cut fat roles until B3.
+        // Production dual-auth second factor: Dilithium5 over grant_exercise_message.
+        // DevAccept remains cfg-gated out of production builds.
         let records = match reg.verify_and_collect_for_elevate(
             &principal.did,
             &proofs,
             now,
             &binding,
-            &RejectAllVerifier,
+            &Dilithium5GrantVerifier,
         ) {
             Ok(r) => r,
             Err(e) => return Ok(error_resp(ZhtpStatus::Forbidden, &e.to_string())),
@@ -492,11 +492,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn offer_claim_elevate_flow() {
-        // Unique ids so parallel/global registry tests do not collide.
-        let gid = format!("b2-flow-{}", uuid_like());
+    async fn offer_claim_elevate_flow_dilithium5() {
+        use lib_access_control::grant_exercise_message;
+        use lib_crypto::post_quantum::dilithium::{dilithium5_keypair, dilithium5_sign};
+
+        let gid = format!("b3-dil-{}", uuid_like());
         let alice_hex = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let alice_did = format!("did:zhtp:{alice_hex}");
+        let (pk, sk) = dilithium5_keypair();
 
         let reg = get_global_grant_registry();
         let offer = GrantRecord::offer_council(
@@ -512,12 +515,18 @@ mod tests {
             &gid,
             &alice_did,
             GrantAuthDescriptor {
-                scheme: GrantAuthScheme::DevAccept,
-                public_key: vec![],
+                scheme: GrantAuthScheme::Signature,
+                public_key: pk,
             },
             now_unix(),
         )
         .unwrap();
+
+        let binding = "test-bind";
+        let signed_at = now_unix();
+        let msg = grant_exercise_message(&gid, &alice_did, binding, signed_at);
+        let sig = dilithium5_sign(&msg, &sk).expect("sign grant exercise");
+        let sig_hex = hex::encode(&sig);
 
         let h = GrantsHandler::new();
         let elevate = req(
@@ -526,8 +535,8 @@ mod tests {
             json!({
                 "proofs": [{
                     "grant_id": gid,
-                    "signed_at_unix": now_unix(),
-                    "signature_hex": "DEV-OK"
+                    "signed_at_unix": signed_at,
+                    "signature_hex": sig_hex
                 }]
             }),
             Some(alice_hex),
@@ -535,7 +544,6 @@ mod tests {
         let resp = h.handle_request(elevate).await.unwrap();
         assert_eq!(resp.status, ZhtpStatus::Ok, "{:?}", resp.status_message);
 
-        // Principal extraction should attach grant.
         let follow = req(ZhtpMethod::Get, "/api/v1/grants/me", json!({}), Some(alice_hex));
         let p = extract_principal_from_request(&follow);
         assert!(
