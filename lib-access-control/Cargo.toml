@@ -11,3 +11,9 @@ lib-types = { path = "../lib-types" }
 
 [dev-dependencies]
 serde_json = "1.0"
+
+[features]
+default = []
+# Test/dev only: enables GrantAuthScheme::DevAccept (DEV-OK). Never enable in production builds.
+dev-grants = []
+
