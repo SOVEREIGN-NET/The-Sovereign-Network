@@ -4,6 +4,9 @@
 //! structural verify + types for offer/claim/exercise. Production Dilithium
 //! (or other) signature checks plug in via [`GrantSignatureVerifier`]; the
 //! library stays free of crypto crates.
+//!
+//! Feature `dev-grants` enables [`GrantAuthScheme::DevAccept`] for tests only.
+//! Production builds must not enable it — dual-auth second factor must be real crypto.
 
 use crate::grant::ScopedGrant;
 use crate::types::{AccessDomain, AccessOperation, Did};
@@ -61,6 +64,10 @@ pub enum GrantAuthScheme {
     /// [`GrantSignatureVerifier`] (production: Dilithium, etc.).
     Signature,
     /// Test/dev only: signature bytes must equal `b"DEV-OK"`.
+    ///
+    /// **Not compiled into production** unless feature `dev-grants` is enabled.
+    /// A production binary must not honor a constant second factor.
+    #[cfg(any(test, feature = "dev-grants"))]
     DevAccept,
 }
 
@@ -68,7 +75,7 @@ pub enum GrantAuthScheme {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrantAuthDescriptor {
     pub scheme: GrantAuthScheme,
-    /// Public key or scheme-specific material (empty for DevAccept).
+    /// Public key or scheme-specific material (empty for dev-only schemes).
     #[serde(default)]
     pub public_key: Vec<u8>,
 }
@@ -240,7 +247,7 @@ pub struct GrantExerciseProof {
     pub session_binding: String,
     /// Unix seconds when the client signed.
     pub signed_at_unix: u64,
-    /// Scheme-specific signature (or `DEV-OK` for DevAccept).
+    /// Scheme-specific signature (or `DEV-OK` when `dev-grants` is enabled).
     pub signature: Vec<u8>,
 }
 
@@ -348,6 +355,7 @@ pub fn verify_grant_proof<V: GrantSignatureVerifier>(
     }
     let auth = record.auth.as_ref().ok_or(GrantAuthError::MissingAuth)?;
     match auth.scheme {
+        #[cfg(any(test, feature = "dev-grants"))]
         GrantAuthScheme::DevAccept => {
             if proof.signature != b"DEV-OK" {
                 return Err(GrantAuthError::BadSignature);

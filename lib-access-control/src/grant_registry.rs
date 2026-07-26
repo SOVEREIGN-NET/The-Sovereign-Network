@@ -1,7 +1,9 @@
 //! In-process grant registry (offer / claim / revoke).
 //!
-//! Phase B2 skeleton: thread-safe memory store. Persistence (sled/chain) can
-//! wrap the same API later without changing callers.
+//! **Test/dev scaffold only** (in-process `HashMap`). Not a production ops-grant
+//! store: claim/revoke here is invisible to other validators. Ops/audit grants
+//! require chain-backed or gossip-replicated storage before cross-node trust.
+//! Persistence can wrap the same API later without changing callers.
 
 use crate::grant_auth::{
     protocol_may_offer, GrantAuthDescriptor, GrantAuthError, GrantClass, GrantRecord, GrantStatus,
