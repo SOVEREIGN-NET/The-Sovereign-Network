@@ -133,7 +133,16 @@ pub fn extract_principal_from_request(request: &ZhtpRequest) -> SecurityPrincipa
         let raw_did = format!("did:zhtp:{}", hex::encode(&identity_id.0));
         let did = resolve_canonical_did(identity_id.0, raw_did.clone());
         let role = resolve_role_for_dids(&[did.as_str(), raw_did.as_str()]);
-        return SecurityPrincipal::new(&did, role, NodeType::FullNode);
+        let mut principal = SecurityPrincipal::new(&did, role, NodeType::FullNode);
+        // Dual-auth Phase B2: attach short-lived elevated grants after
+        // POST /api/v1/grants/elevate (prove DID ∧ grant). No secrets here.
+        let binding = crate::elevated_session::session_binding_from_request(request);
+        if let Some(elev) = crate::elevated_session::get_global_elevated_sessions()
+            .get(&did, &binding)
+        {
+            principal = principal.with_grants(elev.grants);
+        }
+        return principal;
     }
 
     // Client-declared NodeType is spoofable. Fail closed: treat as Public

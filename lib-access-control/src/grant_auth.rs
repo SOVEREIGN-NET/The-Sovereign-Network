@@ -265,6 +265,10 @@ pub fn grant_exercise_message(
 }
 
 /// Pluggable signature verify (production crypto lives outside this crate).
+///
+/// **Hard gate before Phase D:** a real Dilithium (or production) implementation
+/// must be wired into elevate before any fat-role cut-over. Shipping cut-over
+/// with only [`RejectAllVerifier`] / `DevAccept` makes ops DID-only or unreachable.
 pub trait GrantSignatureVerifier {
     fn verify(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> bool;
 }

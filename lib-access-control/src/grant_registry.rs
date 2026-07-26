@@ -106,6 +106,35 @@ impl GrantRegistry {
         }
         n
     }
+
+    /// Verify dual-auth exercise proofs and return Active records for attach.
+    ///
+    /// All proofs must succeed; first failure aborts (fail-closed).
+    pub fn verify_and_collect_for_elevate<V: crate::grant_auth::GrantSignatureVerifier>(
+        &self,
+        grantee_did: &str,
+        proofs: &[crate::grant_auth::GrantExerciseProof],
+        now_unix: u64,
+        session_binding: &str,
+        verifier: &V,
+    ) -> Result<Vec<crate::grant_auth::GrantRecord>, crate::grant_auth::GrantAuthError> {
+        use crate::grant_auth::verify_grant_proof;
+        let mut out = Vec::with_capacity(proofs.len());
+        for proof in proofs {
+            if proof.grantee_did != grantee_did {
+                return Err(crate::grant_auth::GrantAuthError::GranteeMismatch);
+            }
+            let rec = self
+                .get(&proof.grant_id)
+                .ok_or(crate::grant_auth::GrantAuthError::NotExercisable)?;
+            if rec.grantee_did != grantee_did {
+                return Err(crate::grant_auth::GrantAuthError::GranteeMismatch);
+            }
+            verify_grant_proof(&rec, proof, now_unix, session_binding, verifier)?;
+            out.push(rec);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -141,6 +170,45 @@ mod tests {
         assert_eq!(active.status, GrantStatus::Active);
         reg.revoke("g1").unwrap();
         assert!(reg.get("g1").unwrap().revoked);
+    }
+
+    #[test]
+    fn verify_and_collect_elevate_dev_accept() {
+        use crate::grant_auth::{
+            GrantAuthScheme, GrantExerciseProof, RejectAllVerifier,
+        };
+        let reg = GrantRegistry::new();
+        let offer = GrantRecord::offer_council(
+            "g-elev",
+            "did:zhtp:bob",
+            "did:zhtp:council",
+            GrantClass::Ops,
+            vec![AccessDomain::NodeGraph],
+            vec![AccessOperation::Traverse],
+        );
+        reg.register_offer(offer).unwrap();
+        reg.claim(
+            "g-elev",
+            "did:zhtp:bob",
+            GrantAuthDescriptor {
+                scheme: GrantAuthScheme::DevAccept,
+                public_key: vec![],
+            },
+            10,
+        )
+        .unwrap();
+        let proofs = vec![GrantExerciseProof {
+            grant_id: "g-elev".into(),
+            grantee_did: "did:zhtp:bob".into(),
+            session_binding: "s".into(),
+            signed_at_unix: 20,
+            signature: b"DEV-OK".to_vec(),
+        }];
+        let recs = reg
+            .verify_and_collect_for_elevate("did:zhtp:bob", &proofs, 25, "s", &RejectAllVerifier)
+            .unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].id, "g-elev");
     }
 
     #[test]
