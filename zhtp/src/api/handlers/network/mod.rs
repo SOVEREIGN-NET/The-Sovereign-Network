@@ -1019,8 +1019,8 @@ impl NetworkHandler {
         Ok(ZhtpResponse::json(&response, None)?)
     }
 
-    /// POST /api/v1/node/shutdown — clean shutdown of the node process
-    /// (ops-elevated only; was unauthenticated — dual-auth plan Phase A)
+    /// POST /api/v1/node/shutdown — clean shutdown of the node process.
+    /// Requires ops elevation (`is_ops_elevated`: Council, InfraAdmin, or ops grant).
     async fn handle_node_shutdown(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let principal = crate::api::principal::extract_principal_from_request(&request);
         if !crate::api::principal::is_ops_elevated(&principal) {
@@ -1030,11 +1030,12 @@ impl NetworkHandler {
                 "Ops",
                 "Shutdown",
                 false,
-                "requires Council or InfraAdmin",
+                "requires ops elevation",
             );
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::Forbidden,
-                "Node shutdown requires Council or InfraAdmin role".to_string(),
+                "Node shutdown requires ops elevation (Council, InfraAdmin, or ops grant)"
+                    .to_string(),
             ));
         }
         info!(
