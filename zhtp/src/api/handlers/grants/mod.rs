@@ -69,16 +69,16 @@ fn record_json(r: &GrantRecord) -> serde_json::Value {
 #[derive(Deserialize)]
 struct ClaimBody {
     grant_id: String,
-    /// `dev_accept` | `signature` (snake_case)
+    /// `signature` (production) or `dev_accept` (only with feature `dev-grants`)
     #[serde(default = "default_scheme")]
     scheme: String,
-    /// Hex-encoded public key for signature scheme; empty for DevAccept.
+    /// Hex-encoded public key for signature scheme.
     #[serde(default)]
     public_key_hex: String,
 }
 
 fn default_scheme() -> String {
-    "dev_accept".into()
+    "signature".into()
 }
 
 #[derive(Deserialize)]
@@ -94,7 +94,7 @@ struct ElevateProofBody {
     grant_id: String,
     /// Unix seconds when the client signed.
     signed_at_unix: u64,
-    /// Hex signature, or literal `DEV-OK` for DevAccept.
+    /// Hex signature (or literal `DEV-OK` when `dev-grants` is enabled).
     signature_hex: String,
 }
 
@@ -161,8 +161,9 @@ fn parse_op(s: &str) -> Option<AccessOperation> {
 
 fn parse_auth_scheme(s: &str) -> Option<GrantAuthScheme> {
     match s.trim().to_ascii_lowercase().as_str() {
-        "dev_accept" | "devaccept" => Some(GrantAuthScheme::DevAccept),
         "signature" => Some(GrantAuthScheme::Signature),
+        #[cfg(any(test, feature = "dev-grants"))]
+        "dev_accept" | "devaccept" => Some(GrantAuthScheme::DevAccept),
         _ => None,
     }
 }
@@ -218,7 +219,7 @@ impl GrantsHandler {
             None => {
                 return Ok(error_resp(
                     ZhtpStatus::BadRequest,
-                    "scheme must be dev_accept or signature",
+                    "scheme must be signature (or dev_accept with dev-grants)",
                 ));
             }
         };
@@ -285,9 +286,9 @@ impl GrantsHandler {
             });
         }
         let reg = get_global_grant_registry();
-        // HARD GATE (Phase B3 before D): Signature scheme needs a real Dilithium
-        // verifier. DevAccept does not use the verifier; RejectAll keeps Signature
-        // fail-closed. Do not cut fat roles until this is production-wired.
+        // HARD GATE (Phase B3 before D): Signature needs a real Dilithium verifier.
+        // RejectAll keeps Signature fail-closed. DevAccept is not compiled into
+        // production (requires feature dev-grants). Do not cut fat roles until B3.
         let records = match reg.verify_and_collect_for_elevate(
             &principal.did,
             &proofs,

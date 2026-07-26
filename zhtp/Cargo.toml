@@ -137,12 +137,16 @@ zhtp_client = { package = "lib-client", path = "../lib-client" }
 # Enables lib-identity `_for_test` helpers (e.g. insert_session_for_test) for
 # zhtp's own tests. Dev-only: production builds do not pull this feature.
 lib-identity = { path = "../lib-identity", features = ["test-support"] }
+# Dual-auth DevAccept (DEV-OK) for tests only — never enable in production.
+lib-access-control = { path = "../lib-access-control", features = ["dev-grants"] }
 
 [features]
 default = ["production", "full-blockchain", "windows-bluetooth"]  # See Issue #739 for planned TLS pinning behavior
 production = []
 # unsafe-bootstrap removed - TLS certificate pinning is now required (Issue #739)
 development = ["tracing-subscriber/env-filter"]
+# Explicit opt-in for local non-test binaries that need DevAccept (never for production deploy).
+dev-grants = ["lib-access-control/dev-grants"]
 pure-mesh = []  # Pure mesh mode without TCP/IP fallback
 hybrid = []     # Hybrid mesh + TCP/IP mode
 yaml = ["dep:serde_yaml"]  # Optional YAML output support
