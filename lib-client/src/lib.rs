@@ -669,6 +669,67 @@ pub extern "C" fn zhtp_client_sign_message(
     }
 }
 
+/// Generate a standalone Dilithium5 keypair for dual-auth **grant** material.
+///
+/// Grant keys are **not** DID/wallet keys — callers must store the secret
+/// outside the always-hot DID keystore (mobile CR #2963).
+///
+/// Writes:
+/// - `public_key_out`: 2592 bytes
+/// - `secret_key_out`: 4864 bytes
+///
+/// Returns 0 on success, -1 on null/undersized buffers.
+#[no_mangle]
+pub extern "C" fn zhtp_client_dilithium5_keypair(
+    public_key_out: *mut u8,
+    public_key_len: usize,
+    secret_key_out: *mut u8,
+    secret_key_len: usize,
+) -> i32 {
+    if public_key_out.is_null()
+        || secret_key_out.is_null()
+        || public_key_len < 2592
+        || secret_key_len < 4864
+    {
+        return -1;
+    }
+    let (pk, sk) = lib_crypto::post_quantum::dilithium::dilithium5_keypair();
+    if pk.len() != 2592 || sk.len() < 4864 {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(pk.as_ptr(), public_key_out, 2592);
+        std::ptr::copy_nonoverlapping(sk.as_ptr(), secret_key_out, 4864);
+    }
+    0
+}
+
+/// Sign a message with a raw Dilithium5 secret key (grant exercise path).
+///
+/// `secret_key` is 4864 (or 4896 storage) bytes. Returns hex-encoded 4595-byte
+/// detached signature. Caller frees with `zhtp_client_string_free`.
+/// Returns NULL on error.
+#[no_mangle]
+pub extern "C" fn zhtp_client_dilithium5_sign(
+    secret_key: *const u8,
+    secret_key_len: usize,
+    message: *const u8,
+    message_len: usize,
+) -> *mut std::ffi::c_char {
+    if secret_key.is_null() || message.is_null() || secret_key_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let sk = unsafe { std::slice::from_raw_parts(secret_key, secret_key_len) };
+    let msg = unsafe { std::slice::from_raw_parts(message, message_len) };
+    match lib_crypto::post_quantum::dilithium::dilithium5_sign(msg, sk) {
+        Ok(sig) => match std::ffi::CString::new(hex::encode(sig)) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Serialize identity to JSON. Caller must free with `zhtp_client_string_free`.
 #[no_mangle]
 pub extern "C" fn zhtp_client_identity_serialize(
