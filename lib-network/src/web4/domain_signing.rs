@@ -1,13 +1,11 @@
 //! Canonical domain-update signing and Dilithium5 verification.
 //!
-//! ## Current wire format (signers must produce this)
+//! ## Wire format
 //! `ZHTP-domain-update-v1\0domain|expected_previous_manifest_cid|new_manifest_cid|timestamp`
 //!
-//! ## Transition (one release)
-//! Verifiers also accept the legacy unprefixed form
-//! `domain|expected_previous_manifest_cid|new_manifest_cid|timestamp` so older
-//! mobile/CLI clients can still update domains. Signers must not emit legacy.
-//! Drop legacy accept in a follow-up release.
+//! The legacy unprefixed form was accepted during a one-release dual-accept
+//! window (PR #2746 / #2914) and has been removed. All signers must now
+//! include the `ZHTP-domain-update-v1\0` domain separation prefix.
 
 use anyhow::{anyhow, Result};
 use lib_crypto::verify_signature;
@@ -68,45 +66,23 @@ pub fn domain_update_signing_message(
     message
 }
 
-/// Legacy unprefixed signing message (pre domain-separation).
-///
-/// Used only by verifiers during the dual-accept window. Do not sign with this.
-pub fn domain_update_signing_message_legacy(
-    domain: &str,
-    expected_previous_manifest_cid: &str,
-    new_manifest_cid: &str,
-    timestamp: u64,
-) -> Vec<u8> {
-    domain_update_payload(
-        domain,
-        expected_previous_manifest_cid,
-        new_manifest_cid,
-        timestamp,
-    )
-    .into_bytes()
-}
 
-/// Messages accepted during verification: current (prefixed) first, then legacy.
+/// Build the single canonical verification message (prefixed).
+///
+/// Legacy unprefixed candidates were removed after the one-release dual-accept
+/// window. All verifiers now require the `ZHTP-domain-update-v1\0` prefix.
 pub fn domain_update_verify_candidates(
     domain: &str,
     expected_previous_manifest_cid: &str,
     new_manifest_cid: &str,
     timestamp: u64,
-) -> [Vec<u8>; 2] {
-    [
-        domain_update_signing_message(
-            domain,
-            expected_previous_manifest_cid,
-            new_manifest_cid,
-            timestamp,
-        ),
-        domain_update_signing_message_legacy(
-            domain,
-            expected_previous_manifest_cid,
-            new_manifest_cid,
-            timestamp,
-        ),
-    ]
+) -> [Vec<u8>; 1] {
+    [domain_update_signing_message(
+        domain,
+        expected_previous_manifest_cid,
+        new_manifest_cid,
+        timestamp,
+    )]
 }
 
 /// Reject missing or malformed owner signatures before mutating domain state.
@@ -212,9 +188,8 @@ pub fn verify_domain_transfer_signature(
 
 /// Verify a domain update signature against the stored owner Dilithium5 public key.
 ///
-/// Accepts the current prefixed message, then falls back to the legacy unprefixed
-/// form for one release (mobile/CLI lag). Prefer signing with
-/// [`domain_update_signing_message`] only.
+/// Only the prefixed message (`ZHTP-domain-update-v1\0domain|…|timestamp`) is
+/// accepted. The legacy unprefixed dual-accept window has been removed.
 pub fn verify_domain_update_signature(
     owner_dilithium_pk: &[u8],
     domain: &str,
@@ -231,35 +206,15 @@ pub fn verify_domain_update_signature(
     let signature_bytes = hex::decode(signature_hex)
         .map_err(|e| anyhow!("Invalid signature hex: {}", e))?;
 
-    let candidates = domain_update_verify_candidates(
+    let message = domain_update_signing_message(
         domain,
         expected_previous_manifest_cid,
         new_manifest_cid,
         timestamp,
     );
 
-    let mut last_err: Option<String> = None;
-    for (idx, message) in candidates.iter().enumerate() {
-        match verify_signature(message, &signature_bytes, owner_pk.as_slice()) {
-            Ok(true) => {
-                if idx > 0 {
-                    // Legacy path hit — remove dual-accept after one release.
-                    tracing::info!(
-                        domain = %domain,
-                        "domain update accepted via legacy unprefixed signature"
-                    );
-                }
-                return Ok(true);
-            }
-            Ok(false) => continue,
-            Err(e) => last_err = Some(e.to_string()),
-        }
-    }
-
-    if let Some(e) = last_err {
-        return Err(anyhow!("Domain update signature verification failed: {e}"));
-    }
-    Ok(false)
+    verify_signature(&message, &signature_bytes, owner_pk.as_slice())
+        .map_err(|e| anyhow!("Domain update signature verification failed: {e}"))
 }
 
 #[cfg(test)]
@@ -375,17 +330,16 @@ mod tests {
     }
 
     #[test]
-    fn domain_update_signature_accepts_legacy_unprefixed_during_transition() {
-        // Dual-accept window: old clients still sign without the prefix.
+    fn domain_update_signature_rejects_legacy_unprefixed() {
+        // Legacy unprefixed signatures must now fail — dual-accept window is closed.
         let keypair = generate_keypair().expect("keypair");
         let domain = "app.zhtp";
         let prev = "bafkabc123";
         let new_cid = "bafkdef456";
         let timestamp = 1_700_000_000u64;
 
-        let raw_message =
-            domain_update_signing_message_legacy(domain, prev, new_cid, timestamp);
-        let sig = sign_message(&keypair, &raw_message).expect("sign");
+        let raw_message = domain_update_payload(domain, prev, new_cid, timestamp);
+        let sig = sign_message(&keypair, raw_message.as_bytes()).expect("sign");
         let sig_hex = hex::encode(&sig.signature);
 
         let ok = verify_domain_update_signature(
@@ -398,16 +352,15 @@ mod tests {
         )
         .expect("verify runs");
         assert!(
-            ok,
-            "legacy unprefixed signatures must verify during dual-accept window"
+            !ok,
+            "legacy unprefixed signatures must be rejected after dual-accept window closed"
         );
     }
 
     #[test]
-    fn domain_update_verify_candidates_order_prefixed_first() {
+    fn domain_update_verify_candidates_contains_only_prefixed() {
         let c = domain_update_verify_candidates("d.zhtp", "prev", "next", 1);
+        assert_eq!(c.len(), 1, "only one candidate after legacy removal");
         assert!(c[0].starts_with(ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN));
-        assert!(!c[1].starts_with(ZHTP_DOMAIN_UPDATE_SIGN_DOMAIN));
-        assert_eq!(c[1], b"d.zhtp|prev|next|1".as_slice());
     }
 }
