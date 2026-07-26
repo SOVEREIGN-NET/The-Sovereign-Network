@@ -219,3 +219,14 @@ We isolate power with **one identity + many grants**, each grant a meta-credenti
 - `docs/arch/did-grant-dual-auth-implementation-plan.md` — gap analysis, **§5 distribution rails**, phased PR plan  
 - `lib-access-control` — `ScopedGrant`, `SecurityPrincipal`, policy engine  
 - `zhtp/src/api/principal.rs` — principal extraction (DID path today)
+
+---
+
+## Store consistency (decision)
+
+**Ops / audit / vote grants** that authorize cluster-wide actions (halt, export, cross-wallet audit, governance exercise) **must** use a **chain-backed or gossip-replicated** grant store so claim and **revocation** are consistent across validators.
+
+**Process-local / sled-only** storage is acceptable only for **node-scoped protocol grants** (`NodeOperate`) whose enforcement is intentionally local to that node, and must never be used as the sole source of truth for ops/audit/vote elevation.
+
+Revocation of an ops-class grant must propagate so that every validator stops honoring it within one agreed gossip/block interval (runbook at issuance rail B2a).
+

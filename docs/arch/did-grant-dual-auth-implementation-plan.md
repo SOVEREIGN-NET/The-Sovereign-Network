@@ -2,7 +2,7 @@
 
 **Status:** Plan (investigation snapshot 2026-07-24)  
 **Target ADR:** [did-grant-dual-auth-adr.md](./did-grant-dual-auth-adr.md)  
-**Bootstrap context:** [authorization-bootstrap-adr.md](./authorization-bootstrap-adr.md) (#2935 Phases 1–3 shipped)
+**Bootstrap context:** [authorization-bootstrap-adr.md](./authorization-bootstrap-adr.md) ([#2935](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2935) Phases 1–3 shipped)
 
 ---
 
@@ -294,14 +294,22 @@ Principles: **never break personal self path**; **dual-path then cut-over**; **c
 ### Phase A — Align and seal holes (1 PR, low risk)
 
 **Goal:** Stop open holes; document dual path; no UX change for council yet.
+**Note:** `node/shutdown` gate may land as a standalone hotfix on `development` if the
+stack is still under review — do not leave an open catastrophic endpoint behind docs.
 
 1. Gate **node shutdown** with `is_ops_elevated` (or remove).  
 2. Reconcile **InfraAdmin wallet read**: match policy (deny cross-wallet) **or** document intentional override — prefer **deny** (ops purity).  
-3. Add matrix tests for dual-auth **placeholders** (grant attach elevates; role-only paths flagged).  
-4. Fix/note QUIC `requester` encoding consistency.  
-5. ADR + this plan linked from tracking epic.
+3. Confirm **export/import/halt/provision** remain ops-elevated (already gated in #2938); no reopen.  
+4. Inventory **Council write-as-other** (send/stake/transfer) for dual-path hardening — prefer
+   deny-or-self-only until `DelegateSpend` grants exist (do not leave months of live over-broad write).  
+5. Add matrix tests for dual-auth **placeholders** (grant attach elevates; role-only paths flagged).  
+6. Fix/note QUIC `requester` encoding consistency.  
+7. ADR + this plan linked from tracking epic.  
+8. **Operator note:** InfraAdmin losing cross-wallet audit is a deliberate breaking change —
+   call out in release notes / runbook until audit grants exist.
 
-**Exit:** No unauthenticated catastrophic endpoints; InfraAdmin ≠ audit by default.
+**Exit:** No unauthenticated catastrophic endpoints; InfraAdmin ≠ audit by default; dual-path
+window does not re-open export/import or leave write-as-other untracked.
 
 ---
 
@@ -314,10 +322,15 @@ Principles: **never break personal self path**; **dual-path then cut-over**; **c
    - `issuer_kind: Council | Protocol`
    - `verify_grant_proof(record, proof, now, session_binding) -> Result`
    - `SecurityPrincipal::with_authenticated_grants` (only pre-verified)
-2. Persistent **grant store** (sled/chain — product choice):
-   - key = `grant_id`
-   - states: Offered / Active / Revoked / Expired / Lapsed  
-   - list-by-grantee (offers + active); no use-count until needed  
+2. Persistent **grant store** (not a product free-for-all):
+   - **Ops / audit / vote grants (cluster-wide powers):** **chain-backed or gossip-replicated**.
+     A sled-local claim/revoke on g1 must not leave g2/g3 enforcing stale grants.
+   - **Node-scoped protocol grants (`NodeOperate` only):** may start process-local / sled,
+     with clear non-cluster semantics.
+   - key = `grant_id`; states: Offered / Active / Revoked / Expired / Lapsed
+   - list-by-grantee (offers + active); no use-count until needed
+   - **Revocation latency (ops):** once revoked on the canonical store, every validator must
+     stop honoring the grant within one gossip/block interval (specify in runbook at B2a).
 3. **Claim API:** DID auth + bind grant pubkey (or one-shot secret bootstrap) → Active.  
 4. **Elevate session API:** DID session + `GrantExerciseProof[]` → attach Active grants (short TTL).  
 5. Wire `extract_principal` (or middleware): elevated proofs → attach; else baseline.  
@@ -355,7 +368,9 @@ Principles: **never break personal self path**; **dual-path then cut-over**; **c
 **Goal:** Protocol + wallet enforce separate unlock / external grant keys.
 
 1. **Wallet / lib-client / CLI:**  
-   - Durable keystore remains DID (+ node identity material for mesh) only.  
+   - Durable **user wallet** keystore: **DID-related keys only** (ADR §4.1).  
+   - **Node/mesh identity material** lives in a **separate** node keystore / process path —
+     not co-stored or co-unlocked with the personal wallet.  
    - Grant key APIs: `import_grant_key_ephemeral`, `sign_grant_proof`, `lock_grant_key` / drop.  
    - **Refuse** writing grant sk into `user_private_key.json` or always-hot keystore.  
 2. **Cold-grant mode** flag: never write grant sk to disk; memory only for one proof.  
@@ -372,13 +387,18 @@ Principles: **never break personal self path**; **dual-path then cut-over**; **c
 
 **Goal:** Eligibility ≠ exercise in production. **Requires B2 offers already claimed** for operators who must keep working.
 
-> **HARD ORDERING GATE (non-negotiable):** A real **Dilithium (or production) `GrantSignatureVerifier`** must land and be wired into elevate **before any Phase D fat-role cut-over**.
+> **HARD ORDERING GATE (non-negotiable):** A real **production grant signature verifier**
+> (Dilithium over the canonical exercise message) must land and be wired into elevate
+> **before any Phase D fat-role cut-over**.
 >
-> - Today elevate accepts `DevAccept` for tests/dev and keeps `Signature` **fail-closed** (`RejectAllVerifier`).
-> - Cutting Council / InfraAdmin fat exercise without a working grant crypto path makes ops either **DID-only again** (reverting dual-auth) or **unreachable** (grant proofs never verify).
-> - Phase D PRs must depend on: production verifier + claimed Ops\* grants vaulted for break-glass operators + dual-path soak evidence.
+> - Until B3: elevate must **fail closed** for real signature schemes; any constant-proof /
+>   test-only scheme must be **compile-time gated out of production** (feature/`cfg`, not docs).
+> - Cutting Council / InfraAdmin fat exercise without working grant crypto makes ops either
+>   **DID-only again** (reverting dual-auth) or **unreachable** (proofs never verify).
+> - Phase D PRs must depend on: production verifier + claimed Ops\* grants vaulted for
+>   break-glass operators + dual-path soak evidence.
 >
-> Suggested pre-D milestone: **Phase B3 — production grant signature verifier** (Dilithium verify over `grant_exercise_message`, plug into elevate).
+> Suggested pre-D milestone: **Phase B3 — production grant signature verifier** wired into elevate.
 
 | Step | Move to grant-only exercise | Keep during transition |
 |------|-----------------------------|------------------------|
@@ -414,7 +434,7 @@ B1  grant types + verify API (lib-access-control)
      │
 B2  grant store + Offer/Claim/Active + elevate attach
      │
-B3  production Dilithium GrantSignatureVerifier (HARD GATE before D)
+B3  production Dilithium grant signature verifier on elevate (HARD GATE before D)
      │
 B2a council register-offer API (+ bootstrap vote hook)
 B2b NodeCredentialRequest + protocol offer (NodeOperate)
@@ -470,7 +490,7 @@ Parallelizable: **B2a ∥ B2b** after **B2**; **C1** after **B2**; **D\*** only 
 - Do **not** reintroduce `max_uses` without a store.  
 - Do **not** cut fat Council before ops grants are **offered, claimed, and vaulted**.  
 - Do **not** start Phase D cut-over before a **production Dilithium grant verifier** is live on elevate (see Phase D hard gate).  
-- Do **not** ship production elevate that only accepts `DevAccept`.  
+- Do **not** ship production elevate that accepts a constant/test grant proof (compile-time gate required).  
 - Do **not** fix only `AccessPolicy` while leaving handler role shortcuts.  
 - Do **not** treat a protocol node request as an Active grant without claim.  
 - Do **not** let protocol `NodeOperate` imply halt/export/audit.  
@@ -482,7 +502,7 @@ Parallelizable: **B2a ∥ B2b** after **B2**; **C1** after **B2**; **D\*** only 
 
 1. **Land shutdown gate on `development` immediately** (surgical PR; do not wait on docs stack).  
 2. Land dual-auth stack A → B1 → B2 (docs + types + elevate skeleton).  
-3. **Phase B3:** production Dilithium `GrantSignatureVerifier` on elevate (hard gate before D).  
+3. **Phase B3:** production Dilithium grant signature verifier on elevate (hard gate before D).  
 4. Phase C custody + B2a/B2b issuance rails; claim + vault Ops\* for operators.  
 5. Only then Phase D fat-role cut-over.
 
