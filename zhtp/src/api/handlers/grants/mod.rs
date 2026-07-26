@@ -285,8 +285,9 @@ impl GrantsHandler {
             });
         }
         let reg = get_global_grant_registry();
-        // Signature scheme needs a real verifier (Dilithium) later; DevAccept
-        // path does not use the verifier. RejectAll keeps Signature fail-closed.
+        // HARD GATE (Phase B3 before D): Signature scheme needs a real Dilithium
+        // verifier. DevAccept does not use the verifier; RejectAll keeps Signature
+        // fail-closed. Do not cut fat roles until this is production-wired.
         let records = match reg.verify_and_collect_for_elevate(
             &principal.did,
             &proofs,
