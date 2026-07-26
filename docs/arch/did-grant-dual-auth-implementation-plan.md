@@ -372,6 +372,14 @@ Principles: **never break personal self path**; **dual-path then cut-over**; **c
 
 **Goal:** Eligibility ≠ exercise in production. **Requires B2 offers already claimed** for operators who must keep working.
 
+> **HARD ORDERING GATE (non-negotiable):** A real **Dilithium (or production) `GrantSignatureVerifier`** must land and be wired into elevate **before any Phase D fat-role cut-over**.
+>
+> - Today elevate accepts `DevAccept` for tests/dev and keeps `Signature` **fail-closed** (`RejectAllVerifier`).
+> - Cutting Council / InfraAdmin fat exercise without a working grant crypto path makes ops either **DID-only again** (reverting dual-auth) or **unreachable** (grant proofs never verify).
+> - Phase D PRs must depend on: production verifier + claimed Ops\* grants vaulted for break-glass operators + dual-path soak evidence.
+>
+> Suggested pre-D milestone: **Phase B3 — production grant signature verifier** (Dilithium verify over `grant_exercise_message`, plug into elevate).
+
 | Step | Move to grant-only exercise | Keep during transition |
 |------|-----------------------------|------------------------|
 | D1 | **Ops:** halt, export, import, provision (+ shutdown) | role **or** claimed Ops\* grant → then grant-only |
@@ -405,6 +413,8 @@ A1  seal shutdown + InfraAdmin wallet purity + tests
 B1  grant types + verify API (lib-access-control)
      │
 B2  grant store + Offer/Claim/Active + elevate attach
+     │
+B3  production Dilithium GrantSignatureVerifier (HARD GATE before D)
      │
 B2a council register-offer API (+ bootstrap vote hook)
 B2b NodeCredentialRequest + protocol offer (NodeOperate)
@@ -459,6 +469,8 @@ Parallelizable: **B2a ∥ B2b** after **B2**; **C1** after **B2**; **D\*** only 
 - Do **not** mint a second person DID per job as the primary model.  
 - Do **not** reintroduce `max_uses` without a store.  
 - Do **not** cut fat Council before ops grants are **offered, claimed, and vaulted**.  
+- Do **not** start Phase D cut-over before a **production Dilithium grant verifier** is live on elevate (see Phase D hard gate).  
+- Do **not** ship production elevate that only accepts `DevAccept`.  
 - Do **not** fix only `AccessPolicy` while leaving handler role shortcuts.  
 - Do **not** treat a protocol node request as an Active grant without claim.  
 - Do **not** let protocol `NodeOperate` imply halt/export/audit.  
@@ -468,10 +480,11 @@ Parallelizable: **B2a ∥ B2b** after **B2**; **C1** after **B2**; **D\*** only 
 
 ## 11. Immediate next action
 
-1. Open tracking issue / epic: **Dual-auth grants** (link both ADRs + this plan).  
-2. Land **Phase A** (shutdown gate + InfraAdmin wallet purity).  
-3. Spec: `GrantExerciseProof` challenge (`grant_id || session_id || exp`).  
-4. Spec: offer/claim state machine + `NodeCredentialRequest` proof v0 (allowlist).  
-5. Spec: grant **class catalog** (NodeOperate vs Ops\* vs AuditRead vs VoteGovernance).
+1. **Land shutdown gate on `development` immediately** (surgical PR; do not wait on docs stack).  
+2. Land dual-auth stack A → B1 → B2 (docs + types + elevate skeleton).  
+3. **Phase B3:** production Dilithium `GrantSignatureVerifier` on elevate (hard gate before D).  
+4. Phase C custody + B2a/B2b issuance rails; claim + vault Ops\* for operators.  
+5. Only then Phase D fat-role cut-over.
 
-No production dual-auth until B+B2+C; bootstrap fat roles remain intentional until D cut-over.
+No production dual-auth until B+B2+B3+C; bootstrap fat roles remain intentional until D cut-over.
+**Ordering:** B3 (real verifier) **before** D, always.
