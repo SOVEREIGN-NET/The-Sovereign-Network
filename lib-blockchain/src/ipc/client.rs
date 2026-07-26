@@ -1,14 +1,18 @@
-//! IPC client — connects to the blockchain engine via Unix domain socket.
+//! IPC client — connects to the blockchain engine via platform-native transport.
+//!
+//! - **Unix**: Unix domain socket
+//! - **Windows**: TCP loopback (port discovered from path file)
 //!
 //! Provides owned-type query methods equivalent to `BlockchainQuery`.
 //! Can be used as a drop-in replacement for `Arc<RwLock<Blockchain>>` reads.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tracing::warn;
 
+use super::TransportStream;
 use crate::block::Block;
 use crate::blockchain::ValidatorInfo;
 use crate::transaction::{
@@ -23,8 +27,10 @@ use super::protocol::*;
 /// Thread-safe: wraps the stream in a Mutex so multiple tasks can share it.
 /// For higher throughput, consider a connection pool.
 pub struct IpcClient {
-    stream: Mutex<Option<UnixStream>>,
+    stream: Mutex<Option<TransportStream>>,
     socket_path: PathBuf,
+    #[cfg(not(unix))]
+    tcp_addr: Mutex<Option<SocketAddr>>,
 }
 
 impl IpcClient {
@@ -33,12 +39,44 @@ impl IpcClient {
         Self {
             stream: Mutex::new(None),
             socket_path: socket_path.to_path_buf(),
+            #[cfg(not(unix))]
+            tcp_addr: Mutex::new(None),
         }
     }
 
     /// Connect to the blockchain engine. Reconnects if already connected.
     pub async fn connect(&self) -> anyhow::Result<()> {
-        let stream = UnixStream::connect(&self.socket_path).await?;
+        #[cfg(unix)]
+        {
+            let stream = TransportStream::connect(&self.socket_path).await?;
+            *self.stream.lock().await = Some(stream);
+            return Ok(());
+        }
+
+        #[cfg(not(unix))]
+        {
+            // On Windows, read the port from the path file
+            let port_file_content = tokio::fs::read_to_string(&self.socket_path).await?;
+            let port: u16 = port_file_content.trim().parse().map_err(|e| {
+                anyhow::anyhow!("Invalid port in path file '{}': {}", self.socket_path.display(), e)
+            })?;
+
+            // Also cache the address for reconnects
+            let addr = SocketAddr::from(([127, 0, 0, 1], port));
+            *self.tcp_addr.lock().await = Some(addr);
+
+            let stream = TransportStream::connect(addr).await?;
+            *self.stream.lock().await = Some(stream);
+            Ok(())
+        }
+    }
+
+    /// Reconnect using the cached TCP address (Windows only).
+    #[cfg(not(unix))]
+    async fn reconnect(&self) -> anyhow::Result<()> {
+        let addr = self.tcp_addr.lock().await;
+        let addr = addr.as_ref().ok_or_else(|| anyhow::anyhow!("No cached TCP address"))?;
+        let stream = TransportStream::connect(*addr).await?;
         *self.stream.lock().await = Some(stream);
         Ok(())
     }
