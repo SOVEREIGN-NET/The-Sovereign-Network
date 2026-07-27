@@ -13,7 +13,8 @@ use zhtp_client::opaque::LobbyAuthCipherSuite;
 
 fn main() {
     let mut rng = OsRng;
-    let setup: ServerSetup<LobbyAuthCipherSuite> = ServerSetup::<LobbyAuthCipherSuite>::new(&mut rng);
+    let setup: ServerSetup<LobbyAuthCipherSuite> =
+        ServerSetup::<LobbyAuthCipherSuite>::new(&mut rng);
     let bytes = setup.serialize();
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     println!("{}", b64);

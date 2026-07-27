@@ -920,12 +920,42 @@ pub enum IdentityAction {
     },
     /// Import identity from .zkdid backup file
     Import {
-        /// Path to .zkdid backup file
         #[arg(short, long)]
         file: String,
-        /// Path to keystore directory
         #[arg(short, long)]
         keystore: Option<String>,
+    },
+    /// Generate a new dual-auth grant keypair (issue #2958 / ADR §4).
+    /// Grant keys are never DID/wallet keys and are never written into `user_private_key.json`. By default the new key is only printed for the caller to capture (cold-grant mode); pass `--lock` to persist it to a dedicated `grant_store/` directory instead.
+    GrantGenerate {
+        /// Identifier for this grant (used to label a locked file, if any)
+        #[arg(long)]
+        grant_id: String,
+        /// Persist the key to `<keystore>/grant_store/` instead of only printing it (memory-only, cold-grant mode).
+        #[arg(long)]
+        lock: bool,
+        /// Keystore directory to lock into when `--lock` is set
+        #[arg(short, long)]
+        keystore: Option<String>,
+    },
+    /// Exercise an elevated grant: sign a dual-auth proof with a grant key that is loaded from a path **separate** from the DID identity file.
+    /// This is the "second ceremony": it does not read or unlock `user_private_key.json`. Exactly one of `--grant-key` / `--grant-file` must be given, matching whichever the person has (a `--grant-key` path locked earlier via `identity grant-generate --lock` or a one-off `--grant-file` handed to them out-of-band).
+    GrantExercise {
+        /// Grant ID being exercised
+        #[arg(long)]
+        grant_id: String,
+        /// Grantee DID (the identity claiming the grant)
+        #[arg(long)]
+        grantee_did: String,
+        /// Server-issued session binding string for this exercise
+        #[arg(long)]
+        session_binding: String,
+        /// Path to a previously locked grant key file
+        #[arg(long, conflicts_with = "grant_file")]
+        grant_key: Option<String>,
+        /// Path to a one-off / out-of-band grant key file (cold, read once)
+        #[arg(long, conflicts_with = "grant_key")]
+        grant_file: Option<String>,
     },
 }
 
@@ -2313,9 +2343,11 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Nft(args) => commands::nft::handle_nft_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
-        ZhtpCommand::Observer(args) => commands::observer::handle_observer_command(args.clone(), &cli)
-            .await
-            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Observer(args) => {
+            commands::observer::handle_observer_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
     }
 }
 
@@ -2653,14 +2685,9 @@ mod tests {
 
     #[test]
     fn parse_observer_status_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "status",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer status should parse");
+        let parsed =
+            ZhtpCli::try_parse_from(["zhtp-cli", "observer", "status", "--did", "did:zhtp:abc123"])
+                .expect("observer status should parse");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
                 action: ObserverAction::Status { did },
@@ -2696,14 +2723,9 @@ mod tests {
 
     #[test]
     fn parse_observer_wait_default_timeout() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "wait",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer wait should parse with default timeout");
+        let parsed =
+            ZhtpCli::try_parse_from(["zhtp-cli", "observer", "wait", "--did", "did:zhtp:abc123"])
+                .expect("observer wait should parse with default timeout");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
                 action: ObserverAction::Wait { did, timeout },
@@ -2717,14 +2739,9 @@ mod tests {
 
     #[test]
     fn parse_observer_start_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "start",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer start should parse");
+        let parsed =
+            ZhtpCli::try_parse_from(["zhtp-cli", "observer", "start", "--did", "did:zhtp:abc123"])
+                .expect("observer start should parse");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
                 action: ObserverAction::Start { did },

@@ -28,7 +28,11 @@ impl VersionInfo {
     pub fn format_brief(&self) -> String {
         format!(
             "zhtp-cli {}\n  Consensus epoch: {}\n  Build revision: {}\n  Release: {} build on {}",
-            self.version, self.consensus_build_id, self.build_revision, self.build_profile, self.platform
+            self.version,
+            self.consensus_build_id,
+            self.build_revision,
+            self.build_profile,
+            self.platform
         )
     }
 
@@ -117,9 +121,7 @@ async fn handle_version_command_impl(
         if args.build_id_only {
             output.print(&remote_id)?;
         } else {
-            output.print(&format!(
-                "consensus epoch: {remote_id} (remote @ {server})"
-            ))?;
+            output.print(&format!("consensus epoch: {remote_id} (remote @ {server})"))?;
         }
         return Ok(());
     }

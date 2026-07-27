@@ -10,13 +10,14 @@ use crate::commands::rewards::{
     normalize_asset_id_hex,
 };
 use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
-use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
+use crate::commands::web4_utils::{
+    connect_default, default_keystore_path, load_identity_from_keystore,
+};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::contracts::approval_verifier::ApprovalProof;
 use lib_blockchain::governance_proof::{
-    governance_action_message_hash, signature64_from_dilithium,
-    PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
+    governance_action_message_hash, signature64_from_dilithium, PROPOSAL_TYPE_REWARDS_POLICY_UPDATE,
 };
 use lib_blockchain::transaction::asset_tx::{
     AssetAuthorityProof, AssetRewardsPolicyUpdatePayloadV1, RewardsPolicyUpdateConfig,
@@ -111,11 +112,14 @@ fn parse_governance_approval_pairs(raw: &[String]) -> CliResult<Vec<([u8; 32], V
     raw.iter()
         .map(|s| {
             let (key_hex, sig_hex) = s.split_once(':').ok_or_else(|| {
-                CliError::ConfigError(format!("--approval must be <key_id_hex>:<sig_hex>, got: {s}"))
+                CliError::ConfigError(format!(
+                    "--approval must be <key_id_hex>:<sig_hex>, got: {s}"
+                ))
             })?;
             let key_id = parse_hex_32("approval key_id", key_hex)?;
-            let sig = hex::decode(sig_hex.strip_prefix("0x").unwrap_or(sig_hex))
-                .map_err(|_| CliError::ConfigError(format!("invalid approval signature hex: {sig_hex}")))?;
+            let sig = hex::decode(sig_hex.strip_prefix("0x").unwrap_or(sig_hex)).map_err(|_| {
+                CliError::ConfigError(format!("invalid approval signature hex: {sig_hex}"))
+            })?;
             Ok((key_id, sig))
         })
         .collect()
@@ -127,7 +131,11 @@ fn merge_approvals(
 ) -> CliResult<()> {
     for (key_id, sig) in pairs {
         let key_hex = hex::encode(key_id);
-        if proposal.approvals.iter().any(|a| a.signer_key_id == key_hex) {
+        if proposal
+            .approvals
+            .iter()
+            .any(|a| a.signer_key_id == key_hex)
+        {
             return Err(CliError::ConfigError(format!(
                 "duplicate approval for signer {key_hex}"
             )));
@@ -146,7 +154,11 @@ fn sign_proposal_with_keypair(
 ) -> CliResult<()> {
     let message_hash = parse_hex_32("message_hash", &proposal.message_hash)?;
     let key_hex = hex::encode(keypair.public_key.key_id);
-    if proposal.approvals.iter().any(|a| a.signer_key_id == key_hex) {
+    if proposal
+        .approvals
+        .iter()
+        .any(|a| a.signer_key_id == key_hex)
+    {
         return Err(CliError::ConfigError(format!(
             "keystore already approved as {key_hex}"
         )));
@@ -161,7 +173,10 @@ fn sign_proposal_with_keypair(
     Ok(())
 }
 
-fn enrich_proposal_from_asset_detail(proposal: &mut GovernanceProposal, asset: &Value) -> CliResult<()> {
+fn enrich_proposal_from_asset_detail(
+    proposal: &mut GovernanceProposal,
+    asset: &Value,
+) -> CliResult<()> {
     let gov_status = asset
         .get("governance_status")
         .ok_or_else(|| CliError::ConfigError("asset response missing governance_status".into()))?;
@@ -248,11 +263,14 @@ fn build_policy_update_tx(
 
 async fn fetch_asset_detail(client: &ZhtpClient, asset_id: &str) -> CliResult<Value> {
     let endpoint = format!("/api/v1/assets/{}", asset_id.trim_start_matches("0x"));
-    let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: endpoint.clone(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .get(&endpoint)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
     ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
         endpoint,
         status: 0,
@@ -293,12 +311,13 @@ pub async fn handle_dao_governance_command(
             if let Some(path) = out {
                 let bytes = serde_json::to_vec_pretty(&proposal)
                     .map_err(|e| CliError::ConfigError(format!("serialize proposal: {e}")))?;
-                std::fs::write(&path, bytes).map_err(|e| {
-                    CliError::ConfigError(format!("write {}: {e}", path.display()))
-                })?;
+                std::fs::write(&path, bytes)
+                    .map_err(|e| CliError::ConfigError(format!("write {}: {e}", path.display())))?;
                 output.info(&format!("Proposal written to {}", path.display()))?;
             }
-            output.success("Proposal ready — share message_hash with signers; run `dao governance vote`.")?;
+            output.success(
+                "Proposal ready — share message_hash with signers; run `dao governance vote`.",
+            )?;
             Ok(())
         }
         DaoGovernanceAction::Vote {
@@ -352,12 +371,8 @@ pub async fn handle_dao_governance_command(
                     .and_then(|k| k.as_str())
                     .unwrap_or("creator");
                 let use_governance = authority_kind == "governance";
-                let tx = build_policy_update_tx(
-                    &proposal,
-                    &loaded.keypair,
-                    chain_id,
-                    use_governance,
-                )?;
+                let tx =
+                    build_policy_update_tx(&proposal, &loaded.keypair, chain_id, use_governance)?;
                 let result = broadcast_signed_tx(&client, &tx).await?;
                 output.print(&format!("Signed tx hash: {}", tx.hash()))?;
                 output.print(&format_output(&result, &cli.format)?)?;
@@ -382,10 +397,7 @@ pub async fn handle_dao_governance_command(
             output.header("Governance Status")?;
             let client = connect_default(&cli.server).await?;
             let asset = fetch_asset_detail(&client, &asset_id).await?;
-            let status = asset
-                .get("governance_status")
-                .cloned()
-                .unwrap_or(json!({}));
+            let status = asset.get("governance_status").cloned().unwrap_or(json!({}));
             output.print(&format_output(&status, &cli.format)?)?;
             if let Some(pending) = status.get("pending_authority_transfer") {
                 if let Some(remaining) = pending.get("blocks_remaining").and_then(|v| v.as_u64()) {
@@ -427,8 +439,10 @@ mod tests {
     fn governance_message_hash_is_deterministic() {
         let asset_id = [0xab; 32];
         let policy_hash = [0xcd; 32];
-        let h1 = governance_message_hash(&asset_id, PROPOSAL_TYPE_REWARDS_POLICY_UPDATE, &policy_hash);
-        let h2 = governance_message_hash(&asset_id, PROPOSAL_TYPE_REWARDS_POLICY_UPDATE, &policy_hash);
+        let h1 =
+            governance_message_hash(&asset_id, PROPOSAL_TYPE_REWARDS_POLICY_UPDATE, &policy_hash);
+        let h2 =
+            governance_message_hash(&asset_id, PROPOSAL_TYPE_REWARDS_POLICY_UPDATE, &policy_hash);
         assert_eq!(h1, h2);
         assert_ne!(h1, [0u8; 32]);
     }

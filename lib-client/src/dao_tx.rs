@@ -175,8 +175,10 @@ pub fn build_dao_stake_tx(
     use crate::token_tx::create_public_key_with_kyber;
     use lib_blockchain::integration::crypto_integration::Signature;
 
-    let sender_pk =
-        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
 
     let data = DaoStakeData {
         sector_dao_key_id,
@@ -244,8 +246,10 @@ pub fn build_dao_unstake_tx(
     use crate::token_tx::create_public_key_with_kyber;
     use lib_blockchain::integration::crypto_integration::Signature;
 
-    let sender_pk =
-        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
 
     let data = DaoUnstakeData {
         sector_dao_key_id,
@@ -280,8 +284,8 @@ pub fn build_dao_unstake_tx(
             .as_secs(),
     };
 
-    let bytes = bincode::serialize(&tx)
-        .map_err(|e| format!("Failed to serialize DaoUnstake tx: {}", e))?;
+    let bytes =
+        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize DaoUnstake tx: {}", e))?;
     Ok(hex::encode(bytes))
 }
 
@@ -328,7 +332,9 @@ pub fn build_governance_parameter_update_proposal_tx(
     use lib_blockchain::integration::crypto_integration::Signature;
     use lib_blockchain::transaction::DaoProposalData;
     use lib_blockchain::types::Hash as BcHash;
-    use lib_governance::dao::dao_types::{DaoExecutionAction, DaoExecutionParams, GovernanceParameterUpdate};
+    use lib_governance::dao::dao_types::{
+        DaoExecutionAction, DaoExecutionParams, GovernanceParameterUpdate,
+    };
 
     if updates.is_empty() {
         return Err("updates must contain at least one parameter".to_string());
@@ -349,8 +355,10 @@ pub fn build_governance_parameter_update_proposal_tx(
         return Err("title must be non-empty".to_string());
     }
 
-    let sender_pk =
-        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -574,8 +582,7 @@ mod tests {
         )
         .expect("builder ok");
         let tx_bytes = hex::decode(signed_tx).expect("hex");
-        let tx: lib_blockchain::Transaction =
-            bincode::deserialize(&tx_bytes).expect("tx");
+        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).expect("tx");
         let data = tx.dao_proposal_data().expect("payload");
         assert_eq!(data.proposer, identity.did);
     }
@@ -658,8 +665,8 @@ mod tests {
     #[test]
     fn test_build_dao_unstake_tx_round_trip() {
         use super::build_dao_unstake_tx;
-        use std::convert::TryInto;
         use crate::identity::generate_identity;
+        use std::convert::TryInto;
 
         let identity = generate_identity("test-device".to_string()).unwrap();
         let dao_key_id = [0xAAu8; 32];
@@ -670,8 +677,8 @@ mod tests {
 
         // Verify hex encoding and round-trip serialization
         let tx_bytes = hex::decode(&signed_tx).expect("valid hex");
-        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes)
-            .expect("valid transaction");
+        let tx: lib_blockchain::Transaction =
+            bincode::deserialize(&tx_bytes).expect("valid transaction");
 
         // Verify transaction type
         assert_eq!(tx.transaction_type, TransactionType::DaoUnstake);

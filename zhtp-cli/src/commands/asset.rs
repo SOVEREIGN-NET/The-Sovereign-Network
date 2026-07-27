@@ -13,7 +13,9 @@
 use crate::argument_parsing::{format_output, AssetRewardsAction, AssetRewardsArgs, ZhtpCli};
 use crate::commands::node::normalize_keystore_path;
 use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
-use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
+use crate::commands::web4_utils::{
+    connect_default, default_keystore_path, load_identity_from_keystore,
+};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::contracts::approval_verifier::ApprovalProof;
@@ -165,7 +167,9 @@ fn build_signed_fund_delegate_tx(
     nonce: u64,
 ) -> CliResult<Transaction> {
     if amount == 0 {
-        return Err(CliError::ConfigError("--amount must be non-zero".to_string()));
+        return Err(CliError::ConfigError(
+            "--amount must be non-zero".to_string(),
+        ));
     }
     if delegate_key_id == [0u8; 32] {
         return Err(CliError::ConfigError(
@@ -203,16 +207,20 @@ async fn fetch_token_nonce(
         hex::encode(token_id),
         hex::encode(holder_key_id)
     );
-    let response = client.get(&path).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: path.clone(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
-    let json: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-        endpoint: path.clone(),
-        status: 0,
-        reason: format!("parse nonce response: {e}"),
-    })?;
+    let response = client
+        .get(&path)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+    let json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.clone(),
+            status: 0,
+            reason: format!("parse nonce response: {e}"),
+        })?;
     json.get("nonce")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| CliError::ApiCallFailed {
@@ -222,7 +230,10 @@ async fn fetch_token_nonce(
         })
 }
 
-pub async fn handle_asset_command(args: crate::argument_parsing::AssetArgs, cli: &ZhtpCli) -> CliResult<()> {
+pub async fn handle_asset_command(
+    args: crate::argument_parsing::AssetArgs,
+    cli: &ZhtpCli,
+) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_asset_command_impl(args, cli, &output).await
 }
@@ -354,13 +365,11 @@ async fn handle_rotate_delegate(
 ) -> CliResult<()> {
     output.header("Rotate Rewards Spend Delegate")?;
     if use_governance {
-        output.info(
-            "Post-handoff path: GovernanceProof (multisig) on AssetRewardsDelegateRotate.",
-        )?;
+        output
+            .info("Post-handoff path: GovernanceProof (multisig) on AssetRewardsDelegateRotate.")?;
     } else {
-        output.info(
-            "Pre-handoff path: creator signs AssetRewardsDelegateRotate with CreatorSig.",
-        )?;
+        output
+            .info("Pre-handoff path: creator signs AssetRewardsDelegateRotate with CreatorSig.")?;
         output.info(
             "After authority transfer, re-run with --governance (and --approval for multisig).",
         )?;
@@ -442,8 +451,7 @@ async fn handle_fund_delegate(
     }
 
     let client = connect_default(&cli.server).await?;
-    let nonce =
-        fetch_token_nonce(&client, &asset_id_bytes, &creator.public_key.key_id).await?;
+    let nonce = fetch_token_nonce(&client, &asset_id_bytes, &creator.public_key.key_id).await?;
     output.info(&format!("Using transfer nonce: {nonce}"))?;
 
     let tx = build_signed_fund_delegate_tx(
@@ -485,7 +493,10 @@ mod tests {
         )
         .expect("tx");
 
-        assert_eq!(tx.transaction_type, lib_blockchain::types::TransactionType::AssetRewardsDelegateRotate);
+        assert_eq!(
+            tx.transaction_type,
+            lib_blockchain::types::TransactionType::AssetRewardsDelegateRotate
+        );
         let payload = AssetRewardsDelegateRotatePayloadV1::decode_memo(&tx.memo).expect("memo");
         assert_eq!(payload.asset_id, asset_id);
         assert_eq!(payload.new_delegate_key_id, new_delegate.public_key.key_id);

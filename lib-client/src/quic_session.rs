@@ -109,10 +109,7 @@ fn set_last_error_from_anyhow(fallback_stage: &'static str, err: &anyhow::Error)
 }
 
 fn current_stage() -> &'static str {
-    last_error_slot()
-        .lock()
-        .map(|g| g.stage)
-        .unwrap_or("none")
+    last_error_slot().lock().map(|g| g.stage).unwrap_or("none")
 }
 
 fn current_error_message() -> Option<String> {
@@ -239,7 +236,9 @@ fn spawn_session_worker(
             let mut client = match ZhtpClient::new_with_config(identity, trust, config).await {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = ready.send(Err(e.context("ZhtpClient::new_with_config (stage=client_init)")));
+                    let _ = ready.send(Err(
+                        e.context("ZhtpClient::new_with_config (stage=client_init)")
+                    ));
                     return;
                 }
             };
@@ -258,10 +257,7 @@ fn spawn_session_worker(
     })
 }
 
-async fn session_loop(
-    client: ZhtpClient,
-    mut rx: tokio::sync::mpsc::Receiver<SessionCmd>,
-) {
+async fn session_loop(client: ZhtpClient, mut rx: tokio::sync::mpsc::Receiver<SessionCmd>) {
     let client = Arc::new(client);
     while let Some(cmd) = rx.recv().await {
         match cmd {
@@ -305,10 +301,7 @@ async fn do_rpc(
     })
 }
 
-async fn do_inbound_open(
-    client: &Arc<ZhtpClient>,
-    path: String,
-) -> Result<InboundStreamHandle> {
+async fn do_inbound_open(client: &Arc<ZhtpClient>, path: String) -> Result<InboundStreamHandle> {
     let requester = Some(client.identity().id.clone());
     let request = ZhtpRequest::get(path, requester)?;
     let (_send, mut recv, expected_id) = client
@@ -389,12 +382,9 @@ fn build_request(
 ) -> Result<ZhtpRequest> {
     match method {
         ZhtpMethod::Get => ZhtpRequest::get(path, requester),
-        ZhtpMethod::Post => ZhtpRequest::post(
-            path,
-            body,
-            "application/json".to_string(),
-            requester,
-        ),
+        ZhtpMethod::Post => {
+            ZhtpRequest::post(path, body, "application/json".to_string(), requester)
+        }
         ZhtpMethod::Delete => ZhtpRequest::delete(path, requester),
         _ => Err(anyhow!("Unsupported method")),
     }
@@ -405,16 +395,12 @@ fn build_request(
 // =============================================================================
 
 fn to_zhtp_identity(id: &Identity) -> Result<ZhtpIdentity> {
-    let dilithium_pk: [u8; 2592] = id
-        .public_key
-        .as_slice()
-        .try_into()
-        .map_err(|_| {
-            anyhow!(
-                "public_key must be 2592 bytes, got {} (stage=identity)",
-                id.public_key.len()
-            )
-        })?;
+    let dilithium_pk: [u8; 2592] = id.public_key.as_slice().try_into().map_err(|_| {
+        anyhow!(
+            "public_key must be 2592 bytes, got {} (stage=identity)",
+            id.public_key.len()
+        )
+    })?;
     let dilithium_sk: [u8; 4896] = if id.private_key.len() == 4896 {
         id.private_key
             .as_slice()
@@ -431,26 +417,18 @@ fn to_zhtp_identity(id: &Identity) -> Result<ZhtpIdentity> {
             id.private_key.len()
         ));
     };
-    let kyber_pk: [u8; 1568] = id
-        .kyber_public_key
-        .as_slice()
-        .try_into()
-        .map_err(|_| {
-            anyhow!(
-                "kyber_public_key must be 1568 bytes, got {} (stage=identity)",
-                id.kyber_public_key.len()
-            )
-        })?;
-    let kyber_sk: [u8; 3168] = id
-        .kyber_secret_key
-        .as_slice()
-        .try_into()
-        .map_err(|_| {
-            anyhow!(
-                "kyber_secret_key must be 3168 bytes, got {} (stage=identity)",
-                id.kyber_secret_key.len()
-            )
-        })?;
+    let kyber_pk: [u8; 1568] = id.kyber_public_key.as_slice().try_into().map_err(|_| {
+        anyhow!(
+            "kyber_public_key must be 1568 bytes, got {} (stage=identity)",
+            id.kyber_public_key.len()
+        )
+    })?;
+    let kyber_sk: [u8; 3168] = id.kyber_secret_key.as_slice().try_into().map_err(|_| {
+        anyhow!(
+            "kyber_secret_key must be 3168 bytes, got {} (stage=identity)",
+            id.kyber_secret_key.len()
+        )
+    })?;
 
     // Device type matches mobile operational keys used for transport auth.
     // DID is derived from the Dilithium public key inside from_raw_keys.
@@ -540,7 +518,9 @@ fn open_session(
             );
             drop(tx);
             let _ = worker.join();
-            Err(anyhow!("session worker dropped ready channel (stage=runtime)"))
+            Err(anyhow!(
+                "session worker dropped ready channel (stage=runtime)"
+            ))
         }
     }
 }
@@ -887,8 +867,8 @@ pub extern "C" fn zhtp_quic_session_close(session: *mut QuicSessionHandle) {
 mod tests {
     use super::*;
     use crate::identity::generate_identity;
-    use lib_network::protocols::quic_handshake::quic_uhp_capabilities;
     use lib_network::handshake::PqcCapability;
+    use lib_network::protocols::quic_handshake::quic_uhp_capabilities;
 
     #[test]
     fn quic_uhp_capabilities_is_minimal_production_shape() {
@@ -955,7 +935,11 @@ mod tests {
             assert_eq!(got, *name);
         }
         assert_eq!(
-            unsafe { CStr::from_ptr(stage_as_c_str("not-a-stage")).to_str().unwrap() },
+            unsafe {
+                CStr::from_ptr(stage_as_c_str("not-a-stage"))
+                    .to_str()
+                    .unwrap()
+            },
             "none"
         );
     }

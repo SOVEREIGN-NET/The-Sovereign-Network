@@ -101,20 +101,21 @@ async fn fetch_token_nonce(
         hex::encode(address)
     );
 
-    let response = client.get(&path).await.map_err(|e| CliError::ApiCallFailed {
+    let response = client
+        .get(&path)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let response_json: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
+        .map_err(|e| CliError::ApiCallFailed {
         endpoint: path.clone(),
         status: 0,
-        reason: e.to_string(),
+        reason: format!("Failed to parse response: {e}"),
     })?;
-
-    let response_json: serde_json::Value =
-        lib_network::client::ZhtpClient::parse_json(&response).map_err(|e| {
-            CliError::ApiCallFailed {
-                endpoint: path.clone(),
-                status: 0,
-                reason: format!("Failed to parse response: {e}"),
-            }
-        })?;
 
     response_json
         .get("nonce")

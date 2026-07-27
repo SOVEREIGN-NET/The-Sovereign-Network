@@ -74,8 +74,10 @@ pub fn build_asset_launch_tx(
         return Err("transfer_authority requires governance module".to_string());
     }
 
-    let sender_pk =
-        create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
     if params.treasury_key_id == sender_pk.key_id {
         return Err("treasury_key_id must differ from creator".to_string());
     }
@@ -233,8 +235,7 @@ mod tests {
         )
         .expect("ffi-default builder");
 
-        let tx: Transaction =
-            bincode::deserialize(&hex::decode(signed).expect("hex")).expect("tx");
+        let tx: Transaction = bincode::deserialize(&hex::decode(signed).expect("hex")).expect("tx");
         assert_eq!(tx.transaction_type, TransactionType::AssetLaunch);
         let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).expect("memo");
         assert_eq!(payload.manifest_cid, cid);
@@ -275,8 +276,7 @@ mod tests {
         )
         .unwrap();
 
-        let tx: Transaction =
-            bincode::deserialize(&hex::decode(signed).unwrap()).unwrap();
+        let tx: Transaction = bincode::deserialize(&hex::decode(signed).unwrap()).unwrap();
         let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).unwrap();
         let (creator, treasury) = payload.split_initial_supply();
         assert_eq!(creator, 0);
@@ -343,8 +343,7 @@ mod tests {
             },
         )
         .expect("governance launch ok");
-        let tx: Transaction =
-            bincode::deserialize(&hex::decode(signed).unwrap()).unwrap();
+        let tx: Transaction = bincode::deserialize(&hex::decode(signed).unwrap()).unwrap();
         let payload = AssetLaunchPayloadV1::decode_memo(&tx.memo).unwrap();
         assert!(payload.transfer_authority);
         assert!(payload.governance.is_some());

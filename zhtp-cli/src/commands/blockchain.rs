@@ -225,8 +225,7 @@ fn audit_wallet_migration(
         total_wallets_in_local_state: blockchain.wallet_registry_shadow_len(),
         noncanonical_wallet_count: blockchain.collect_noncanonical_wallets().len(),
         treasury_wallet_id: treasury_wallet_id_hex.clone(),
-        treasury_wallet_present_in_local_state: blockchain
-            .wallet_exists(&treasury_wallet_id_hex),
+        treasury_wallet_present_in_local_state: blockchain.wallet_exists(&treasury_wallet_id_hex),
         treasury_wallet_canonical_in_history: blockchain.dao_treasury_wallet_is_canonical(),
         treasury_wallet_requires_schema_change: blockchain
             .wallet_transaction_data(&treasury_wallet_id_hex)

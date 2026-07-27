@@ -183,7 +183,9 @@ pub fn generate_identity(device_id: String) -> Result<Identity> {
         public_key: rsk.public_key.clone(),
         private_key: {
             let mut pk = rsk.secret_key.clone();
-            if pk.len() == 4864 { pk.resize(4896, 0u8); }
+            if pk.len() == 4864 {
+                pk.resize(4896, 0u8);
+            }
             pk
         },
         kyber_public_key: kyber_pk,
@@ -243,7 +245,9 @@ pub fn restore_identity_from_seed(
         public_key: rsk.public_key.clone(),
         private_key: {
             let mut pk = rsk.secret_key.clone();
-            if pk.len() == 4864 { pk.resize(4896, 0u8); }
+            if pk.len() == 4864 {
+                pk.resize(4896, 0u8);
+            }
             pk
         },
         kyber_public_key: kyber_pk,

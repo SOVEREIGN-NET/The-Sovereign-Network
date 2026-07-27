@@ -116,11 +116,8 @@ impl Ksf for LobbyArgon2id {
             Some(L::USIZE),
         )
         .map_err(|_| InternalError::KsfError)?;
-        let argon2 = argon2::Argon2::new(
-            argon2::Algorithm::Argon2id,
-            argon2::Version::V0x13,
-            params,
-        );
+        let argon2 =
+            argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
         let mut output: GenericArray<u8, L> = GenericArray::default();
         argon2
             .hash_password_into(&input, KSF_SALT, &mut output)
@@ -210,9 +207,7 @@ pub struct RegisterFinishOutput {
 }
 
 /// `ClientLogin::start` — produces the first login message and a state.
-pub fn client_login_start(
-    password: &[u8],
-) -> Result<(Vec<u8>, ClientLogin<LobbyAuthCipherSuite>)> {
+pub fn client_login_start(password: &[u8]) -> Result<(Vec<u8>, ClientLogin<LobbyAuthCipherSuite>)> {
     let mut rng = OsRng;
     let result = ClientLogin::<LobbyAuthCipherSuite>::start(&mut rng, password)
         .map_err(|e| anyhow!("OPAQUE login_start failed: {:?}", e))?;
@@ -297,7 +292,10 @@ pub extern "C" fn zhtp_opaque_register_start(
     if password.is_null() || out_request.is_null() {
         return std::ptr::null_mut();
     }
-    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+    let pw = match unsafe { CStr::from_ptr(password) }
+        .to_bytes_with_nul()
+        .split_last()
+    {
         Some((_, body)) => body,
         None => return std::ptr::null_mut(),
     };
@@ -336,7 +334,10 @@ pub extern "C" fn zhtp_opaque_register_finish(
         return ZHTP_OPAQUE_ERR_INVALID_ARGS;
     }
     let state_box = unsafe { Box::from_raw(state) };
-    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+    let pw = match unsafe { CStr::from_ptr(password) }
+        .to_bytes_with_nul()
+        .split_last()
+    {
         Some((_, body)) => body,
         None => return ZHTP_OPAQUE_ERR_INVALID_ARGS,
     };
@@ -370,7 +371,10 @@ pub extern "C" fn zhtp_opaque_login_start(
     if password.is_null() || out_request.is_null() {
         return std::ptr::null_mut();
     }
-    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+    let pw = match unsafe { CStr::from_ptr(password) }
+        .to_bytes_with_nul()
+        .split_last()
+    {
         Some((_, body)) => body,
         None => return std::ptr::null_mut(),
     };
@@ -411,7 +415,10 @@ pub extern "C" fn zhtp_opaque_login_finish(
         return ZHTP_OPAQUE_ERR_INVALID_ARGS;
     }
     let state_box = unsafe { Box::from_raw(state) };
-    let pw = match unsafe { CStr::from_ptr(password) }.to_bytes_with_nul().split_last() {
+    let pw = match unsafe { CStr::from_ptr(password) }
+        .to_bytes_with_nul()
+        .split_last()
+    {
         Some((_, body)) => body,
         None => return ZHTP_OPAQUE_ERR_INVALID_ARGS,
     };
@@ -623,12 +630,7 @@ impl LobbySession {
 
     /// Build the three headers required for a lobby request.
     /// Returns (Authorization, X-OPAQUE-Mac (hex), X-OPAQUE-Seq (decimal)).
-    pub fn prepare_headers(
-        &self,
-        method: u8,
-        uri: &[u8],
-        body: &[u8],
-    ) -> (String, String, String) {
+    pub fn prepare_headers(&self, method: u8, uri: &[u8], body: &[u8]) -> (String, String, String) {
         let seq = self.next_seq();
         let mac = compute_mac(&self.session_key, method, uri, body, seq);
         (
@@ -780,7 +782,10 @@ mod session_tests {
                 local
             }));
         }
-        let mut all: Vec<u64> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+        let mut all: Vec<u64> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
         all.sort();
         all.dedup();
         assert_eq!(all.len(), 8 * 256, "no two requests should share a seq");
@@ -789,7 +794,7 @@ mod session_tests {
     #[test]
     fn headers_format_correct() {
         let s = make_session();
-        let (auth, mac_hex, seq) = s.prepare_headers(method::GET, b"/x", b"", );
+        let (auth, mac_hex, seq) = s.prepare_headers(method::GET, b"/x", b"");
         assert!(auth.starts_with("Bearer "));
         assert_eq!(auth, "Bearer deadbeef");
         assert_eq!(mac_hex.len(), 64); // 32 bytes hex
@@ -931,11 +936,10 @@ mod tests {
         let server_response =
             ServerRegistration::<LobbyAuthCipherSuite>::start(&server_setup, request, USERNAME)
                 .unwrap();
-        let out = client_register_finish(state, PASSWORD, &server_response.message.serialize())
-            .unwrap();
+        let out =
+            client_register_finish(state, PASSWORD, &server_response.message.serialize()).unwrap();
         let record = opaque_ke::RegistrationUpload::deserialize(&out.record).unwrap();
-        let server_record =
-            ServerRegistration::<LobbyAuthCipherSuite>::finish(record);
+        let server_record = ServerRegistration::<LobbyAuthCipherSuite>::finish(record);
 
         // ─── LOGIN ───────────────────────────────────────────────────────
         let (msg1, state) = client_login_start(PASSWORD).unwrap();
@@ -959,7 +963,10 @@ mod tests {
             .finish(credential_finalization, ServerLoginParameters::default())
             .unwrap();
 
-        assert_eq!(login_out.session_key, server_login_finish.session_key.to_vec());
+        assert_eq!(
+            login_out.session_key,
+            server_login_finish.session_key.to_vec()
+        );
         assert_eq!(login_out.session_key.len(), 64);
         assert_eq!(login_out.export_key.len(), 64);
         // Reviewer #2570: the OPAQUE export_key IS deterministic across
@@ -990,9 +997,15 @@ mod tests {
         let pw = CString::new(PASSWORD).unwrap();
 
         // ─── REGISTER via FFI ────────────────────────────────────────────
-        let mut req_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        let mut req_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
         let state = zhtp_opaque_register_start(pw.as_ptr(), &mut req_buf as *mut _);
-        assert!(!state.is_null(), "register_start must return non-null handle");
+        assert!(
+            !state.is_null(),
+            "register_start must return non-null handle"
+        );
         assert!(req_buf.len > 0 && !req_buf.data.is_null());
 
         let msg1 = unsafe { std::slice::from_raw_parts(req_buf.data, req_buf.len).to_vec() };
@@ -1002,8 +1015,14 @@ mod tests {
                 .unwrap();
         let server_msg = server_response.message.serialize();
 
-        let mut record_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
-        let mut export_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        let mut record_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+        let mut export_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
         let rc = zhtp_opaque_register_finish(
             state,
             pw.as_ptr(),
@@ -1022,12 +1041,14 @@ mod tests {
         );
 
         // ─── LOGIN via FFI ───────────────────────────────────────────────
-        let mut login_req_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        let mut login_req_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
         let login_state = zhtp_opaque_login_start(pw.as_ptr(), &mut login_req_buf as *mut _);
         assert!(!login_state.is_null());
-        let login_msg1 = unsafe {
-            std::slice::from_raw_parts(login_req_buf.data, login_req_buf.len).to_vec()
-        };
+        let login_msg1 =
+            unsafe { std::slice::from_raw_parts(login_req_buf.data, login_req_buf.len).to_vec() };
         let request = opaque_ke::CredentialRequest::deserialize(&login_msg1).unwrap();
         let mut rng = OsRng;
         let sls = ServerLogin::<LobbyAuthCipherSuite>::start(
@@ -1041,9 +1062,18 @@ mod tests {
         .unwrap();
         let server_msg2 = sls.message.serialize();
 
-        let mut msg3_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
-        let mut sk_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
-        let mut ek_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        let mut msg3_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+        let mut sk_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+        let mut ek_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
         let rc = zhtp_opaque_login_finish(
             login_state,
             pw.as_ptr(),
@@ -1066,7 +1096,10 @@ mod tests {
     fn ffi_cancel_register_via_free() {
         use std::ffi::CString;
         let pw = CString::new(PASSWORD).unwrap();
-        let mut req_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        let mut req_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
         let state = zhtp_opaque_register_start(pw.as_ptr(), &mut req_buf as *mut _);
         assert!(!state.is_null());
         zhtp_opaque_register_state_free(state);
@@ -1076,7 +1109,10 @@ mod tests {
     fn ffi_cancel_login_via_free() {
         use std::ffi::CString;
         let pw = CString::new(PASSWORD).unwrap();
-        let mut req_buf = crate::ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        let mut req_buf = crate::ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
         let state = zhtp_opaque_login_start(pw.as_ptr(), &mut req_buf as *mut _);
         assert!(!state.is_null());
         zhtp_opaque_login_state_free(state);
@@ -1117,11 +1153,10 @@ mod tests {
         let server_response =
             ServerRegistration::<LobbyAuthCipherSuite>::start(&server_setup, request, USERNAME)
                 .unwrap();
-        let out = client_register_finish(state, PASSWORD, &server_response.message.serialize())
-            .unwrap();
+        let out =
+            client_register_finish(state, PASSWORD, &server_response.message.serialize()).unwrap();
         let record = opaque_ke::RegistrationUpload::deserialize(&out.record).unwrap();
-        let server_record =
-            ServerRegistration::<LobbyAuthCipherSuite>::finish(record);
+        let server_record = ServerRegistration::<LobbyAuthCipherSuite>::finish(record);
 
         // Try to log in with WRONG password
         let (msg1, state) = client_login_start(b"WRONG").unwrap();
@@ -1136,8 +1171,7 @@ mod tests {
             ServerLoginParameters::default(),
         )
         .unwrap();
-        let result =
-            client_login_finish(state, b"WRONG", &server_login_start.message.serialize());
+        let result = client_login_finish(state, b"WRONG", &server_login_start.message.serialize());
         assert!(result.is_err(), "login with wrong password must fail");
     }
 }

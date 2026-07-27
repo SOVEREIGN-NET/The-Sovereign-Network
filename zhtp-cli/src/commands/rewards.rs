@@ -15,7 +15,8 @@ use crate::commands::web4_utils::connect_default;
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::rewards_policy::{
-    canonical_policy_bytes, policy_hash, validate_rewards_policy, RewardsPolicyError, RewardsPolicyV1,
+    canonical_policy_bytes, policy_hash, validate_rewards_policy, RewardsPolicyError,
+    RewardsPolicyV1,
 };
 use lib_economy::rewards::{RewardRound, RewardStatistics, UsefulWorkType, ValidatorReward};
 use lib_network::client::ZhtpClient;
@@ -56,7 +57,9 @@ impl RewardOperation {
             RewardOperation::Routing => "Show routing reward details (legacy placeholder)",
             RewardOperation::Storage => "Show storage reward details (legacy placeholder)",
             RewardOperation::Config => "Show reward configuration (legacy placeholder)",
-            RewardOperation::Configure => "Validate or generate rewards policy JSON (zhtp/rewards-policy/v1)",
+            RewardOperation::Configure => {
+                "Validate or generate rewards policy JSON (zhtp/rewards-policy/v1)"
+            }
         }
     }
 
@@ -120,7 +123,9 @@ pub struct RewardsPolicyBundle {
     pub policy_cid: [u8; 32],
 }
 
-pub fn build_rewards_policy_bundle(policy: &RewardsPolicyV1) -> Result<RewardsPolicyBundle, RewardsPolicyError> {
+pub fn build_rewards_policy_bundle(
+    policy: &RewardsPolicyV1,
+) -> Result<RewardsPolicyBundle, RewardsPolicyError> {
     let document_bytes = canonical_policy_bytes(policy)?;
     let hash = policy_hash(policy)?.as_array();
     let policy_cid = rewards_policy_cid(&document_bytes);
@@ -136,9 +141,11 @@ pub fn load_policy_bytes_from_file(path: &Path) -> CliResult<Vec<u8>> {
     std::fs::read(path).map_err(|e| CliError::ConfigError(format!("read {}: {e}", path.display())))
 }
 
-pub fn apply_asset_id_to_policy(mut policy: RewardsPolicyV1, asset_id: &str) -> CliResult<RewardsPolicyV1> {
-    policy.asset_id = normalize_asset_id_hex(asset_id)
-        .map_err(|e| CliError::ConfigError(e))?;
+pub fn apply_asset_id_to_policy(
+    mut policy: RewardsPolicyV1,
+    asset_id: &str,
+) -> CliResult<RewardsPolicyV1> {
+    policy.asset_id = normalize_asset_id_hex(asset_id).map_err(|e| CliError::ConfigError(e))?;
     Ok(policy)
 }
 
@@ -174,9 +181,9 @@ fn map_policy_error(err: RewardsPolicyError) -> CliError {
 pub fn build_placeholder_budget_tracker() -> BudgetTracker {
     BudgetTracker {
         pouw_paid: 1_050_000_000_000_000_000_000_000, // 1.05M SOV (atoms)
-        routing_paid: 42_000_000_000_000_000_000_000,  // 42K SOV
-        storage_paid: 18_000_000_000_000_000_000_000,  // 18K SOV
-        pouw_cap: 2_100_000_000_000_000_000_000_000,   // 2.1M SOV
+        routing_paid: 42_000_000_000_000_000_000_000, // 42K SOV
+        storage_paid: 18_000_000_000_000_000_000_000, // 18K SOV
+        pouw_cap: 2_100_000_000_000_000_000_000_000,  // 2.1M SOV
         routing_cap: 2_100_000_000_000_000_000_000_000,
         storage_cap: 2_100_000_000_000_000_000_000_000,
         dev_grant_pool_ceiling: 100_000_000_000_000_000_000_000_000_000u128, // 100B SOV
@@ -301,8 +308,10 @@ pub fn format_reward_statistics(stats: &RewardStatistics) -> String {
            Total Distributed:      {} SOV\n\
            Average / Round:        {} SOV\n\
            Current Base Reward:    {} SOV",
-        stats.total_rounds, stats.total_rewards_distributed,
-        stats.average_rewards_per_round, stats.current_base_reward,
+        stats.total_rounds,
+        stats.total_rewards_distributed,
+        stats.average_rewards_per_round,
+        stats.current_base_reward,
     )
 }
 
@@ -416,10 +425,18 @@ pub fn get_operation_header(operation: RewardOperation) -> String {
         RewardOperation::Claim => format!("{} Claim BUBL Reward", operation.emoji()),
         RewardOperation::Conversation => format!("{} Claim Partner Reward", operation.emoji()),
         RewardOperation::History => format!("{} BUBL Reward History", operation.emoji()),
-        RewardOperation::Metrics => format!("{} Combined Reward Metrics (legacy)", operation.emoji()),
-        RewardOperation::Routing => format!("{} Routing Reward Details (legacy)", operation.emoji()),
-        RewardOperation::Storage => format!("{} Storage Reward Details (legacy)", operation.emoji()),
-        RewardOperation::Config => format!("{} Reward System Configuration (legacy)", operation.emoji()),
+        RewardOperation::Metrics => {
+            format!("{} Combined Reward Metrics (legacy)", operation.emoji())
+        }
+        RewardOperation::Routing => {
+            format!("{} Routing Reward Details (legacy)", operation.emoji())
+        }
+        RewardOperation::Storage => {
+            format!("{} Storage Reward Details (legacy)", operation.emoji())
+        }
+        RewardOperation::Config => {
+            format!("{} Reward System Configuration (legacy)", operation.emoji())
+        }
         RewardOperation::Configure => format!("{} Rewards Policy Configure", operation.emoji()),
     }
 }
@@ -472,7 +489,17 @@ pub async fn handle_reward_command_impl(
             template,
             asset_id,
             out,
-        } => handle_configure_impl(file.as_deref(), template, asset_id.as_deref(), out.as_deref(), cli, output).await,
+        } => {
+            handle_configure_impl(
+                file.as_deref(),
+                template,
+                asset_id.as_deref(),
+                out.as_deref(),
+                cli,
+                output,
+            )
+            .await
+        }
     }
 }
 
@@ -509,9 +536,8 @@ async fn handle_configure_impl(
     let bundle = build_rewards_policy_bundle(&policy).map_err(map_policy_error)?;
     let out_path = out.map(Path::new);
     if let Some(path) = out_path {
-        std::fs::write(path, &bundle.document_bytes).map_err(|e| {
-            CliError::ConfigError(format!("write {}: {e}", path.display()))
-        })?;
+        std::fs::write(path, &bundle.document_bytes)
+            .map_err(|e| CliError::ConfigError(format!("write {}: {e}", path.display())))?;
         output.success(&format!("Wrote canonical policy to {}", path.display()))?;
     }
 
@@ -525,11 +551,14 @@ fn encode_did_for_path(did: &str) -> String {
 }
 
 async fn rewards_get_json(client: &ZhtpClient, path: &str) -> CliResult<serde_json::Value> {
-    let response = client.get(path).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: path.to_string(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .get(path)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
     ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
         endpoint: path.to_string(),
         status: 0,
@@ -542,11 +571,14 @@ async fn rewards_post_json(
     path: &str,
     body: &serde_json::Value,
 ) -> CliResult<serde_json::Value> {
-    let response = client.post_json(path, body).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: path.to_string(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .post_json(path, body)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
     ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
         endpoint: path.to_string(),
         status: 0,
@@ -725,7 +757,9 @@ async fn handle_config_impl(output: &dyn Output) -> CliResult<()> {
     }
 
     output.print("")?;
-    output.info("To modify settings, edit the [rewards_config] section in your node config and restart.")?;
+    output.info(
+        "To modify settings, edit the [rewards_config] section in your node config and restart.",
+    )?;
     output.print("╚════════════════════════════════════════════════════════╝")?;
 
     Ok(())
@@ -760,10 +794,22 @@ mod tests {
             }),
             RewardOperation::Claim
         );
-        assert_eq!(action_to_operation(&RewardAction::Metrics), RewardOperation::Metrics);
-        assert_eq!(action_to_operation(&RewardAction::Routing), RewardOperation::Routing);
-        assert_eq!(action_to_operation(&RewardAction::Storage), RewardOperation::Storage);
-        assert_eq!(action_to_operation(&RewardAction::Config), RewardOperation::Config);
+        assert_eq!(
+            action_to_operation(&RewardAction::Metrics),
+            RewardOperation::Metrics
+        );
+        assert_eq!(
+            action_to_operation(&RewardAction::Routing),
+            RewardOperation::Routing
+        );
+        assert_eq!(
+            action_to_operation(&RewardAction::Storage),
+            RewardOperation::Storage
+        );
+        assert_eq!(
+            action_to_operation(&RewardAction::Config),
+            RewardOperation::Config
+        );
         assert_eq!(
             action_to_operation(&RewardAction::History {
                 did: "did:zhtp:ab".to_string(),
@@ -876,9 +922,27 @@ mod tests {
         let config = build_config_response(
             true, true, 100, 3600, true, 60, 1000, 10000, false, 120, 2000, 20000, &budget,
         );
-        assert_eq!(config.get("global").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(config.get("routing").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(config.get("storage").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            config
+                .get("global")
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            config
+                .get("routing")
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            config
+                .get("storage")
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]
