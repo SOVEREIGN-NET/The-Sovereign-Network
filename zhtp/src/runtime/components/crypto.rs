@@ -44,7 +44,10 @@ impl Component for CryptoComponent {
         *self.status.write().await = ComponentStatus::Starting;
 
         // Generate cryptographic keypair
-        let keypair = generate_keypair()?;
+        // Dilithium5 key generation requires a large stack on Windows (Issue #1011)
+        let keypair = tokio::task::spawn_blocking(|| {
+            generate_keypair()
+        }).await??;
         info!("Generated post-quantum keypair");
 
         *self.keypair.write().await = Some(keypair);

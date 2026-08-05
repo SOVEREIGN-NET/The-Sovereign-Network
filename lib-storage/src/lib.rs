@@ -114,8 +114,8 @@ pub struct UnifiedStorageSystem<B: dht::backend::StorageBackend = dht::backend::
     dht_storage: dht::storage::DhtStorage<B>,
     /// Economic manager
     economic_manager: economic::manager::EconomicStorageManager,
-    /// Content manager (uses in-memory storage for content metadata)
-    content_manager: content::ContentManager,
+    /// Content manager
+    content_manager: content::ContentManager<B>,
     /// Erasure coding
     erasure_coding: erasure::ErasureCoding,
     /// System configuration
@@ -229,7 +229,7 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         let economic_manager =
             economic::manager::EconomicStorageManager::new(config.economic_config.clone());
 
-        // Initialize content manager with in-memory storage
+        // Initialize content manager (uses same backend as DHT storage)
         let content_dht_storage =
             dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
         let content_manager =
@@ -313,6 +313,14 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         self.stats.storage_stats.total_downloads += 1;
 
         Ok(content)
+    }
+
+    /// Retrieve content metadata from DHT or local cache
+    pub async fn get_content_metadata(
+        &mut self,
+        content_hash: &ContentHash,
+    ) -> Result<ContentMetadata> {
+        self.content_manager.get_content_metadata(content_hash).await
     }
 
     /// Search for content across the unified storage system
@@ -530,7 +538,7 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         let dht_storage = dht::storage::DhtStorage::new_persistent(
             node_id.clone(),
             config.storage_config.max_storage_size,
-            db_path,
+            db_path.as_ref(),
         )?;
 
         tracing::info!(
@@ -541,10 +549,12 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         let economic_manager =
             economic::manager::EconomicStorageManager::new(config.economic_config.clone());
 
-        // Initialize content manager with in-memory storage (content metadata layer)
-        // Note: Content storage is separate and can be made persistent in future phases
-        let content_dht_storage =
-            dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
+        // Initialize content manager (uses same persistent backend)
+        let content_dht_storage = dht::storage::DhtStorage::new_persistent(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+            db_path.as_ref().join("content_metadata"),
+        )?;
         let content_manager =
             content::ContentManager::new(content_dht_storage, config.economic_config.clone())?;
 

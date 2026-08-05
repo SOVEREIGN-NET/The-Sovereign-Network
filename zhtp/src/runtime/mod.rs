@@ -2081,7 +2081,10 @@ impl RuntimeOrchestrator {
         let mesh_port = self.config.network_config.mesh_port;
 
         // Generate a temporary public key for discovery
-        let keypair = lib_crypto::generate_keypair()?;
+        // Dilithium5 key generation requires a large stack on Windows (Issue #1011)
+        let keypair = tokio::task::spawn_blocking(|| {
+            lib_crypto::generate_keypair()
+        }).await??;
         let public_key = lib_crypto::PublicKey {
             dilithium_pk: keypair.public_key.dilithium_pk.clone(),
             kyber_pk: keypair.public_key.kyber_pk.clone(),
@@ -5309,7 +5312,10 @@ impl RuntimeOrchestrator {
         let mesh_port = self.config.network_config.mesh_port;
 
         // Generate a temporary public key for discovery
-        let keypair = lib_crypto::generate_keypair()?;
+        // Dilithium5 key generation requires a large stack on Windows (Issue #1011)
+        let keypair = tokio::task::spawn_blocking(|| {
+            lib_crypto::generate_keypair()
+        }).await??;
         let public_key = lib_crypto::PublicKey {
             dilithium_pk: keypair.public_key.dilithium_pk.clone(),
             kyber_pk: keypair.public_key.kyber_pk.clone(),

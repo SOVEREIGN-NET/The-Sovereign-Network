@@ -82,6 +82,14 @@ pub struct ContentMetadata {
     pub is_encrypted: bool,
     /// Compression status
     pub is_compressed: bool,
+    /// Erasure coding configuration: data shards
+    pub erasure_data_shards: u32,
+    /// Erasure coding configuration: parity shards
+    pub erasure_parity_shards: u32,
+    /// List of shard hashes for distributed retrieval
+    pub shard_hashes: Vec<Hash>,
+    /// Size of processed content (encrypted/compressed) in bytes
+    pub processed_size: u64,
 }
 
 /// Storage chunk for erasure coding
