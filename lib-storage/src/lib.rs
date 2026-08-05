@@ -285,54 +285,6 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         self.config.node_id
     }
 
-    /// Upload content with full economic integration
-    pub async fn upload_content(
-        &mut self,
-        request: UploadRequest,
-        uploader: ZhtpIdentity,
-    ) -> Result<ContentHash> {
-        // Upload through content manager
-        let content_hash = self
-            .content_manager
-            .upload_content(request, uploader)
-            .await?;
-
-        // Update statistics
-        self.stats.storage_stats.total_uploads += 1;
-        self.stats.storage_stats.total_content_count += 1;
-
-        Ok(content_hash)
-    }
-
-    /// Download content with access control
-    pub async fn download_content(&mut self, request: DownloadRequest) -> Result<Vec<u8>> {
-        // Download through content manager
-        let content = self.content_manager.download_content(request).await?;
-
-        // Update statistics
-        self.stats.storage_stats.total_downloads += 1;
-
-        Ok(content)
-    }
-
-    /// Retrieve content metadata from DHT or local cache
-    pub async fn get_content_metadata(
-        &mut self,
-        content_hash: &ContentHash,
-    ) -> Result<ContentMetadata> {
-        self.content_manager.get_content_metadata(content_hash).await
-    }
-
-    /// Search for content across the unified storage system
-    pub async fn search_content(
-        &self,
-        query: SearchQuery,
-        requester: ZhtpIdentity,
-    ) -> Result<Vec<ContentMetadata>> {
-        // Direct return since we now have unified ContentMetadata
-        self.content_manager.search_content(query, requester).await
-    }
-
     /// Get storage quote for economic planning
     pub async fn get_storage_quote(
         &mut self,
@@ -436,6 +388,57 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     /// Update configuration
     pub fn update_config(&mut self, config: UnifiedStorageConfig) {
         self.config = config;
+    }
+}
+
+/// Generic methods for ALL storage backends
+impl<B: dht::backend::StorageBackend + 'static> UnifiedStorageSystem<B> {
+    /// Upload content with full economic integration and sharding
+    pub async fn upload_content(
+        &mut self,
+        request: UploadRequest,
+        uploader: ZhtpIdentity,
+    ) -> Result<ContentHash> {
+        // Upload through content manager
+        let content_hash = self
+            .content_manager
+            .upload_content(request, uploader)
+            .await?;
+
+        // Update statistics
+        self.stats.storage_stats.total_uploads += 1;
+        self.stats.storage_stats.total_content_count += 1;
+
+        Ok(content_hash)
+    }
+
+    /// Download content with access control and reconstruction
+    pub async fn download_content(&mut self, request: DownloadRequest) -> Result<Vec<u8>> {
+        // Download through content manager
+        let content = self.content_manager.download_content(request).await?;
+
+        // Update statistics
+        self.stats.storage_stats.total_downloads += 1;
+
+        Ok(content)
+    }
+
+    /// Retrieve content metadata from DHT or local cache
+    pub async fn get_content_metadata(
+        &mut self,
+        content_hash: &ContentHash,
+    ) -> Result<ContentMetadata> {
+        self.content_manager.get_content_metadata(content_hash).await
+    }
+
+    /// Search for content across the unified storage system
+    pub async fn search_content(
+        &self,
+        query: SearchQuery,
+        requester: ZhtpIdentity,
+    ) -> Result<Vec<ContentMetadata>> {
+        // Direct return since we now have unified ContentMetadata
+        self.content_manager.search_content(query, requester).await
     }
 
     // ========================================================================
