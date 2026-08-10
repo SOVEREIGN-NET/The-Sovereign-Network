@@ -273,12 +273,6 @@ pub struct Blockchain {
     /// Custom tokens (without kernel_mint_authority) bypass the kernel
     #[serde(skip)]
     pub treasury_kernel: Option<TreasuryKernel>,
-    /// Contract state snapshots per block height for historical queries
-    #[serde(default)]
-    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
-    /// UTXO set snapshots per block height for state recovery and reorg support
-    #[serde(default)]
-    pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
     /// Count of reorganizations for monitoring
     #[serde(default)]
     pub reorg_count: u64,
@@ -1120,11 +1114,6 @@ impl Blockchain {
         self.push_block_windowed(block.clone());
         self.height += 1;
         self.update_utxo_set(&block)?;
-        self.save_utxo_snapshot(self.height)?;
-        // BST-202: snapshots accumulate without bound otherwise — RSS grew to
-        // 12 GB / 123k snapshots on validators. Retention matches the hot
-        // block window, since reorg cannot exceed it anyway.
-        self.prune_utxo_history(self.block_window_size() as u64);
         self.adjust_difficulty()?;
 
         // Remove processed transactions from pending pool
@@ -6448,195 +6437,9 @@ impl Blockchain {
         self.reorg_count
     }
 
-    // ========================================================================
-    // CONTRACT STATE MANAGEMENT
-    // ========================================================================
-
-    /// Update and persist contract state after execution
-    ///
-    /// # Arguments
-    /// * `contract_id` - 32-byte contract identifier
-    /// * `new_state` - Serialized contract state bytes
-    /// * `block_height` - Current block height for historical snapshots
-    pub fn update_contract_state(
-        &mut self,
-        contract_id: [u8; 32],
-        new_state: Vec<u8>,
-        block_height: u64,
-    ) -> Result<()> {
-        // Update current state
-        self.contract_states.insert(contract_id, new_state.clone());
-
-        // Save snapshot for this block height
-        let snapshot = self
-            .contract_state_history
-            .entry(block_height)
-            .or_insert_with(HashMap::new);
-        snapshot.insert(contract_id, new_state);
-
-        debug!(
-            "💾 Contract state updated: {:?} at block {}",
-            contract_id, block_height
-        );
-        Ok(())
-    }
-
     /// Get current contract state
     pub fn get_contract_state(&self, contract_id: &[u8; 32]) -> Option<Vec<u8>> {
         self.contract_states.get(contract_id).cloned()
-    }
-
-    /// Get contract state at a specific block height (for historical queries)
-    ///
-    /// # Arguments
-    /// * `contract_id` - 32-byte contract identifier
-    /// * `height` - Block height to query
-    ///
-    /// # Returns
-    /// State bytes at the specified height, or None if not found
-    pub fn get_contract_state_at_height(
-        &self,
-        contract_id: &[u8; 32],
-        height: u64,
-    ) -> Option<Vec<u8>> {
-        // Try to find snapshot at or before requested height
-        for h in (0..=height).rev() {
-            if let Some(snapshot) = self.contract_state_history.get(&h) {
-                if let Some(state) = snapshot.get(contract_id) {
-                    return Some(state.clone());
-                }
-            }
-        }
-        None
-    }
-
-    /// Prune old contract state history to save memory
-    ///
-    /// Keeps snapshots for recent blocks and removes older ones.
-    /// # Arguments
-    /// * `keep_blocks` - Number of recent blocks to keep in history
-    pub fn prune_contract_history(&mut self, keep_blocks: u64) {
-        if self.height < keep_blocks {
-            return; // Not enough blocks to prune
-        }
-
-        let prune_before = self.height.saturating_sub(keep_blocks - 1);
-        let keys_to_remove: Vec<u64> = self
-            .contract_state_history
-            .iter()
-            .filter(|(h, _)| **h < prune_before)
-            .map(|(h, _)| *h)
-            .collect();
-
-        for key in keys_to_remove {
-            self.contract_state_history.remove(&key);
-        }
-
-        debug!("🧹 Pruned contract history before block {}", prune_before);
-    }
-
-    // ========================================================================
-    // UTXO SNAPSHOT MANAGEMENT
-    // ========================================================================
-
-    /// Save UTXO set snapshot for current block height
-    ///
-    /// Creates a complete snapshot of the current UTXO set for the given block height.
-    /// This enables state recovery and chain reorganizations.
-    ///
-    /// # Arguments
-    /// * `block_height` - Block height to snapshot
-    pub fn save_utxo_snapshot(&mut self, block_height: u64) -> Result<()> {
-        // Clone the current UTXO set
-        let snapshot = self.utxo_set.clone();
-
-        // BST-202: a per-height *full* UTXO-set clone does not scale — the
-        // real fix is live-state + an undo journal (see the epic's Future
-        // Work). Until then, retention stays bounded via `prune_utxo_history`;
-        // this warns when an individual snapshot is large enough to matter.
-        const LARGE_SNAPSHOT_UTXOS: usize = 100_000;
-        if snapshot.len() >= LARGE_SNAPSHOT_UTXOS {
-            warn!(
-                "⚠️ Large UTXO snapshot at block {}: {} UTXOs cloned in-memory \
-                 — per-height full snapshots do not scale (BST-202)",
-                block_height,
-                snapshot.len()
-            );
-        }
-
-        // Save to snapshots map
-        self.utxo_snapshots.insert(block_height, snapshot);
-
-        debug!(
-            "💾 UTXO snapshot saved at block {}: {} UTXOs",
-            block_height,
-            self.utxo_set.len()
-        );
-        Ok(())
-    }
-
-    /// Get UTXO set at a specific block height
-    ///
-    /// Returns the UTXO set as it existed at the specified block height.
-    /// Useful for state verification and historical queries.
-    ///
-    /// # Arguments
-    /// * `height` - Block height to query
-    ///
-    /// # Returns
-    /// HashMap of UTXO hash to TransactionOutput, or None if snapshot not found
-    pub fn get_utxo_set_at_height(&self, height: u64) -> Option<HashMap<Hash, TransactionOutput>> {
-        self.utxo_snapshots.get(&height).cloned()
-    }
-
-    /// Prune old UTXO snapshots to save memory
-    ///
-    /// Keeps snapshots for recent blocks and removes older ones.
-    /// Maintains finalized blocks to prevent reorg below finality depth.
-    ///
-    /// # Arguments
-    /// * `keep_blocks` - Number of recent blocks to keep in history
-    pub fn prune_utxo_history(&mut self, keep_blocks: u64) {
-        if self.height < keep_blocks {
-            return; // Not enough blocks to prune
-        }
-
-        let prune_before = self.height.saturating_sub(keep_blocks - 1);
-        let keys_to_remove: Vec<u64> = self
-            .utxo_snapshots
-            .iter()
-            .filter(|(h, _)| **h < prune_before)
-            .map(|(h, _)| *h)
-            .collect();
-
-        for key in keys_to_remove {
-            self.utxo_snapshots.remove(&key);
-        }
-
-        debug!("🧹 Pruned UTXO snapshots before block {}", prune_before);
-    }
-
-    /// Restore UTXO set from a snapshot at specific height
-    ///
-    /// Used during chain reorganizations to rollback to previous state.
-    ///
-    /// # Arguments
-    /// * `height` - Block height to restore from
-    ///
-    /// # Returns
-    /// Ok(()) if snapshot found and restored, error otherwise
-    pub fn restore_utxo_set_from_snapshot(&mut self, height: u64) -> Result<()> {
-        if let Some(snapshot) = self.utxo_snapshots.get(&height) {
-            self.utxo_set = snapshot.clone();
-            info!(
-                "🔄 UTXO set restored from snapshot at height {}: {} UTXOs",
-                height,
-                self.utxo_set.len()
-            );
-            Ok(())
-        } else {
-            anyhow::bail!("No UTXO snapshot found at height {}", height)
-        }
     }
 
     // ========================================================================
