@@ -2,6 +2,7 @@
 
 **Tracker:** [#2727 GENESIS epic](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) — chain bootstrap, replay determinism, and state unification (supersedes [#2645](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2645))
 **This document delivers:** [#2634](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2634) — Phase 0
+**Companion:** [`genesis-bootstrap-surface.md`](./genesis-bootstrap-surface.md) — authoritative boundary defining what belongs in genesis (h=0) vs on-chain txs (h≥1) vs node-local runtime
 **Status:** Draft (Phase 0, no code changes)
 
 ---

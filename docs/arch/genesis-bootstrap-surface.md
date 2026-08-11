@@ -1,162 +1,258 @@
-# Genesis Bootstrap Surface Area
+# Genesis Bootstrap Surface — Authoritative Boundary
 
-**Epic:** [#2727 GENESIS](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727)  
-**Status:** Draft (GENESIS-0)  
-**Companion:** [`state-unification.md`](./state-unification.md)
+**Part of:** [#2727 GENESIS epic](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) — chain bootstrap, replay determinism, and state unification  
+**Status:** Active (Phase 0 — documentation)  
+**Companion:** [`state-unification.md`](./state-unification.md), [`sovereign-asset.md`](./sovereign-asset.md)  
+**Supersedes:** ad-hoc per-token sled patches ([#2725](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2725) SOV-only)
 
 ---
 
 ## 1. Rule of thumb
 
-| Layer | Height | What | Grows when DAO mints? |
-|-------|--------|------|------------------------|
-| **Genesis (native)** | h=0 | SOV policy + shell, chain params, council | No |
-| **On-chain txs** | h≥1 | All tokens, contracts, transfers, payroll | Yes — every DAO launch |
-| **Node-local** | N/A | rewards.sled, keystores, OPAQUE runtime | Per node |
+Every state fact in the system belongs to exactly one of three buckets. The rule:
 
-**Only SOV is native.** CBE, BUBL, and every other ticker are DAO tokens created via `TokenCreation`. CBE is special only in **economics**: its bonding-curve contract bootstraps SOV liquidity — not in **genesis shape**.
+| Bucket | Height | Scope | Mnemonic |
+|--------|--------|-------|----------|
+| **A** | h=0 | Native-only SOV shell + chain params | "Genesis = birth certificate" |
+| **B** | h≥1 | Token creation, curve economics, transfers, payroll, validator registration — ALL tokens | "Txs = economic life" |
+| **C** | node-local | Keystores, reward DBs, OPAQUE runtime, per-node welcome bonus | "Node = private runtime" |
+
+**Consequence:** If a state fact appears in a bucket it does not belong to, that is a **bug** — not a configuration choice.
 
 ---
 
 ## 2. Token taxonomy
 
-| Token | Class | Genesis? | Bootstrap role |
-|-------|-------|----------|------------------|
-| **SOV** | Native (sole) | Policy + contract shell at h=0 | Fees, payroll, internal settlement |
-| **CBE** | DAO | No | Bonding-curve **contract** + `TokenCreation`; on-ramp buys mint SOV |
-| **BUBL** | DAO | No | Rewards `TokenCreation` |
-| **Others** | DAO | No | 20% treasury per `TokenCreationPayloadV1` |
+The chain recognizes exactly one native token. Every other token is a DAO token that enters the system through on-chain transactions.
 
-Curve **parameters** and `BondingCurveEconomicState` are **DAO contract state** (sled), initialized by founding deploy/init txs — not `[cbe_curve]` in `genesis.toml`. Immutable protocol **math** (band formula, debt ceiling rules) may remain in `canonical.rs`; deploy-time config and live economic state belong on-chain.
+### 2.1 Classification table
 
----
+| Token | Class | Enters via | Treasury | Native? | Notes |
+|-------|-------|------------|----------|---------|-------|
+| **SOV** | Native L1 currency | Genesis h=0 shell + policy; balances via block txs (coinbase, transfers) | N/A (native unit) | **Yes** | Only token whose contract record is written at h=0 |
+| **CBE** | DAO token (bonding-curve class) | `TokenCreation` tx (target); currently seeded ad-hoc at h=0 executor (tech debt) | 20% per canonical payload, 20B off-curve treasury allocation | **No** | Bootstraps SOV economics via bonding curve; must not appear in genesis.toml as balances |
+| **BUBL** | DAO token (rewards class) | `TokenCreation` tx | 20% per canonical payload | **No** | Fixed supply; rewards module; per-node welcome bonus is node-local (Bucket C) |
+| **All other DAO tokens** | DAO token | `TokenCreation` tx | 20% per canonical payload | **No** | `SovereignAsset` primitive (future); uniform launch path |
 
-## 3. Inventory (current → target; bucket = §4)
+### 2.2 CBE is NOT native
 
-| State | Current writer | Sled on replay? | Target (§4) |
-|-------|----------------|-----------------|-------------|
-| `chain_id`, `genesis_time` | `genesis.toml` | N/A | A — genesis config |
-| SOV native shell | `build_block0()` in-mem only | Yes (#2741 `project_chain_bootstrap`) | A — h=0 projection |
-| `[[allocations.sov_balances]]` | `build_block0()` in-mem; #2725/#2741 sled | Yes | A — testnet legacy (see §8) |
-| CBE `TokenCreation` + balances | Should be founding tx | Partial (block-0 patch) | B — on-chain txs |
-| CBE curve params | `genesis.toml` + `canonical.rs` + `build_block0()` deploy | No | B — DAO contract state |
-| `BondingCurveEconomicState` | Executor block-0 special case (deprecated) | Yes | B — contract init tx |
-| BUBL / custom tokens | `TokenCreation` in chain | Yes if executor path | B — on-chain txs |
-| Wallets / identities | `[[allocations.*]]`, `apply_genesis_state` | Partial | B — registration txs |
-| Bootstrap council | `genesis.toml` | In-mem only | A — governance sled TBD |
-| `[opaque]` | `apply_genesis_state` | No | C — node-local |
-| `GenesisFundingService` welcome SOV | Bootstrap leader only | No | C — retire |
-| Reward streaks | `rewards.sled` | N/A | C — node-local |
+CBE is a DAO token whose bonding-curve economics bootstrap SOV demand. It is **not** a chain-native asset:
+
+- CBE balances **must not** appear in [`genesis.toml`](../../genesis.toml) under any `[allocations]` section.
+- CBE economic state (curve phase, reserve balance, treasury allocation) enters via on-chain transactions, not genesis projection.
+- The current executor block-0 CBE seed ([`executor.rs:789-829`](../../lib-blockchain/src/execution/executor.rs#L789)) is **deprecated** tech debt — tracked as GENESIS-6 ([#2734](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2734)).
 
 ---
 
-## 4. Buckets
+## 3. Full inventory: who writes what, and where
 
-### A — Native genesis (h=0, fixed at reset)
+### 3.1 Bucket A — h=0 native only (genesis.toml → build_block0 + project_chain_bootstrap_to_store)
 
-- Chain params (`chain_id`, `genesis_time`)
-- SOV native token contract record (zero supply on v2)
-- SOV policy (`[sov] initial_supply = 0` on clean testnet)
-- Bootstrap council, treasury **addresses** (not DAO balances)
-- Testnet-only: migrated `sov_balances` until GENESIS-3 reset
+These are the **only** state facts that may appear at height 0. Every item listed here must produce identical sled state on every node that replays block 0.
 
-**API:** `GenesisConfig::project_chain_bootstrap_to_store()` (GENESIS-1, #2729) — SOV-native scope only. Installs SOV contract shell + credits `[allocations.sov_balances]` during executor block-0 `begin_block`.
+| # | State fact | Current writer(s) | Written to sled on replay? | Target |
+|---|-----------|-------------------|---------------------------|--------|
+| A1 | Chain params (chain_id, genesis_time, name) | [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L408) → block 0 header | ✅ yes (via `append_block`) | Stay in genesis |
+| A2 | SOV native token contract record (name="SOV", symbol="SOV", decimals) | [`project_chain_bootstrap_to_store()`](../../lib-blockchain/src/genesis/mod.rs#L727) → `ensure_sov_native_contract_in_store()` | ✅ yes (GENESIS-1 #2729) | Stay in genesis |
+| A3 | Bootstrap council (members, threshold) | [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L504-L520) → in-memory `council_members` | ❌ in-memory only (no sled tree) | Add sled tree (deferred) |
+| A4 | Entity registry treasury addresses (cbe_treasury_key, nonprofit_treasury_key) | [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L487-L502) → in-memory `entity_registry` | ❌ in-memory only (no sled tree) | Add sled tree (deferred) |
+| A5 | OPAQUE server setup (lobby-auth) | [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L529) → in-memory `opaque_server_setup` | ❌ in-memory only | Node-local runtime (consider Bucket C) |
+| A6 | CBE curve canonical params (p_start_0, reserve_ratio_ppm, graduation_threshold) | [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L424-L485) → in-memory `bonding_curve_registry` | ❌ in-memory only | Move to Bucket B (curve contract deploy tx) |
+| A7 | Identity/wallet/web4 allocations (migration) | [`apply_allocations()`](../../lib-blockchain/src/genesis/mod.rs#L535) → in-memory registries | ❌ in-memory only (no sled trees for most) | Retire; fold into founding txs |
+| A8 | SOV balance allocations (bulk) | [`apply_allocations()`](../../lib-blockchain/src/genesis/mod.rs#L535) → in-memory `token_contracts`; [`project_chain_bootstrap_to_store()`](../../lib-blockchain/src/genesis/mod.rs#L727) → sled | ✅ yes (but GENESIS-3 retired bulk SOV) | **Retired** (GENESIS-3 #2731); empty in current genesis.toml |
 
-### B — On-chain transactions (unbounded)
+### 3.2 Bucket B — on-chain transactions (h≥1)
 
-- `TokenCreation` — CBE, BUBL, all DAO tokens (20% treasury)
-- CBE bonding-curve contract deploy + economic state init
-- `TokenTransfer`, payroll, CBE buy/sell, coinbase
-- `WalletRegistration`, `IdentityRegistration`, `ValidatorRegistration`
+These state facts **must not** be written at h=0. They enter via transactions in blocks 1+.
 
-### C — Node-local (never consensus)
+| # | State fact | Current writer(s) | Written to sled? | Target |
+|---|-----------|-------------------|-----------------|--------|
+| B1 | CBE treasury allocation (20B off-curve) | **TECH DEBT**: [`executor.rs` block-0 special case](../../lib-blockchain/src/execution/executor.rs#L804-L824) → sled `cbe_economic_state` + `token_balances` | ✅ yes (wrong height) | **Fold into founding `TokenCreation` + curve deploy txs at h=1** (GENESIS-6 #2734) |
+| B2 | CBE bonding curve economic state (phase, reserve, treasury, S_c) | **TECH DEBT**: [`executor.rs` block-0 special case](../../lib-blockchain/src/execution/executor.rs#L804-L810) → sled | ✅ yes (wrong height) | **Fold into founding txs** (GENESIS-6 #2734) |
+| B3 | TokenCreation (CBE, BUBL, all DAO tokens) | Valid `TokenCreation` tx in block 1+ | ✅ yes (via `StateMutator::apply`) | Normal tx path |
+| B4 | Token transfers, burns, mints | Valid tx in block 1+ | ✅ yes | Normal tx path |
+| B5 | Payroll (CBE operator, etc.) | Valid tx in block 1+ | ✅ yes | Normal tx path |
+| B6 | Validator registration | `ValidatorRegistration` tx in block 1+ | ❌ in-memory only (no sled tree) | Add sled tree; move to normal tx path |
+| B7 | DAO governance (proposals, votes, stake) | Governance tx in block 1+ | ⚠️ partial (stakes=sled, index=in-mem) | Complete sled wiring |
+| B8 | Domain registration, NFT minting, web4 deploy, gateway registration, credential issuance | Respective tx in block 1+ | ❌ in-memory only | Add sled trees |
 
-- `rewards.sled`, treasury signer keystore, per-node welcome bonus
-- OPAQUE server setup blob (runtime auth)
+### 3.3 Bucket C — node-local runtime
+
+These state facts are **never** part of consensus state. They differ per node by design and must not be written to sled trees that are expected to be identical across nodes.
+
+| # | State fact | Current writer | Persisted? | Notes |
+|---|-----------|---------------|-----------|-------|
+| C1 | Reward streak DB | Node-local DB (not chain state) | Node-local disk | Per-validator reward tracking |
+| C2 | Treasury signer keystore | Operator config (`/opt/zhtp/keystores/`) | Filesystem | Cold/hot wallet keys; never on chain |
+| C3 | Per-node welcome bonus | [`GenesisFundingService`](../../zhtp/src/runtime/services/genesis_funding.rs) → in-memory SOV mint | In-memory only | Non-deterministic: depends on per-node wallet ID |
+| C4 | GenesisFundingService UTXO mutation | [`GenesisFundingService::create_genesis_funding()`](../../zhtp/src/runtime/services/genesis_funding.rs#L28) → in-memory `utxo_set` + block 0 mutation | In-memory only | **Must be retired** — produces different block 0 hash per node |
+| C5 | OPAQUE runtime auth state | [`opaque_server_setup`](../../lib-blockchain/src/genesis/mod.rs#L529) → in-memory | In-memory only | Server setup is consensus (Bucket A); runtime auth state is node-local |
+| C6 | Mempool | [`pending_transactions`](../../lib-blockchain/src/blockchain.rs#L160) | ⚠️ sled trees exist but unused | Per-node; not consensus |
 
 ---
 
-## 5. Never in genesis
+## 4. Three-bucket boundary diagram
 
-- CBE, BUBL, or any DAO token **balances**
-- CBE curve **deploy config** (belongs in contract state)
-- Per-DAO allocations that grow with each launch
-- Reward policy / streak state
-- Treasury private keys
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      h=0 (genesis block)                     │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Bucket A — Native SOV shell + chain params           │  │
+│  │  • Chain ID, genesis_time, name                       │  │
+│  │  • SOV token contract record (name, symbol, decimals) │  │
+│  │  • Bootstrap council members + threshold              │  │
+│  │  • Entity registry treasury addresses                 │  │
+│  │  • OPAQUE server setup blob                           │  │
+│  │  • CBE curve canonical params (⚠️ moving to Bucket B) │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  BUG: Executor block-0 CBE seed (tech debt)           │  │
+│  │  • 20B CBE treasury allocation → sled                 │  │
+│  │  • CBE economic zero-state → sled                     │  │
+│  │  • GENESIS-6 #2734: fold into founding txs            │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  BUG: GenesisFundingService (non-deterministic)       │  │
+│  │  • UTXO set mutation post-build_block0()              │  │
+│  │  • Per-node welcome bonus SOV mint                    │  │
+│  │  • Different block 0 hash per node                    │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    h≥1 (on-chain transactions)               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Bucket B — Economic life                             │  │
+│  │  • TokenCreation: CBE, BUBL, all DAO tokens           │  │
+│  │  • CBE curve contract deploy (20B treasury, curve ops)│  │
+│  │  • All transfers, burns, mints                        │  │
+│  │  • Validator registration                             │  │
+│  │  • Governance: proposals, votes, stake                 │  │
+│  │  • Domain, NFT, web4, gateway, credential txs         │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
 
-`genesis.toml` may retain **chain** and **SOV policy** sections only after testnet reset. `[cbe_curve]` / `[bonding_curve]` are retired in favour of founding contract txs (GENESIS-6).
-
----
-
-## 6. Replay acceptance (GENESIS-2)
-
-After wipe + replay to height `H`:
-
-1. SOV native balances match live node at `H` (sample wallets)
-2. CBE treasury balance from **DAO tx replay**, not native h=0 patch
-3. BUBL treasury from `TokenCreation` replay if deployed before `H`
-4. No `Insufficient token balance` in executor at g4 checkpoint (~74010)
-
-### CI gate (synthetic — does not replace g4 fixture)
-
-```bash
-./scripts/validate-genesis-replay-gate.sh
+┌─────────────────────────────────────────────────────────────┐
+│                 Node-local runtime (any height)              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Bucket C — Private per-node state                    │  │
+│  │  • Reward streak DB                                   │  │
+│  │  • Treasury signer keystores (filesystem)             │  │
+│  │  • Per-node welcome bonus                             │  │
+│  │  • OPAQUE runtime auth state                          │  │
+│  │  • Mempool (per-node view)                            │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Regression-tests replay **mechanics** on a short synthetic chain. A green CI badge does **not** prove empirical g4 parity at 74k+.
+---
 
-| Test | Scope |
-|------|-------|
-| `test_genesis_bootstrap_checkpoint_balances` | Block-0 SOV shell, ≥3 `sov_balances`, legacy CBE 20B treasury |
-| `test_sov_native_wipe_replay_parity` | SOV transfers — #2725/#2741 fix class |
-| `test_dao_token_creation_wipe_replay_parity` | `TokenCreation` + custom-token transfer (BUBL class) |
+## 5. "Never in genesis" list
 
-Failures print `token_id`, `address`, `have`, `need` via `common/replay_gate.rs`.
+The following **must never** appear in [`genesis.toml`](../../genesis.toml) or be written at h=0 by any code path:
 
-**Who runs CI:** every PR touching `lib-blockchain` execution/sync/genesis (CI or `./scripts/validate-genesis-replay-gate.sh` locally).
-
-### Manual g4 fixture (≥ h = 74_010 — pre-GENESIS-3 incident height)
-
-Empirical gate for the live chain shape. **Who:** testnet maintainer / validator operator with sled SSH access. **When:** before each testnet binary deploy that touches genesis, replay, or executor paths; mandatory before GENESIS-7 (delete seed-sled). **On failure:** block deploy, file issue on [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) / [#2730](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2730) with height + `Insufficient token balance` line (token/address/have/need).
-
-Export (versioned fixture — `blocks.v1.bin` + `checkpoint.json`):
-
-```bash
-# <sled-path>: common locations are /opt/zhtp/.zhtp/data/testnet/sled or /opt/zhtp/data/testnet/sled
-cargo run -p tools --bin export_replay_fixture -- \
-  <sled-path> /tmp/g4-fixture --to-height 74010
-```
-
-Replay:
-
-```bash
-export G4_REPLAY_BLOCKS_PATH=/tmp/g4-fixture/blocks.v1.bin
-export G4_REPLAY_SNAPSHOT_PATH=/tmp/g4-fixture/checkpoint.json
-cargo test -p lib-blockchain --test g4_replay_acceptance_tests \
-  test_g4_checkpoint_replay_acceptance -- --ignored --nocapture
-```
-
-Large chains: use `--to-height` to cap memory (full `export_all_blocks` on 177k+ blocks materialises the window). Bump `REPLAY_BLOCKS_FIXTURE_VERSION` if the wrapper layout changes.
+| # | Item | Reason | Current status |
+|---|------|--------|---------------|
+| N1 | CBE token balances (any address) | CBE is a DAO token, not native | **VIOLATED**: executor block-0 writes 20B CBE to treasury sled balance (GENESIS-6 #2734) |
+| N2 | CBE `BondingCurveEconomicState` | Curve economics are on-chain tx state | **VIOLATED**: executor block-0 writes zero-state (GENESIS-6 #2734) |
+| N3 | BUBL token contract or balances | DAO token; enters via TokenCreation | ✅ Compliant (not in genesis.toml) |
+| N4 | Any DAO-issued token (future `SovereignAsset`) | All DAO tokens enter via `AssetLaunch` tx | ✅ Compliant (not yet implemented) |
+| N5 | Validator registration records | Validators register via tx, not genesis | ⚠️ Partial: `[[allocations.identities]]` can seed identities but not validators |
+| N6 | Per-node wallet welcome bonus | Non-deterministic; depends on node-local wallet ID | **VIOLATED**: GenesisFundingService writes per-node SOV mint |
 
 ---
 
-## 7. Implementation order
+## 6. Testnet legacy to retire
 
-See [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727): GENESIS-0 → GENESIS-1 (SOV h=0) → GENESIS-6 (CBE contract + DAO tokens) → GENESIS-2 (gate) → GENESIS-7+ (state unification).
+The following code paths exist in the current testnet but **must be removed** to achieve replay determinism:
 
-Do **not** land GENESIS-7 (delete seed-sled) until GENESIS-2 passes.
+### 6.1 `[[allocations.sov_balances]]` — RETIRED (GENESIS-3 #2731)
+
+- **Status:** Empty in current [`genesis.toml`](../../genesis.toml#L113-L114). Forensic snapshot archived at [`archive/genesis-testnet-sov-balances-pre-genesis3.toml`](../../archive/genesis-testnet-sov-balances-pre-genesis3.toml).
+- **Remaining work:** Remove the `sov_balances` field from [`GenesisAllocations`](../../lib-blockchain/src/genesis/mod.rs#L169), [`GenesisStateSnapshot`](../../lib-blockchain/src/genesis/mod.rs#L253), `apply_allocations()`, `credit_sov_allocations_to_store()`, and `credit_sov_allocations_in_open_transaction()`.
+- **Blocked by:** All testnet resets must use on-chain SOV distribution only.
+
+### 6.2 Executor block-0 CBE ad-hoc seed — DEPRECATED (GENESIS-6 #2734)
+
+- **Code:** [`executor.rs:789-829`](../../lib-blockchain/src/execution/executor.rs#L789) — writes CBE economic zero-state + 20B treasury allocation to sled inside the `block_height == 0` special case.
+- **Replacement:** Founding `TokenCreation` + curve contract deploy transactions at height 1 (or earliest block with txs).
+- **Risk:** Until removed, CBE is incorrectly treated as chain-native. Any replay that skips this block-0 path will miss the CBE economic state.
+
+### 6.3 GenesisFundingService UTXO mutation — NON-DETERMINISTIC
+
+- **Code:** [`genesis_funding.rs`](../../zhtp/src/runtime/services/genesis_funding.rs) — called after [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L408), mutates the genesis block's UTXO set and transactions, then [`replace_block`](../../zhtp/src/runtime/services/genesis_funding.rs#L331) re-persists block 0.
+- **Non-determinism source:** Validator identity IDs and user wallet IDs are per-node configuration. Even with deterministic sorting ([`genesis_funding.rs:73`](../../zhtp/src/runtime/services/genesis_funding.rs#L73)), different node configs produce different genesis block hashes.
+- **Replacement:** Founding validators must register via on-chain `ValidatorRegistration` transactions at h≥1. Welcome bonuses move to Bucket C (node-local, not chain state).
+
+### 6.4 Bulk wallet/identity allocations — RETIRED (GENESIS-4)
+
+- **Status:** Empty in current [`genesis.toml`](../../genesis.toml#L116-L119). Forensic snapshot archived at [`archive/genesis-testnet-wallets-identities-pre-genesis4.toml`](../../archive/genesis-testnet-wallets-identities-pre-genesis4.toml).
+- **Remaining work:** Remove the `wallets` and `identities` fields from [`GenesisAllocations`](../../lib-blockchain/src/genesis/mod.rs#L163-L166) and `apply_allocations()` once all testnet identities enter via block txs.
 
 ---
 
-## 8. Migration / retirement plan (testnet)
+## 7. Current write-path inventory (who writes what to which store)
 
-Retiring `[[allocations.sov_balances]]` (GENESIS-3 / #2731) requires a **coordinated testnet reset**, not a silent genesis.toml edit on a live chain:
+Understanding why engineers cannot diagnose state gaps requires mapping all four write paths:
 
-1. **Snapshot** current sled + document wallet balances to verify replay parity (GENESIS-2).
-2. **Reset** all validators together with shrunk `genesis.toml` (`[sov] initial_supply = 0`, no bulk allocations).
-3. **Re-seed** wallets via early-block `WalletRegistration` / UBI / coinbase — not genesis rows.
-4. **DAO tokens** (CBE, BUBL): founding `TokenCreation` + contract deploy txs in blocks 1..k (GENESIS-6).
+| Write path | In-memory | Sled | Called by | Deterministic? |
+|------------|-----------|------|-----------|---------------|
+| [`build_block0()`](../../lib-blockchain/src/genesis/mod.rs#L408) | ✅ chain params, council, entity registry, CBE curve, OPAQUE, allocations | ❌ (sled not attached) | `Blockchain::new()` | ✅ yes (same genesis.toml → same result) |
+| [`GenesisFundingService`](../../zhtp/src/runtime/services/genesis_funding.rs#L28) | ✅ UTXOs, SOV welcome bonus, validator funding | ❌ (then `replace_block` to sled) | Runtime startup (founding node) | ❌ **no** — per-node config |
+| [`executor.rs` block-0 special case](../../lib-blockchain/src/execution/executor.rs#L775-L869) | ❌ | ✅ CBE economic state, CBE treasury balance, SOV contract shell, SOV balances (if any) | `apply_block(block_0)` during replay/sync | ✅ yes (but writes wrong-bucket data) |
+| [`project_chain_bootstrap_to_store()`](../../lib-blockchain/src/genesis/mod.rs#L727) | ❌ | ✅ SOV contract shell + SOV allocations | Called from executor block-0 path | ✅ yes |
 
-Mainnet uses a one-shot ceremony; testnet may repeat resets until GENESIS-2 gate is green.
+**The gap-producing scenario:**
 
-**Operator runbook:** [`docs/protocol/genesis-3-testnet-reset.md`](../protocol/genesis-3-testnet-reset.md)
+1. Founding node calls `build_block0()` → in-memory has council, curve, entity registry, etc.
+2. Founding node calls `GenesisFundingService` → mutates in-memory UTXO set, blocks[0]
+3. Peer replays block 0 via `executor.apply_block()` → sled gets CBE economic state + SOV shell, but **in-memory maps are not populated**
+4. Handler reads in-memory `bonding_curve_registry` → **empty** (never populated during replay)
+5. Reconciliation step in [`process_and_commit_block`](../../lib-blockchain/src/blockchain.rs#L962) back-syncs some fields — but not all; gaps remain
+
+---
+
+## 8. Acceptance checklist for g4 / post-reset replay parity
+
+- [ ] `build_block0()` writes **only** Bucket A items (no CBE balances, no curve economic state)
+- [ ] Executor block-0 special case removed (GENESIS-6 #2734)
+- [ ] CBE 20B treasury allocation + economic zero-state folded into founding `TokenCreation` + curve deploy txs at h=1
+- [ ] `GenesisFundingService` retired; validator registration and welcome bonuses move to h≥1 txs or node-local runtime
+- [ ] All `[allocations.*]` sections empty and code paths removed
+- [ ] `project_chain_bootstrap_to_store` scoped to SOV contract shell only (no SOV balances)
+- [ ] Two nodes with different configs replaying the same genesis.toml produce identical block 0 hash and identical sled state
+- [ ] Divergence detector ([`state-unification.md` §5](./state-unification.md#5-divergence-detector--design-spec)) reports zero mismatches for all DELETE/CACHE pairs after 100-block soak
+- [ ] `state-unification.md` §6 transition-window protocol satisfied for consensus-critical fields
+
+---
+
+## 9. Cross-references
+
+| Document | Relationship |
+|----------|-------------|
+| [`state-unification.md`](./state-unification.md) | Catalogs the dual-store pairs this boundary isolates; §6 transition-window protocol for cutover |
+| [`sovereign-asset.md`](./sovereign-asset.md) | Future `SovereignAsset` primitive — all DAO tokens (CBE, BUBL, …) become uniform Bucket B entries |
+| [`docs/ops/dao-launch-bootstrap.md`](../ops/dao-launch-bootstrap.md) | Operational procedure for founding DAO token launches |
+| [`docs/protocol/genesis-3-testnet-reset.md`](../protocol/genesis-3-testnet-reset.md) | GENESIS-3 reset runbook (retired bulk SOV) |
+| [`docs/ops/legacy-fixup-removal-gate.md`](../ops/legacy-fixup-removal-gate.md) | Gates for removing legacy fixup code paths |
+
+### Related GitHub issues
+
+| Issue | Title | Role |
+|-------|-------|------|
+| [#2727](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2727) | GENESIS epic | Parent tracker |
+| [#2729](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2729) | GENESIS-1: SOV-native shell projection | Installed SOV contract record in sled at h=0 |
+| [#2731](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2731) | GENESIS-3: retire bulk SOV allocations | Removed `[[allocations.sov_balances]]` |
+| [#2734](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2734) | GENESIS-6: fold CBE seed into founding txs | Remove executor block-0 CBE special case |
+| [#2725](https://github.com/SOVEREIGN-NET/The-Sovereign-Network/issues/2725) | SOV-only token balance fix | Per-token patch — superseded by this boundary doc |
+
+---
+
+## 10. Revision history
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-08-10 | Initial draft: taxonomy + inventory + three buckets + legacy retirement list | GENESIS Phase 0 |
