@@ -1128,6 +1128,56 @@ fn wallet_registry_snapshot_overlay_in_memory_wins() {
     );
 }
 
+/// After restart, wallet_registry_snapshot() reads wallets from sled even
+/// when the in-memory wallet_registry is empty — the fix for #2972 (validation
+/// path migrated from get_all_wallets() to wallet_registry_snapshot()).
+#[test]
+fn wallet_registry_snapshot_reads_sled_after_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_restart")).unwrap());
+    let wallet_id = [0xBBu8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Restart Wallet"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    // Simulate restart: fresh Blockchain with sled store attached. The
+    // in-memory wallet_registry only holds genesis-bootstrap wallets, NOT the
+    // wallet committed to sled below (which represents a wallet created before
+    // restart).
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    // Prove the sled wallet is NOT in the in-memory shadow (like after restart).
+    assert!(
+        !bc.wallet_registry.contains_key(&wallet_id_hex),
+        "test premise: sled wallet absent from in-mem shadow (like after restart)"
+    );
+
+    let snap = bc.wallet_registry_snapshot();
+    assert_eq!(
+        snap.get(&wallet_id_hex).map(|w| w.wallet_name.as_str()),
+        Some("Restart Wallet"),
+        "wallet_registry_snapshot must include sled wallets after restart \
+         (wallet absent from in-mem shadow, like after restart)"
+    );
+    // The validation path (validate_sender_identity_exists) now iterates
+    // wallet_registry_snapshot() instead of get_all_wallets(), so this
+    // proves the #2972 fix: wallets committed before restart are found.
+    assert!(
+        snap.len() >= 1,
+        "snapshot includes at least the sled wallet"
+    );
+}
+
 /// did_by_public_key() resolves a DID from a public key by scanning sled
 /// metadata even when the in-memory shadow is empty (restart case) — the read
 /// that lets council-membership / dedup checks work on a store-backed node
