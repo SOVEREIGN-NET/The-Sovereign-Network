@@ -735,18 +735,33 @@ impl Blockchain {
         }
     }
 
-    /// Wallets owned by an identity in the in-memory shadow only (O(N) over
-    /// `wallet_registry`, not sled). Do not call per-identity inside tight loops
-    /// on store-backed nodes with large wallet projections.
+    /// Wallets owned by an identity, sled-first with in-memory overlay (#2639).
+    ///
+    /// Reads durable wallet projections when the store is attached, then overlays
+    /// the in-memory shadow (pending / same-block registrations win on conflict).
+    /// Falls back to the in-memory shadow only when no store is attached.
     pub fn wallets_for_owner(
         &self,
         owner_identity_id: &crate::types::Hash,
     ) -> Vec<(String, crate::transaction::WalletTransactionData)> {
-        self.wallet_registry
-            .iter()
-            .filter(|(_, wallet)| wallet.owner_identity_id.as_ref() == Some(owner_identity_id))
-            .map(|(wallet_id, wallet)| (wallet_id.clone(), wallet.clone()))
-            .collect()
+        let mut out = HashMap::new();
+        // 1. sled first
+        if let Some(store) = self.get_store() {
+            if let Ok(iter) = store.iter_wallet_projections() {
+                for (wallet_id, record) in iter {
+                    if record.wallet_data.owner_identity_id.as_ref() == Some(owner_identity_id) {
+                        out.insert(hex::encode(wallet_id), record.wallet_data);
+                    }
+                }
+            }
+        }
+        // 2. in-memory overlay (wins on conflict)
+        for (wallet_id_hex, data) in &self.wallet_registry {
+            if data.owner_identity_id.as_ref() == Some(owner_identity_id) {
+                out.insert(wallet_id_hex.clone(), data.clone());
+            }
+        }
+        out.into_iter().collect()
     }
 
     /// Register a wallet via the trusted system-injection path (**enqueue only**).
