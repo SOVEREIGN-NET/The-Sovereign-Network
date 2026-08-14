@@ -987,14 +987,43 @@ impl Blockchain {
         })
     }
 
+    /// Wallets owned by an identity, sled-first with in-memory overlay (#2639, #2971).
+    ///
+    /// Returns owned `WalletTransactionData` from durable wallet projections when
+    /// the store is attached, then overlays the in-memory shadow (pending / same-block
+    /// registrations win). After restart the in-memory shadow is empty, so this
+    /// correctly reads from sled — fixing the gap where voting power was 0 after
+    /// restart (#2971).
     pub fn get_wallets_for_owner(
         &self,
         owner_identity_id: &Hash,
-    ) -> Vec<&crate::transaction::WalletTransactionData> {
-        self.wallet_registry
-            .values()
-            .filter(|wallet| wallet.owner_identity_id.as_ref() == Some(owner_identity_id))
-            .collect()
+    ) -> Vec<crate::transaction::WalletTransactionData> {
+        let mut out = HashMap::new();
+        if let Some(store) = self.get_store() {
+            match store.iter_wallet_projections() {
+                Ok(iter) => {
+                    for (wallet_id, record) in iter {
+                        if record.wallet_data.owner_identity_id.as_ref() == Some(owner_identity_id)
+                        {
+                            out.insert(hex::encode(wallet_id), record.wallet_data);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "get_wallets_for_owner: sled iter failed; using in-memory shadow only"
+                    );
+                }
+            }
+        }
+        // Overlay in-memory shadow (pending / same-block registrations win).
+        for (wallet_id_hex, data) in &self.wallet_registry {
+            if data.owner_identity_id.as_ref() == Some(owner_identity_id) {
+                out.insert(wallet_id_hex.clone(), data.clone());
+            }
+        }
+        out.into_values().collect()
     }
 
     pub fn process_wallet_transactions(&mut self, block: &Block) -> Result<()> {
