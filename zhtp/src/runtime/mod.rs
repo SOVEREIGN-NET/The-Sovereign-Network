@@ -2562,8 +2562,7 @@ impl RuntimeOrchestrator {
                     } else {
                         info!("📂 SledStore is empty - creating genesis (validator, peers all at height 0)");
                     }
-                    let mut bc = lib_blockchain::Blockchain::new()?;
-                    bc.set_store(store.clone());
+                    let mut bc = lib_blockchain::Blockchain::new_with_executor(store.clone())?;
 
                     // Log the genesis block hash for verification/debugging.
                     // Note: Full hash verification against CANONICAL_GENESIS_HASH is done
