@@ -202,8 +202,17 @@ impl ConsensusEngine {
                         && matches!(self.fsm_state, lib_consensus_core::fsm::ValidatorState::Bootstrapping)
                     {
                         let blockchain_height = self.current_round.height.saturating_sub(1);
-                        let caught_up = last_height_seen > 1
-                            && blockchain_height + 2 >= last_height_seen;
+
+                        // In development mode, skip the peer-height catch-up check
+                        // and immediately transition to active consensus. This allows
+                        // single-validator dev/test nodes to bypass the network-height
+                        // gate that expects peer observations before entering Idle.
+                        let caught_up = if self.config.development_mode {
+                            true
+                        } else {
+                            last_height_seen > 1
+                                && blockchain_height + 2 >= last_height_seen
+                        };
 
                         if !caught_up {
                             tracing::debug!(

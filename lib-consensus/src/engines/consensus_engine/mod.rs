@@ -1031,6 +1031,14 @@ impl ConsensusEngine {
     /// ensures these two constants stay in sync.
     pub fn is_bft_mode_active(&self) -> bool {
         let validator_count = self.validator_manager.get_active_validators().len();
+
+        // In development mode, treat 1+ validators as BFT-active so that
+        // single-validator test/dev nodes can run the full consensus protocol
+        // (propose → prevote → precommit → commit) without requiring ≥3 peers.
+        if self.config.development_mode {
+            return validator_count >= 1;
+        }
+
         // Runtime assertion: BFT_MIN_VALIDATORS must match the types-module constant.
         debug_assert_eq!(
             BFT_MIN_VALIDATORS,
