@@ -616,10 +616,7 @@ impl Blockchain {
                         .is_some_and(|s| s.starts_with("UBI_DISTRIBUTION_V1:"));
                     let is_migration = migration_from.is_some();
 
-                    let amount_u64: u64 = mint
-                        .amount
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
+                    let amount: u128 = mint.amount;
 
                     let is_kernel_controlled = self
                         .token_contracts
@@ -650,11 +647,14 @@ impl Blockchain {
                                     .token_contracts
                                     .get_mut(&token_id)
                                     .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                                let debit_amount: u64 = amount
+                                    .try_into()
+                                    .map_err(|_| anyhow::anyhow!("TokenMint debit amount exceeds u64"))?;
                                 kernel.debit(
                                     token,
                                     &transaction.signature.public_key,
                                     &from_pk,
-                                    amount_u64,
+                                    debit_amount,
                                     crate::contracts::treasury_kernel::DebitReason::Burn,
                                 )
                             };
@@ -667,7 +667,7 @@ impl Blockchain {
                                 .token_contracts
                                 .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                            token.burn(&from_pk, amount_u64 as u128).map_err(|e| {
+                            token.burn(&from_pk, amount).map_err(|e| {
                                 anyhow::anyhow!("Token migration burn failed: {}", e)
                             })?;
                         }
@@ -684,11 +684,14 @@ impl Blockchain {
                                 .token_contracts
                                 .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            let credit_amount: u64 = amount
+                                .try_into()
+                                .map_err(|_| anyhow::anyhow!("TokenMint credit amount exceeds u64"))?;
                             kernel.credit(
                                 token,
                                 &transaction.signature.public_key,
                                 &recipient_pk,
-                                amount_u64,
+                                credit_amount,
                                 crate::contracts::treasury_kernel::CreditReason::Mint,
                             )
                         };
@@ -700,7 +703,7 @@ impl Blockchain {
                             .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         token
-                            .mint(&recipient_pk, amount_u64 as u128)
+                            .mint(&recipient_pk, amount)
                             .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
                     }
 
