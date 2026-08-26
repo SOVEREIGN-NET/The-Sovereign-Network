@@ -2057,3 +2057,130 @@ fn collect_spendable_outputs_reads_sled() {
     assert_eq!(owned.len(), 1);
     assert!(bc.spendable_outputs_for_owner(&[0xEE; 32]).is_empty());
 }
+
+#[test]
+fn wallets_for_owner_reads_sled_when_in_memory_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wfo_sled")).unwrap());
+
+    let owner = crate::types::hash::Hash::new([0xAB; 32]);
+    let other = crate::types::hash::Hash::new([0xCD; 32]);
+
+    let wallet_id = [0x11u8; 32];
+    let mut owned = test_wallet_data(wallet_id, "Sled Owned");
+    owned.owner_identity_id = Some(owner);
+
+    let other_id = [0x22u8; 32];
+    let mut unrelated = test_wallet_data(other_id, "Sled Other");
+    unrelated.owner_identity_id = Some(other);
+
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: owned.clone(),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store
+        .put_wallet_projection(
+            &other_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: unrelated,
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    // In-memory shadow is empty — simulates restart with durable sled state only.
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    let found = bc.wallets_for_owner(&owner);
+    assert_eq!(found.len(), 1, "only the owned wallet matches this owner");
+    assert_eq!(found[0].0, hex::encode(wallet_id));
+    assert_eq!(found[0].1.wallet_name, "Sled Owned");
+
+    let found_other = bc.wallets_for_owner(&other);
+    assert_eq!(found_other.len(), 1, "other-owner wallet is found by its owner");
+    assert_eq!(found_other[0].1.wallet_name, "Sled Other");
+}
+
+#[test]
+fn wallets_for_owner_overlay_in_memory_wins() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wfo_overlay")).unwrap());
+    let owner = crate::types::hash::Hash::new([0xEF; 32]);
+    let wallet_id = [0x33u8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+
+    let mut sled_wallet = test_wallet_data(wallet_id, "From Sled");
+    sled_wallet.owner_identity_id = Some(owner);
+
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: sled_wallet,
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    let mut mem_wallet = test_wallet_data(wallet_id, "From InMem");
+    mem_wallet.owner_identity_id = Some(owner);
+    bc.insert_wallet_shadow(wallet_id_hex.clone(), mem_wallet);
+
+    let found = bc.wallets_for_owner(&owner);
+    assert_eq!(found.len(), 1, "overlay dedupes by wallet_id");
+    assert_eq!(
+        found[0].1.wallet_name, "From InMem",
+        "in-memory overlay must win over sled"
+    );
+}
+
+#[test]
+fn wallets_for_owner_union_in_memory_and_sled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wfo_union")).unwrap());
+    let owner = crate::types::hash::Hash::new([0xBE; 32]);
+
+    let sled_id = [0x44u8; 32];
+    let mut sled_wallet = test_wallet_data(sled_id, "Sled Wallet");
+    sled_wallet.owner_identity_id = Some(owner);
+
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &sled_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: sled_wallet,
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    let mem_id = [0x55u8; 32];
+    let mem_hex = hex::encode(mem_id);
+    let mut mem_wallet = test_wallet_data(mem_id, "InMem Wallet");
+    mem_wallet.owner_identity_id = Some(owner);
+    bc.insert_wallet_shadow(mem_hex, mem_wallet);
+
+    let found = bc.wallets_for_owner(&owner);
+    assert_eq!(found.len(), 2, "union of sled + in-memory wallets for same owner");
+    let names: Vec<&str> = found.iter().map(|(_, w)| w.wallet_name.as_str()).collect();
+    assert!(names.contains(&"Sled Wallet"), "sled wallet is in the result");
+    assert!(names.contains(&"InMem Wallet"), "in-memory wallet is in the result");
+}
