@@ -973,6 +973,16 @@ impl Blockchain {
         self.wallet_registry.values().collect()
     }
 
+    /// Returns a reference to the in-memory wallet shadow only.
+    ///
+    /// **Deprecated:** After restart the in-memory shadow is empty. Use
+    /// [`wallet_registry_snapshot`](Self::wallet_registry_snapshot) instead,
+    /// which returns an owned `HashMap` that includes durable sled projections
+    /// overlaid with the in-memory shadow (#2639, #2972).
+    #[deprecated(
+        since = "0.0.0",
+        note = "Use wallet_registry_snapshot() instead — this only reads the in-memory shadow which is empty after restart"
+    )]
     pub fn get_all_wallets(&self) -> &HashMap<String, crate::transaction::WalletTransactionData> {
         &self.wallet_registry
     }

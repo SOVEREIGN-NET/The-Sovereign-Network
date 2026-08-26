@@ -3301,10 +3301,10 @@ impl<'a> StatefulTransactionValidator<'a> {
         );
         tracing::info!(
             "   Total wallets to check: {}",
-            blockchain.get_all_wallets().len()
+            blockchain.wallet_registry_snapshot().len()
         );
 
-        for (wallet_id, wallet_data) in blockchain.get_all_wallets() {
+        for (wallet_id, wallet_data) in blockchain.wallet_registry_snapshot() {
             tracing::info!(
                 "   Checking wallet {}: stored public_key length = {}, first 16 = {}",
                 wallet_id,

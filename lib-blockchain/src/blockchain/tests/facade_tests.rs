@@ -206,9 +206,24 @@ fn token_balance_reads_sled_when_store_attached() {
     // Unknown address under an attached store reads sled's authoritative zero.
     assert_eq!(bc.token_balance(&[7u8; 32], &[0x01; 32]).unwrap(), 0);
 }
+/// Shared fixture for repair_missing_token_creation_balances tests.
+struct RepairTestFixture {
+    _temp: tempfile::TempDir,
+    store: Arc<SledStore>,
+    creator: crate::integration::crypto_integration::PublicKey,
+    treasury: [u8; 32],
+    payload: crate::transaction::token_creation::TokenCreationPayloadV1,
+    token_id: [u8; 32],
+    token: crate::contracts::TokenContract,
+    genesis: crate::block::Block,
+    block1: crate::block::Block,
+}
 
-#[test]
-fn repair_missing_token_creation_balances_restores_zeroed_tree() {
+fn build_repair_fixture(
+    creator_key: [u8; 2592],
+    treasury_key: [u8; 32],
+    store_dir_name: &str,
+) -> RepairTestFixture {
     use crate::contracts::TokenContract;
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::transaction::token_creation::TokenCreationPayloadV1;
@@ -216,10 +231,10 @@ fn repair_missing_token_creation_balances_restores_zeroed_tree() {
     use crate::types::TransactionType;
 
     let temp = tempfile::tempdir().unwrap();
-    let store = Arc::new(SledStore::open(&temp.path().join("repair_tc_store")).unwrap());
+    let store = Arc::new(SledStore::open(&temp.path().join(store_dir_name)).unwrap());
 
-    let creator = PublicKey::new([0x51u8; 2592]);
-    let treasury = [0xAAu8; 32];
+    let creator = PublicKey::new(creator_key);
+    let treasury = treasury_key;
     let payload = TokenCreationPayloadV1 {
         name: "Bubbl".to_string(),
         symbol: "BUBL".to_string(),
@@ -246,16 +261,10 @@ fn repair_missing_token_creation_balances_restores_zeroed_tree() {
     };
     let token_id = crate::contracts::utils::generate_custom_token_id("Bubbl", "BUBL");
 
-    // Simulate the bug: legacy path wrote contract metadata only.
-    let mut token = TokenContract::new_custom("Bubbl".to_string(), "BUBL".to_string(), 0, creator.clone());
+    let mut token =
+        TokenContract::new_custom("Bubbl".to_string(), "BUBL".to_string(), 0, creator.clone());
     token.max_supply = payload.initial_supply;
     token.total_supply = payload.initial_supply;
-    store.begin_block(0).unwrap();
-    store
-        .put_token_contract(&token)
-        .expect("contract metadata write");
-    store.commit_block().unwrap();
-    assert_eq!(store.count_token_holders(&TokenId::new(token_id)).unwrap(), 0);
 
     let genesis = crate::block::create_genesis_block();
     let block1 = crate::block::Block {
@@ -273,118 +282,93 @@ fn repair_missing_token_creation_balances_restores_zeroed_tree() {
         transactions: vec![tx],
     };
 
+    RepairTestFixture {
+        _temp: temp,
+        store,
+        creator,
+        treasury,
+        payload,
+        token_id,
+        token,
+        genesis,
+        block1,
+    }
+}
+
+#[test]
+fn repair_missing_token_creation_balances_restores_zeroed_tree() {
+    let f = build_repair_fixture([0x51u8; 2592], [0xAAu8; 32], "repair_tc_store");
+
+    // Simulate the bug: legacy path wrote contract metadata only.
+    f.store.begin_block(0).unwrap();
+    f.store
+        .put_token_contract(&f.token)
+        .expect("contract metadata write");
+    f.store.commit_block().unwrap();
+    assert_eq!(
+        f.store.count_token_holders(&TokenId::new(f.token_id)).unwrap(),
+        0
+    );
+
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.blocks.clear();
-    bc.set_store(store.clone());
-    bc.blocks.push(genesis);
-    bc.blocks.push(block1);
+    bc.set_store(f.store.clone());
+    bc.blocks.push(f.genesis);
+    bc.blocks.push(f.block1);
     bc.height = 1;
 
     let repaired = bc
-        .repair_missing_token_creation_balances(store.as_ref())
+        .repair_missing_token_creation_balances(f.store.as_ref())
         .expect("repair should succeed");
     assert_eq!(repaired, 2, "creator + treasury balances should be repaired");
 
-    let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
+    let (creator_alloc, treasury_alloc) = f.payload.split_initial_supply();
     assert_eq!(
-        bc.token_balance(&token_id, &creator.key_id).unwrap(),
+        bc.token_balance(&f.token_id, &f.creator.key_id).unwrap(),
         creator_alloc
     );
     assert_eq!(
-        bc.token_balance(&token_id, &treasury).unwrap(),
+        bc.token_balance(&f.token_id, &f.treasury).unwrap(),
         treasury_alloc
     );
 }
 
 #[test]
 fn repair_missing_token_creation_balances_fills_partial_tree() {
-    use crate::contracts::TokenContract;
-    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
-    use crate::transaction::token_creation::TokenCreationPayloadV1;
-    use crate::transaction::Transaction;
-    use crate::types::TransactionType;
+    let f = build_repair_fixture([0x52u8; 2592], [0xBBu8; 32], "repair_partial_store");
+    let (creator_alloc, treasury_alloc) = f.payload.split_initial_supply();
 
-    let temp = tempfile::tempdir().unwrap();
-    let store = Arc::new(SledStore::open(&temp.path().join("repair_partial_store")).unwrap());
-
-    let creator = PublicKey::new([0x52u8; 2592]);
-    let treasury = [0xBBu8; 32];
-    let payload = TokenCreationPayloadV1 {
-        name: "Bubbl".to_string(),
-        symbol: "BUBL".to_string(),
-        initial_supply: 1_000_000,
-        decimals: 8,
-        treasury_allocation_bps: 2_000,
-        treasury_recipient: treasury,
-    };
-    let (creator_alloc, treasury_alloc) = payload.split_initial_supply();
-    let tx = Transaction {
-        version: 2,
-        chain_id: 2,
-        transaction_type: TransactionType::TokenCreation,
-        inputs: vec![],
-        outputs: vec![],
-        fee: 0,
-        signature: Signature {
-            signature: vec![0u8; 64],
-            public_key: creator.clone(),
-            algorithm: SignatureAlgorithm::DEFAULT,
-            timestamp: 1,
-        },
-        memo: payload.encode_memo().unwrap(),
-        payload: crate::transaction::TransactionPayload::None,
-    };
-    let token_id = crate::contracts::utils::generate_custom_token_id("Bubbl", "BUBL");
-
-    let mut token = TokenContract::new_custom("Bubbl".to_string(), "BUBL".to_string(), 0, creator.clone());
-    token.max_supply = payload.initial_supply;
-    token.total_supply = payload.initial_supply;
-    store.begin_block(0).unwrap();
-    store.put_token_contract(&token).unwrap();
-    store
+    f.store.begin_block(0).unwrap();
+    f.store.put_token_contract(&f.token).unwrap();
+    f.store
         .set_token_balance(
-            &TokenId::new(token_id),
-            &Address::new(creator.key_id),
+            &TokenId::new(f.token_id),
+            &Address::new(f.creator.key_id),
             creator_alloc,
         )
         .unwrap();
-    store.commit_block().unwrap();
-
-    let genesis = crate::block::create_genesis_block();
-    let block1 = crate::block::Block {
-        header: crate::block::BlockHeader {
-            version: 1,
-            previous_hash: genesis.header.block_hash.into(),
-            data_helix_root: crate::types::Hash::default().into(),
-            timestamp: genesis.header.timestamp + 1,
-            height: 1,
-            verification_helix_root: [0u8; 32],
-            state_root: crate::types::Hash::default().into(),
-            bft_quorum_root: [0u8; 32],
-            block_hash: crate::types::Hash::default(),
-        },
-        transactions: vec![tx],
-    };
+    f.store.commit_block().unwrap();
 
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.blocks.clear();
-    bc.set_store(store.clone());
-    bc.blocks.push(genesis);
-    bc.blocks.push(block1);
+    bc.set_store(f.store.clone());
+    bc.blocks.push(f.genesis);
+    bc.blocks.push(f.block1);
     bc.height = 1;
 
     let repaired = bc
-        .repair_missing_token_creation_balances(store.as_ref())
+        .repair_missing_token_creation_balances(f.store.as_ref())
         .expect("repair should succeed");
     assert_eq!(
         repaired, 1,
         "only treasury row should be repaired when creator already funded"
     );
     assert_eq!(
-        bc.token_balance(&token_id, &treasury).unwrap(),
+        bc.token_balance(&f.token_id, &f.treasury).unwrap(),
         treasury_alloc
     );
 }
+
 
 #[test]
 fn count_token_holders_reads_sled_when_store_attached() {
@@ -1125,6 +1109,56 @@ fn wallet_registry_snapshot_overlay_in_memory_wins() {
         snap.get(&wallet_id_hex).map(|w| w.wallet_name.as_str()),
         Some("From InMem"),
         "in-memory overlay must win over sled"
+    );
+}
+
+/// After restart, wallet_registry_snapshot() reads wallets from sled even
+/// when the in-memory wallet_registry is empty — the fix for #2972 (validation
+/// path migrated from get_all_wallets() to wallet_registry_snapshot()).
+#[test]
+fn wallet_registry_snapshot_reads_sled_after_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SledStore::open(&temp.path().join("wallet_restart")).unwrap());
+    let wallet_id = [0xBBu8; 32];
+    let wallet_id_hex = hex::encode(wallet_id);
+    store.begin_block(0).unwrap();
+    store
+        .put_wallet_projection(
+            &wallet_id,
+            &crate::storage::WalletProjectionRecord {
+                wallet_data: test_wallet_data(wallet_id, "Restart Wallet"),
+                committed_at_height: 0,
+            },
+        )
+        .unwrap();
+    store.commit_block().unwrap();
+
+    // Simulate restart: fresh Blockchain with sled store attached. The
+    // in-memory wallet_registry only holds genesis-bootstrap wallets, NOT the
+    // wallet committed to sled below (which represents a wallet created before
+    // restart).
+    let mut bc = Blockchain::new().expect("blockchain construct");
+    bc.set_store(store);
+
+    // Prove the sled wallet is NOT in the in-memory shadow (like after restart).
+    assert!(
+        !bc.wallet_registry.contains_key(&wallet_id_hex),
+        "test premise: sled wallet absent from in-mem shadow (like after restart)"
+    );
+
+    let snap = bc.wallet_registry_snapshot();
+    assert_eq!(
+        snap.get(&wallet_id_hex).map(|w| w.wallet_name.as_str()),
+        Some("Restart Wallet"),
+        "wallet_registry_snapshot must include sled wallets after restart \
+         (wallet absent from in-mem shadow, like after restart)"
+    );
+    // The validation path (validate_sender_identity_exists) now iterates
+    // wallet_registry_snapshot() instead of get_all_wallets(), so this
+    // proves the #2972 fix: wallets committed before restart are found.
+    assert!(
+        snap.len() >= 1,
+        "snapshot includes at least the sled wallet"
     );
 }
 
