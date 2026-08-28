@@ -333,6 +333,22 @@ impl IdentityHandler {
             _ => return Err(anyhow::anyhow!("Invalid identity type")),
         };
 
+        // #2980: server-side keygen for human identities is deprecated. The
+        // server must never mint an HD master seed / seed phrase on behalf of a
+        // remote user (breaks the Sovereignty invariant: the wallet must be
+        // provably owned by a key only the client holds). Clients generate
+        // Dilithium/Kyber keys on-device and prove ownership via
+        // POST /api/v1/identity/register.
+        if identity_type == IdentityType::Human {
+            return Ok(ZhtpResponse::error(
+                ZhtpStatus::BadRequest,
+                "Server-side identity creation is deprecated. Generate \
+                 Dilithium/Kyber keys on-device and register with an ownership \
+                 proof via POST /api/v1/identity/register."
+                    .to_string(),
+            ));
+        }
+
         let mut identity_manager = self.identity_manager.write().await;
 
         let response_data = if identity_type == IdentityType::Human {

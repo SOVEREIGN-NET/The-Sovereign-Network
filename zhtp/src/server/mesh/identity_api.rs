@@ -662,6 +662,22 @@ async fn create_identity_direct(
         extract_bytes_array(request_data, "dilithium_pk").filter(|v| v.len() == 2592);
     let client_kyber_pk = extract_bytes_array(request_data, "kyber_pk").filter(|v| v.len() == 1568);
 
+    // #2980: the client must prove ownership of the Dilithium key it registers.
+    // ownership_proof is a Dilithium signature over "ZHTP_REGISTER:{timestamp}".
+    let client_timestamp = request_data
+        .get("timestamp")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let client_ownership_proof = request_data
+        .get("ownership_proof")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_u64().map(|b| b as u8))
+                .collect::<Vec<u8>>()
+        })
+        .unwrap_or_default();
+
     // Client-aligned registration (#2979): route through register_external_citizen_identity
     // with the client's PQC keys so wallet IDs are deterministic and wallet txs carry the
     // client's real Dilithium public key (not an HD synthetic key).
@@ -686,10 +702,37 @@ async fn create_identity_direct(
             hex::encode(lib_crypto::hashing::hash_blake3(&dil_pk))
         );
 
-        let created_at = std::time::SystemTime::now()
+        // #2980: verify ownership proof and reject stale/future timestamps.
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        if client_timestamp > now.saturating_add(60) {
+            return Err(anyhow::anyhow!(
+                "Registration timestamp too far in the future (max 60s skew)"
+            ));
+        }
+        if now.saturating_sub(client_timestamp) > 300 {
+            return Err(anyhow::anyhow!(
+                "Registration proof expired: {}s old (max 300s)",
+                now.saturating_sub(client_timestamp)
+            ));
+        }
+        let ownership_msg = format!("ZHTP_REGISTER:{}", client_timestamp);
+        if client_ownership_proof.is_empty()
+            || !lib_crypto::verify_signature(
+                ownership_msg.as_bytes(),
+                &client_ownership_proof,
+                &dil_pk,
+            )
+            .unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "Client ownership proof missing or invalid for identity creation"
+            ));
+        }
+
+        let created_at = client_timestamp;
 
         let mut manager = identity_manager.write().await;
         let mut economic_model = lib_identity::economics::EconomicModel::new();
@@ -724,7 +767,7 @@ async fn create_identity_direct(
                 "savings_wallet_id": savings_wallet_id,
                 "privacy_credentials": {
                     "public_key": client_pk_hex,
-                    "ownership_proof": ""
+                    "ownership_proof": hex::encode(&client_ownership_proof)
                 },
                 "primary_wallet_pubkey": client_pk_hex,
                 "ubi_wallet_pubkey": client_pk_hex,
@@ -770,121 +813,14 @@ async fn create_identity_direct(
         }));
     }
 
-    // Legacy fallback: no client keys → server-side keygen.
-    let mut manager = identity_manager.write().await;
-
-    // Create a new zkDID identity with full citizenship
-    let mut economic_model = lib_identity::economics::EconomicModel::new();
-
-    // Use safe recovery options to avoid banned word validation
-    let recovery_options = vec![
-        "backup_phrase".to_string(),
-        "recovery_method".to_string(),
-        "secure_backup".to_string(),
-    ];
-
-    let identity_result = manager
-        .create_citizen_identity(display_name, recovery_options, &mut economic_model)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create citizen identity: {}", e))?;
-
-    // CRITICAL: Drop the write lock BEFORE acquiring read lock to prevent deadlock
-    drop(manager);
-
-    info!("Created identity with ID: {}", identity_result.identity_id);
-
-    // Get the identity from manager to extract public key and ownership proof
-    info!("📋 Retrieving identity from manager...");
-    let manager_read = identity_manager.read().await;
-    let identity = manager_read
-        .get_identity(&identity_result.identity_id)
-        .ok_or_else(|| anyhow::anyhow!("Identity not found in manager after creation"))?;
-
-    let public_key = identity.public_key.clone();
-    let ownership_proof_bytes = identity.ownership_proof.proof_data.clone();
-
-    // Get actual wallet public keys
-    let primary_wallet = identity
-        .wallet_manager
-        .wallets
-        .values()
-        .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
-        .ok_or_else(|| anyhow::anyhow!("Primary wallet not found"))?;
-    let ubi_wallet = identity
-        .wallet_manager
-        .wallets
-        .values()
-        .find(|w| w.wallet_type == lib_identity::WalletType::UBI)
-        .ok_or_else(|| anyhow::anyhow!("UBI wallet not found"))?;
-    let savings_wallet = identity
-        .wallet_manager
-        .wallets
-        .values()
-        .find(|w| w.wallet_type == lib_identity::WalletType::Savings)
-        .ok_or_else(|| anyhow::anyhow!("Savings wallet not found"))?;
-
-    let primary_pubkey = primary_wallet.public_key.clone();
-    let ubi_pubkey = ubi_wallet.public_key.clone();
-    let savings_pubkey = savings_wallet.public_key.clone();
-
-    drop(manager_read);
-
-    // Build identity JSON
-    let identity_id_hex = hex::encode(&identity_result.identity_id.0);
-    let identity_json = serde_json::json!({
-        "identity_id": identity_id_hex,
-        "citizenship_result": {
-            "identity_id": identity_id_hex,
-            "primary_wallet_id": hex::encode(&identity_result.primary_wallet_id.0),
-            "ubi_wallet_id": hex::encode(&identity_result.ubi_wallet_id.0),
-            "savings_wallet_id": hex::encode(&identity_result.savings_wallet_id.0),
-            "privacy_credentials": {
-                "public_key": hex::encode(&public_key.as_bytes()),
-                "ownership_proof": hex::encode(&ownership_proof_bytes)
-            },
-            "primary_wallet_pubkey": hex::encode(&primary_pubkey),
-            "ubi_wallet_pubkey": hex::encode(&ubi_pubkey),
-            "savings_wallet_pubkey": hex::encode(&savings_pubkey),
-            "created_at": identity_result.privacy_credentials.created_at
-        }
-    });
-
-    // Try blockchain registration with timeout
-    info!("⛓️ Attempting blockchain registration...");
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        record_identity_on_blockchain(&identity_json),
-    )
-    .await
-    {
-        Ok(Ok(())) => {
-            info!("✅ Identity successfully registered on blockchain");
-        }
-        Ok(Err(e)) => {
-            error!("❌ BLOCKCHAIN REGISTRATION FAILED: {}", e);
-        }
-        Err(_) => {
-            error!("⏱️ BLOCKCHAIN REGISTRATION TIMEOUT - operation took >5 seconds");
-        }
-    }
-
-    // Return the full response structure expected by browser.
-    Ok(serde_json::json!({
-        "success": true,
-        "identity_id": identity_result.identity_id,
-        "citizenship_result": {
-            "identity_id": identity_result.identity_id,
-            "primary_wallet_id": identity_result.primary_wallet_id,
-            "ubi_wallet_id": identity_result.ubi_wallet_id,
-            "savings_wallet_id": identity_result.savings_wallet_id,
-            "dao_registration": identity_result.dao_registration,
-            "ubi_registration": identity_result.ubi_registration,
-            "web4_access": identity_result.web4_access,
-            "privacy_credentials": identity_result.privacy_credentials,
-            "welcome_bonus": identity_result.welcome_bonus,
-            "created_at": identity_result.privacy_credentials.created_at
-        }
-    }))
+    // #2980: no server-side keygen for remote clients. The client must supply
+    // its Dilithium/Kyber public keys and a valid ownership proof; the server
+    // never generates an HD master seed / seed phrase on the user's behalf.
+    Err(anyhow::anyhow!(
+        "Identity creation requires client-provided dilithium_pk, kyber_pk and a \
+         valid ownership_proof (ZHTP_REGISTER signature). Server-side key \
+         generation is disabled."
+    ))
 }
 
 /// Sign in with existing identity using IdentityManager for UDP mesh efficiency
