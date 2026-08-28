@@ -79,10 +79,13 @@ pub async fn handle_identity_mesh_request(
     // Helper to deny unauthenticated public principals from mutating mesh endpoints.
     async fn check_public_denied(principal: &SecurityPrincipal) -> Option<Result<Option<Vec<u8>>>> {
         if principal.role == Role::Public {
-            Some(create_error_mesh_response(
-                403,
-                "Public principals cannot perform this operation over mesh",
-            ).await)
+            Some(
+                create_error_mesh_response(
+                    403,
+                    "Public principals cannot perform this operation over mesh",
+                )
+                .await,
+            )
         } else {
             None
         }
@@ -625,8 +628,6 @@ async fn create_identity_direct(
     identity_manager: &Arc<RwLock<IdentityManager>>,
     request_data: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let mut manager = identity_manager.write().await;
-
     // Extract display name from request data
     let display_name = request_data
         .get("display_name")
@@ -634,7 +635,143 @@ async fn create_identity_direct(
         .unwrap_or("Anonymous Citizen")
         .to_string();
 
+    let device_id = request_data
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mesh")
+        .to_string();
+
     info!("✨ Creating identity for: {}", display_name);
+
+    // Extract the client's dilithium_pk and kyber_pk from the registration request.
+    // The app sends a ZhtpIdentity JSON with public_key.dilithium_pk and public_key.kyber_pk
+    // as byte arrays. Use these to derive the client's key_id = blake3(dilithium_pk || kyber_pk),
+    // which becomes the primary wallet_id (see register_external_citizen_identity).
+    let extract_bytes_array = |json: &serde_json::Value, field: &str| -> Option<Vec<u8>> {
+        json.get("public_key")
+            .and_then(|pk| pk.get(field))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|b| b as u8))
+                    .collect::<Vec<u8>>()
+            })
+    };
+
+    let client_dilithium_pk =
+        extract_bytes_array(request_data, "dilithium_pk").filter(|v| v.len() == 2592);
+    let client_kyber_pk = extract_bytes_array(request_data, "kyber_pk").filter(|v| v.len() == 1568);
+
+    // Client-aligned registration (#2979): route through register_external_citizen_identity
+    // with the client's PQC keys so wallet IDs are deterministic and wallet txs carry the
+    // client's real Dilithium public key (not an HD synthetic key).
+    if let Some(dil_pk) = client_dilithium_pk {
+        let dil_arr: [u8; 2592] = dil_pk
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Client dilithium_pk must be 2592 bytes"))?;
+        let kyb_vec: Vec<u8> = client_kyber_pk.unwrap_or_default();
+        let kyber_arr: [u8; 1568] = if kyb_vec.len() == 1568 {
+            kyb_vec
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Client kyber_pk must be 1568 bytes"))?
+        } else {
+            [0u8; 1568]
+        };
+        let client_public_key = lib_crypto::PublicKey::new_with_kyber(dil_arr, kyber_arr);
+        // Identity DID binds to blake3(dilithium_pk) (matches the identity binding check).
+        let did = format!(
+            "did:zhtp:{}",
+            hex::encode(lib_crypto::hashing::hash_blake3(&dil_pk))
+        );
+
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut manager = identity_manager.write().await;
+        let mut economic_model = lib_identity::economics::EconomicModel::new();
+        let identity_result = manager
+            .register_external_citizen_identity(
+                did.clone(),
+                client_public_key,
+                kyb_vec.clone(),
+                device_id,
+                Some(display_name.clone()),
+                created_at,
+                &mut economic_model,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to register external citizen identity: {}", e))?;
+        drop(manager);
+
+        let identity_id_hex = hex::encode(&identity_result.identity_id.0);
+        let primary_wallet_id = hex::encode(&identity_result.primary_wallet_id.0);
+        let ubi_wallet_id = hex::encode(&identity_result.ubi_wallet_id.0);
+        let savings_wallet_id = hex::encode(&identity_result.savings_wallet_id.0);
+        let client_pk_hex = hex::encode(&dil_pk);
+        let client_kyber_hex = hex::encode(&kyb_vec);
+
+        let identity_json = serde_json::json!({
+            "identity_id": identity_id_hex,
+            "citizenship_result": {
+                "identity_id": identity_id_hex,
+                "display_name": display_name,
+                "primary_wallet_id": primary_wallet_id,
+                "ubi_wallet_id": ubi_wallet_id,
+                "savings_wallet_id": savings_wallet_id,
+                "privacy_credentials": {
+                    "public_key": client_pk_hex,
+                    "ownership_proof": ""
+                },
+                "primary_wallet_pubkey": client_pk_hex,
+                "ubi_wallet_pubkey": client_pk_hex,
+                "savings_wallet_pubkey": client_pk_hex,
+                "kyber_public_key": client_kyber_hex,
+                "created_at": created_at
+            }
+        });
+
+        info!("⛓️ Attempting blockchain registration (client-aligned)...");
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            record_identity_on_blockchain(&identity_json),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                info!("✅ Identity successfully registered on blockchain");
+            }
+            Ok(Err(e)) => {
+                error!("❌ BLOCKCHAIN REGISTRATION FAILED: {}", e);
+            }
+            Err(_) => {
+                error!("⏱️ BLOCKCHAIN REGISTRATION TIMEOUT - operation took >5 seconds");
+            }
+        }
+
+        return Ok(serde_json::json!({
+            "success": true,
+            "identity_id": identity_result.identity_id,
+            "citizenship_result": {
+                "identity_id": identity_result.identity_id,
+                "primary_wallet_id": primary_wallet_id,
+                "ubi_wallet_id": ubi_wallet_id,
+                "savings_wallet_id": savings_wallet_id,
+                "dao_registration": identity_result.dao_registration,
+                "ubi_registration": identity_result.ubi_registration,
+                "web4_access": identity_result.web4_access,
+                "privacy_credentials": identity_result.privacy_credentials,
+                "welcome_bonus": identity_result.welcome_bonus,
+                "created_at": identity_result.privacy_credentials.created_at
+            }
+        }));
+    }
+
+    // Legacy fallback: no client keys → server-side keygen.
+    let mut manager = identity_manager.write().await;
 
     // Create a new zkDID identity with full citizenship
     let mut economic_model = lib_identity::economics::EconomicModel::new();
@@ -692,59 +829,20 @@ async fn create_identity_direct(
 
     drop(manager_read);
 
-    // Extract the client's dilithium_pk and kyber_pk from the registration request.
-    // The app sends a ZhtpIdentity JSON with public_key.dilithium_pk and public_key.kyber_pk
-    // as byte arrays. Use these to compute the client's key_id = blake3(dilithium_pk || kyber_pk),
-    // which becomes the primary wallet_id. This ensures wallet_id == signer's key_id, allowing
-    // the transfer validation check (data.from == signature.public_key.key_id) to pass.
-    let extract_bytes_array = |json: &serde_json::Value, field: &str| -> Option<Vec<u8>> {
-        json.get("public_key")
-            .and_then(|pk| pk.get(field))
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_u64().map(|b| b as u8))
-                    .collect::<Vec<u8>>()
-            })
-    };
-
-    let client_dilithium_pk = extract_bytes_array(request_data, "dilithium_pk")
-        .filter(|v| v.len() == 2592);
-    let client_kyber_pk = extract_bytes_array(request_data, "kyber_pk")
-        .filter(|v| v.len() == 1568);
-
-    let (effective_wallet_id_hex, effective_wallet_pubkey_hex) =
-        if let (Some(ref dil_pk), Some(ref kyb_pk)) = (&client_dilithium_pk, &client_kyber_pk) {
-            let kyber_is_zeros = kyb_pk.iter().all(|&b| b == 0);
-            let key_id: [u8; 32] = if kyber_is_zeros {
-                lib_crypto::hashing::hash_blake3(dil_pk)
-            } else {
-                lib_crypto::hashing::hash_blake3_multiple(&[dil_pk.as_slice(), kyb_pk.as_slice()])
-            };
-            (hex::encode(key_id), hex::encode(dil_pk))
-        } else {
-            // Fallback to HD wallet_id if client public key is not provided/valid
-            info!("⚠️ Client public key not found in registration request — using HD wallet_id");
-            (
-                hex::encode(&identity_result.primary_wallet_id.0),
-                hex::encode(&primary_pubkey),
-            )
-        };
-
     // Build identity JSON
     let identity_id_hex = hex::encode(&identity_result.identity_id.0);
     let identity_json = serde_json::json!({
         "identity_id": identity_id_hex,
         "citizenship_result": {
             "identity_id": identity_id_hex,
-            "primary_wallet_id": effective_wallet_id_hex,
+            "primary_wallet_id": hex::encode(&identity_result.primary_wallet_id.0),
             "ubi_wallet_id": hex::encode(&identity_result.ubi_wallet_id.0),
             "savings_wallet_id": hex::encode(&identity_result.savings_wallet_id.0),
             "privacy_credentials": {
                 "public_key": hex::encode(&public_key.as_bytes()),
                 "ownership_proof": hex::encode(&ownership_proof_bytes)
             },
-            "primary_wallet_pubkey": effective_wallet_pubkey_hex,
+            "primary_wallet_pubkey": hex::encode(&primary_pubkey),
             "ubi_wallet_pubkey": hex::encode(&ubi_pubkey),
             "savings_wallet_pubkey": hex::encode(&savings_pubkey),
             "created_at": identity_result.privacy_credentials.created_at
@@ -771,14 +869,12 @@ async fn create_identity_direct(
     }
 
     // Return the full response structure expected by browser.
-    // primary_wallet_id is the client's key_id (blake3(dilithium_pk || kyber_pk)) if the
-    // client's public key was extracted from the request; otherwise the HD wallet_id fallback.
     Ok(serde_json::json!({
         "success": true,
         "identity_id": identity_result.identity_id,
         "citizenship_result": {
             "identity_id": identity_result.identity_id,
-            "primary_wallet_id": effective_wallet_id_hex,
+            "primary_wallet_id": identity_result.primary_wallet_id,
             "ubi_wallet_id": identity_result.ubi_wallet_id,
             "savings_wallet_id": identity_result.savings_wallet_id,
             "dao_registration": identity_result.dao_registration,
@@ -1132,6 +1228,7 @@ async fn record_standalone_wallet_on_blockchain(
         wallet_name: wallet_name.to_string(),
         alias: wallet_alias.clone(),
         public_key: vec![0u8; 32],
+        kyber_public_key: vec![],
         owner_identity_id: Some(lib_blockchain::Hash::from_slice(&identity_id.0)),
         seed_commitment: lib_blockchain::Hash::from_slice(&seed_commitment),
         created_at: std::time::SystemTime::now()
@@ -1163,8 +1260,9 @@ async fn record_standalone_wallet_on_blockchain(
                     .as_secs()
             })),
             wallet_private_record: Some(
-                bincode::serialize(&wallet_private_data)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize wallet private data: {}", e))?
+                bincode::serialize(&wallet_private_data).map_err(|e| {
+                    anyhow::anyhow!("Failed to serialize wallet private data: {}", e)
+                })?,
             ),
         },
     );
@@ -1647,6 +1745,12 @@ fn register_wallet_on_blockchain(
             .and_then(|hex_str| hex::decode(hex_str).ok())
             .unwrap_or_else(|| vec![0u8; 32]);
 
+        let wallet_kyber = citizenship_result
+            .get("kyber_public_key")
+            .and_then(|v| v.as_str())
+            .and_then(|hex_str| hex::decode(hex_str).ok())
+            .unwrap_or_default();
+
         let seed_commitment = lib_blockchain::Hash::from_slice(&[0u8; 32]);
 
         // Welcome bonus (5,000 SOV) goes to Primary wallet
@@ -1666,6 +1770,7 @@ fn register_wallet_on_blockchain(
             wallet_name: format!("{} Wallet", wallet_type),
             alias: Some(wallet_type.to_lowercase()),
             public_key: wallet_pubkey,
+            kyber_public_key: wallet_kyber,
             owner_identity_id: Some(lib_blockchain::Hash::new(identity_hash.0)),
             seed_commitment,
             created_at,

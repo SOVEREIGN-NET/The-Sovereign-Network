@@ -25,8 +25,12 @@ mod common;
 // Test helpers
 // ============================================================================
 
-fn test_pubkey(id: u8) -> PublicKey { common::crypto_fixtures::seeded_public_key(id) }
-fn test_signature(pubkey: &PublicKey) -> Signature { common::crypto_fixtures::signature_for(pubkey) }
+fn test_pubkey(id: u8) -> PublicKey {
+    common::crypto_fixtures::seeded_public_key(id)
+}
+fn test_signature(pubkey: &PublicKey) -> Signature {
+    common::crypto_fixtures::signature_for(pubkey)
+}
 
 /// Create a test block at the given height with transactions.
 fn test_block(height: u64, transactions: Vec<Transaction>) -> Block {
@@ -65,6 +69,7 @@ fn wallet_registration_tx(
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
             alias: None,
             public_key: owner_pubkey.dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             owner_identity_id: None,
             seed_commitment: Hash::zero(),
             created_at: 1_700_000_000,
@@ -111,8 +116,8 @@ fn token_transfer_tx_with_nonce(
             commitment: Hash::new([3u8; 32]),
             note: Hash::new([4u8; 32]),
             recipient: test_pubkey(0),
-                    merkle_leaf: Hash::default(),
-}],
+            merkle_leaf: Hash::default(),
+        }],
         fee: 0,
         signature: test_signature(sender),
         memo: Vec::new(),
@@ -182,6 +187,7 @@ fn register_wallet(
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
             alias: None,
             public_key: owner.dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             owner_identity_id: None,
             seed_commitment: Hash::zero(),
             created_at: 1_700_000_000,

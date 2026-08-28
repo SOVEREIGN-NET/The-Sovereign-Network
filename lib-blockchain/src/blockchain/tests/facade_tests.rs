@@ -306,7 +306,9 @@ fn repair_missing_token_creation_balances_restores_zeroed_tree() {
         .expect("contract metadata write");
     f.store.commit_block().unwrap();
     assert_eq!(
-        f.store.count_token_holders(&TokenId::new(f.token_id)).unwrap(),
+        f.store
+            .count_token_holders(&TokenId::new(f.token_id))
+            .unwrap(),
         0
     );
 
@@ -320,7 +322,10 @@ fn repair_missing_token_creation_balances_restores_zeroed_tree() {
     let repaired = bc
         .repair_missing_token_creation_balances(f.store.as_ref())
         .expect("repair should succeed");
-    assert_eq!(repaired, 2, "creator + treasury balances should be repaired");
+    assert_eq!(
+        repaired, 2,
+        "creator + treasury balances should be repaired"
+    );
 
     let (creator_alloc, treasury_alloc) = f.payload.split_initial_supply();
     assert_eq!(
@@ -368,7 +373,6 @@ fn repair_missing_token_creation_balances_fills_partial_tree() {
         treasury_alloc
     );
 }
-
 
 #[test]
 fn count_token_holders_reads_sled_when_store_attached() {
@@ -456,11 +460,7 @@ fn calculate_user_voting_power_reads_sled_not_in_memory() {
 
     store.begin_block(0).unwrap();
     store
-        .set_token_balance(
-            &TokenId::new(sov_id),
-            &Address::new(wallet_id),
-            amount,
-        )
+        .set_token_balance(&TokenId::new(sov_id), &Address::new(wallet_id), amount)
         .unwrap();
     store.commit_block().unwrap();
 
@@ -478,6 +478,7 @@ fn calculate_user_voting_power_reads_sled_not_in_memory() {
             wallet_name: "Test".to_string(),
             alias: None,
             public_key: vec![0u8; 2592],
+            kyber_public_key: vec![],
             owner_identity_id: Some(Hash::new(identity_id.0)),
             seed_commitment: Hash::default(),
             created_at: 0,
@@ -570,9 +571,18 @@ fn put_sled_identity(store: &SledStore, height: u64, did: &str, consensus: Ident
 fn identity_exists_union_inmem_or_sled() {
     // store-less: answers from the in-memory shadow.
     let mut bc = Blockchain::new().unwrap();
-    bc.insert_identity_shadow("did:zhtp:inmem".to_string(), mk_inmem_identity("did:zhtp:inmem"));
-    assert!(bc.identity_exists("did:zhtp:inmem"), "in-mem present -> true");
-    assert!(!bc.identity_exists("did:zhtp:ghost"), "absent everywhere -> false");
+    bc.insert_identity_shadow(
+        "did:zhtp:inmem".to_string(),
+        mk_inmem_identity("did:zhtp:inmem"),
+    );
+    assert!(
+        bc.identity_exists("did:zhtp:inmem"),
+        "in-mem present -> true"
+    );
+    assert!(
+        !bc.identity_exists("did:zhtp:ghost"),
+        "absent everywhere -> false"
+    );
 
     // sled-backed with an EMPTY in-mem registry (post-restart simulation):
     // the sled-only identity must still be found.
@@ -584,7 +594,10 @@ fn identity_exists_union_inmem_or_sled() {
         &store,
         0,
         did,
-        IdentityConsensus { did_hash, ..Default::default() },
+        IdentityConsensus {
+            did_hash,
+            ..Default::default()
+        },
     );
     let mut bc2 = Blockchain::new().unwrap();
     bc2.set_store(store);
@@ -592,7 +605,10 @@ fn identity_exists_union_inmem_or_sled() {
         !bc2.identity_shadow_contains_key(did),
         "test premise: this DID is sled-only (absent from the in-mem shadow)"
     );
-    assert!(bc2.identity_exists(did), "sled-only identity found via union");
+    assert!(
+        bc2.identity_exists(did),
+        "sled-only identity found via union"
+    );
     assert!(!bc2.identity_exists("did:zhtp:ghost"));
 }
 
@@ -607,14 +623,24 @@ fn identity_count_reads_sled() {
         let did = format!("did:zhtp:count{}", i);
         let did_hash = crate::storage::did_to_hash(&did);
         store
-            .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+            .put_identity(
+                &did_hash,
+                &IdentityConsensus {
+                    did_hash,
+                    ..Default::default()
+                },
+            )
             .unwrap();
     }
     store.commit_block().unwrap();
 
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store);
-    assert_eq!(bc.identity_count(), 3, "count comes from sled, not the in-mem shadow");
+    assert_eq!(
+        bc.identity_count(),
+        3,
+        "count comes from sled, not the in-mem shadow"
+    );
     assert_eq!(
         bc.iter_identities_consensus().len(),
         3,
@@ -639,7 +665,11 @@ fn identity_public_key_pins_to_consensus() {
     store
         .put_identity(
             &did_hash,
-            &IdentityConsensus { did_hash, public_key_hash: pk_hash, ..Default::default() },
+            &IdentityConsensus {
+                did_hash,
+                public_key_hash: pk_hash,
+                ..Default::default()
+            },
         )
         .unwrap();
     store
@@ -662,7 +692,11 @@ fn identity_public_key_pins_to_consensus() {
     store
         .put_identity(
             &bad_hash,
-            &IdentityConsensus { did_hash: bad_hash, public_key_hash: [0xAB; 32], ..Default::default() },
+            &IdentityConsensus {
+                did_hash: bad_hash,
+                public_key_hash: [0xAB; 32],
+                ..Default::default()
+            },
         )
         .unwrap();
     store
@@ -776,7 +810,10 @@ fn identity_registry_snapshot_includes_sled_without_in_memory() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
     let snap = bc.identity_registry_snapshot();
-    assert_eq!(snap.get(did).map(|d| d.display_name.as_str()), Some("Only Sled"));
+    assert_eq!(
+        snap.get(did).map(|d| d.display_name.as_str()),
+        Some("Only Sled")
+    );
 }
 
 #[test]
@@ -787,7 +824,13 @@ fn identity_display_name_taken_reads_sled() {
     let did_hash = crate::storage::did_to_hash(did);
     store.begin_block(0).unwrap();
     store
-        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                ..Default::default()
+            },
+        )
         .unwrap();
     store
         .put_identity_metadata(
@@ -931,6 +974,7 @@ fn test_wallet_data(wallet_id: [u8; 32], name: &str) -> crate::transaction::Wall
         wallet_name: name.to_string(),
         alias: None,
         public_key: vec![],
+        kyber_public_key: vec![],
         owner_identity_id: None,
         seed_commitment: crate::types::hash::Hash::zero(),
         created_at: 0,
@@ -945,10 +989,7 @@ fn wallet_exists_union_inmem_or_sled() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     let wallet_id = [0x77u8; 32];
     let wallet_id_hex = hex::encode(wallet_id);
-    bc.insert_wallet_shadow(
-        wallet_id_hex.clone(),
-        test_wallet_data(wallet_id, "In-Mem"),
-    );
+    bc.insert_wallet_shadow(wallet_id_hex.clone(), test_wallet_data(wallet_id, "In-Mem"));
     assert!(bc.wallet_exists(&wallet_id_hex), "in-mem present -> true");
     assert!(!bc.wallet_exists("00000000000000000000000000000000000000000000000000000000000000ab"));
 
@@ -968,7 +1009,10 @@ fn wallet_exists_union_inmem_or_sled() {
 
     let mut bc2 = Blockchain::new().expect("blockchain construct");
     bc2.set_store(store);
-    assert!(bc2.wallet_exists(&wallet_id_hex), "sled-only wallet found via union");
+    assert!(
+        bc2.wallet_exists(&wallet_id_hex),
+        "sled-only wallet found via union"
+    );
 }
 
 #[test]
@@ -1019,7 +1063,10 @@ fn wallet_registry_snapshot_includes_sled_without_in_memory() {
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
     let snap = bc.wallet_registry_snapshot();
-    assert_eq!(snap.get(&did_hex).map(|w| w.wallet_name.as_str()), Some("Only Sled"));
+    assert_eq!(
+        snap.get(&did_hex).map(|w| w.wallet_name.as_str()),
+        Some("Only Sled")
+    );
 }
 
 #[test]
@@ -1043,7 +1090,11 @@ fn wallet_count_reads_sled() {
 
     let mut bc = Blockchain::new().unwrap();
     bc.set_store(store);
-    assert_eq!(bc.wallet_count(), 3, "count comes from sled, not the in-mem shadow");
+    assert_eq!(
+        bc.wallet_count(),
+        3,
+        "count comes from sled, not the in-mem shadow"
+    );
 }
 
 #[test]
@@ -1281,7 +1332,13 @@ fn identity_controlled_nodes_reads_sled_metadata() {
     let nodes = vec!["aa".repeat(32), "bb".repeat(32)];
     store.begin_block(0).unwrap();
     store
-        .put_identity(&did_hash, &IdentityConsensus { did_hash, ..Default::default() })
+        .put_identity(
+            &did_hash,
+            &IdentityConsensus {
+                did_hash,
+                ..Default::default()
+            },
+        )
         .unwrap();
     store
         .put_identity_metadata(
@@ -1339,7 +1396,10 @@ fn did_by_device_key_id_reads_sled_metadata() {
     store
         .put_identity(
             &did_hash,
-            &IdentityConsensus { did_hash, ..Default::default() },
+            &IdentityConsensus {
+                did_hash,
+                ..Default::default()
+            },
         )
         .unwrap();
     store
@@ -1400,7 +1460,10 @@ fn did_by_device_key_id_reads_sled_metadata() {
         &store,
         1,
         direct_did,
-        IdentityConsensus { did_hash: direct_hash, ..Default::default() },
+        IdentityConsensus {
+            did_hash: direct_hash,
+            ..Default::default()
+        },
     );
     assert_eq!(
         bc.did_by_device_key_id("abcd1234"),
@@ -1529,10 +1592,15 @@ fn validator_exists_union_inmem_or_sled() {
             governance_proposal_id: None,
         },
     };
-    store.put_validator_record_direct(&did_hash, &record).unwrap();
+    store
+        .put_validator_record_direct(&did_hash, &record)
+        .unwrap();
     let mut bc2 = Blockchain::new_runtime_state();
     bc2.store = Some(store);
-    assert!(bc2.validator_exists(did), "sled-only validator found via union");
+    assert!(
+        bc2.validator_exists(did),
+        "sled-only validator found via union"
+    );
     let got = bc2.validator_info_by_did(did).expect("sled read");
     assert_eq!(got.stake, 200_000);
 }
@@ -1560,11 +1628,7 @@ fn custom_token_balance_reads_sled_not_in_memory() {
     store.begin_block(0).unwrap();
     store.put_token_contract(&contract).unwrap();
     store
-        .set_token_balance(
-            &TokenId::new(token_id),
-            &Address::new(holder),
-            5_000,
-        )
+        .set_token_balance(&TokenId::new(token_id), &Address::new(holder), 5_000)
         .unwrap();
     store.commit_block().unwrap();
 
@@ -1583,9 +1647,11 @@ fn custom_token_balance_reads_sled_not_in_memory() {
     // In-mem-only read would wrongly return 0 — regression guard.
     assert_eq!(
         bc.token_contract_shadow(&token_id)
-            .map(|c| c.balance_of(&crate::integration::crypto_integration::PublicKey::new(
-                [0u8; 2592]
-            )))
+            .map(
+                |c| c.balance_of(&crate::integration::crypto_integration::PublicKey::new(
+                    [0u8; 2592]
+                ))
+            )
             .unwrap_or(0),
         0,
         "in-mem path absent/empty — the bug #2637 fixed"
@@ -1617,11 +1683,7 @@ fn legacy_fee_deduction_syncs_sled_balance() {
     let fee: u64 = 250;
 
     store
-        .force_set_token_balances(&[(
-            TokenId::new(sov_id),
-            Address::new(sender_id),
-            initial,
-        )])
+        .force_set_token_balances(&[(TokenId::new(sov_id), Address::new(sender_id), initial)])
         .unwrap();
 
     let mut bc = Blockchain::new().expect("blockchain construct");
@@ -1805,7 +1867,11 @@ fn validator_count_reads_sled() {
     }
     let mut bc = Blockchain::new_runtime_state();
     bc.store = Some(store);
-    assert_eq!(bc.validator_count(), 3, "count comes from sled, not the in-mem shadow");
+    assert_eq!(
+        bc.validator_count(),
+        3,
+        "count comes from sled, not the in-mem shadow"
+    );
 }
 
 /// iter_token_contract_entries returns sled ids + metadata (#2637).
@@ -2011,17 +2077,16 @@ fn utxo_count_reads_sled() {
     let op = OutPoint::new(TxHash::new([0x11; 32]), 0);
 
     store.begin_block(0).unwrap();
-    store
-        .put_utxo(
-            &op,
-            &Utxo::native(1_000, owner, 0),
-        )
-        .unwrap();
+    store.put_utxo(&op, &Utxo::native(1_000, owner, 0)).unwrap();
     store.commit_block().unwrap();
 
     let mut bc = Blockchain::new().expect("blockchain construct");
     bc.set_store(store);
-    assert_eq!(bc.utxo_count(), 1, "count comes from sled, not in-mem shadow");
+    assert_eq!(
+        bc.utxo_count(),
+        1,
+        "count comes from sled, not in-mem shadow"
+    );
     assert!(!bc.utxo_set_is_empty());
 }
 
@@ -2037,9 +2102,7 @@ fn collect_spendable_outputs_reads_sled() {
     let op = OutPoint::new(tx, 1);
 
     store.begin_block(0).unwrap();
-    store
-        .put_utxo(&op, &Utxo::native(500, owner, 0))
-        .unwrap();
+    store.put_utxo(&op, &Utxo::native(500, owner, 0)).unwrap();
     store.commit_block().unwrap();
 
     let mut bc = Blockchain::new().expect("blockchain construct");
@@ -2105,7 +2168,11 @@ fn wallets_for_owner_reads_sled_when_in_memory_empty() {
     assert_eq!(found[0].1.wallet_name, "Sled Owned");
 
     let found_other = bc.wallets_for_owner(&other);
-    assert_eq!(found_other.len(), 1, "other-owner wallet is found by its owner");
+    assert_eq!(
+        found_other.len(),
+        1,
+        "other-owner wallet is found by its owner"
+    );
     assert_eq!(found_other[0].1.wallet_name, "Sled Other");
 }
 
@@ -2179,8 +2246,18 @@ fn wallets_for_owner_union_in_memory_and_sled() {
     bc.insert_wallet_shadow(mem_hex, mem_wallet);
 
     let found = bc.wallets_for_owner(&owner);
-    assert_eq!(found.len(), 2, "union of sled + in-memory wallets for same owner");
+    assert_eq!(
+        found.len(),
+        2,
+        "union of sled + in-memory wallets for same owner"
+    );
     let names: Vec<&str> = found.iter().map(|(_, w)| w.wallet_name.as_str()).collect();
-    assert!(names.contains(&"Sled Wallet"), "sled wallet is in the result");
-    assert!(names.contains(&"InMem Wallet"), "in-memory wallet is in the result");
+    assert!(
+        names.contains(&"Sled Wallet"),
+        "sled wallet is in the result"
+    );
+    assert!(
+        names.contains(&"InMem Wallet"),
+        "in-memory wallet is in the result"
+    );
 }

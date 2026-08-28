@@ -20,24 +20,21 @@ impl Blockchain {
             return;
         }
 
-        let kernel_init_data: Option<(lib_crypto::PublicKey, String)> = self
-            .council_members
-            .first()
-            .and_then(|cm| {
+        let kernel_init_data: Option<(lib_crypto::PublicKey, String)> =
+            self.council_members.first().and_then(|cm| {
                 let did = cm.identity_id.clone();
                 // #2639: sled-first, consensus-pinned key (in-mem fallback). On a
                 // restarted store-backed node the in-memory shadow is empty, so the
                 // council authority key would not be found and the treasury kernel
                 // would silently fail to initialize.
-                self.identity_public_key(&did).and_then(|pk| {
-                    match pk.as_slice().try_into() {
+                self.identity_public_key(&did)
+                    .and_then(|pk| match pk.as_slice().try_into() {
                         Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
                         Err(_) => {
                             warn!("Treasury Kernel skip: council pk length {}", pk.len());
                             None
                         }
-                    }
-                })
+                    })
             });
 
         if let Some((authority_pk, authority_did)) = kernel_init_data {
@@ -60,8 +57,8 @@ impl Blockchain {
     /// stake/unstake operations, not by the token itself.
     pub fn ensure_welfare_dao_tokens(&mut self) {
         use crate::contracts::economics::fee_router::{
-            DAO_HEALTHCARE_KEY_ID, DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID,
-            DAO_HOUSING_KEY_ID, DAO_FOOD_KEY_ID,
+            DAO_EDUCATION_KEY_ID, DAO_ENERGY_KEY_ID, DAO_FOOD_KEY_ID, DAO_HEALTHCARE_KEY_ID,
+            DAO_HOUSING_KEY_ID,
         };
 
         let kernel_authority = match &self.treasury_kernel {
@@ -82,8 +79,7 @@ impl Blockchain {
 
         let mut created = 0;
         for (name, symbol, _dao_key_id) in tokens {
-            let token_id =
-                crate::contracts::utils::generate_custom_token_id(name, symbol);
+            let token_id = crate::contracts::utils::generate_custom_token_id(name, symbol);
             if self.token_contracts.contains_key(&token_id) {
                 continue;
             }
@@ -117,6 +113,7 @@ impl Blockchain {
                 wallet_name: "DAO Treasury".to_string(),
                 alias: None,
                 public_key: vec![],
+                kyber_public_key: vec![],
                 owner_identity_id: None,
                 seed_commitment: crate::types::Hash::zero(),
                 created_at: 0,
@@ -292,7 +289,11 @@ impl Blockchain {
                 continue;
             }
             let pk = PublicKey::new(
-                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                wallet
+                    .public_key
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or([0u8; 2592]),
             );
             if &pk.key_id == signer_key_id {
                 return Self::wallet_id_bytes(wallet_id);
@@ -324,8 +325,12 @@ impl Blockchain {
             }
             if let Some(wallet_id_bytes) = Self::wallet_id_bytes(wallet_id) {
                 let pk = PublicKey::new(
-                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-            );
+                    wallet
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
+                );
                 key_to_wallet.insert(pk.key_id, wallet_id_bytes);
             }
         }
@@ -347,8 +352,7 @@ impl Blockchain {
                 token.remove_balance(&pk);
                 let wallet_key = Self::wallet_key_for_sov(wallet_id_bytes);
                 let existing = token.balance_of(&wallet_key);
-                token
-                    .set_balance(&wallet_key, existing.saturating_add(bal));
+                token.set_balance(&wallet_key, existing.saturating_add(bal));
                 migrated_total = migrated_total.saturating_add(bal);
             }
         }
@@ -370,7 +374,11 @@ impl Blockchain {
                 continue;
             }
             let pk = PublicKey::new(
-                wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                wallet
+                    .public_key
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or([0u8; 2592]),
             );
             if &pk.key_id == key_id {
                 return Some(wallet.public_key.clone());
@@ -495,10 +503,7 @@ impl Blockchain {
                 n
             ),
             Ok(_) => {}
-            Err(e) => warn!(
-                "⚠️ Failed to persist genesis SOV balances to sled: {}",
-                e
-            ),
+            Err(e) => warn!("⚠️ Failed to persist genesis SOV balances to sled: {}", e),
         }
         Ok(())
     }
@@ -541,10 +546,17 @@ impl Blockchain {
 
         // Build sled correction entries (balance = 0 → removes the key).
         // TokenId is Copy so we can use it directly in the closure.
-        let sled_entries: Vec<(crate::storage::TokenId, crate::storage::Address, u128)> = to_correct
-            .iter()
-            .map(|(bytes, _)| (sov_storage_token_id, crate::storage::Address::new(*bytes), 0u128))
-            .collect();
+        let sled_entries: Vec<(crate::storage::TokenId, crate::storage::Address, u128)> =
+            to_correct
+                .iter()
+                .map(|(bytes, _)| {
+                    (
+                        sov_storage_token_id,
+                        crate::storage::Address::new(*bytes),
+                        0u128,
+                    )
+                })
+                .collect();
 
         // Apply sled correction outside of block transaction.
         if let Some(store) = self.get_store() {
@@ -816,7 +828,11 @@ impl Blockchain {
             Signature {
                 signature: Vec::new(),
                 public_key: PublicKey::new(
-                    wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                    wallet_data
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
                 ),
                 algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: wallet_data.created_at,
@@ -844,11 +860,9 @@ impl Blockchain {
                 format!("funding_commitment_{}_{}", wallet_id, amount).as_bytes(),
             ),
             note: crate::types::hash::blake3_hash(format!("funding_note_{}", wallet_id).as_bytes()),
-            recipient: PublicKey::new(
-                recipient_identity.try_into().unwrap_or([0u8; 2592])
-            ),
-                        merkle_leaf: Hash::default(),
-};
+            recipient: PublicKey::new(recipient_identity.try_into().unwrap_or([0u8; 2592])),
+            merkle_leaf: Hash::default(),
+        };
         let utxo_hash = crate::types::hash::blake3_hash(
             format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes(),
         );
@@ -1012,6 +1026,13 @@ impl Blockchain {
         })
     }
 
+    /// Deprecated: reads exclusively from the in-memory wallet_registry, which is
+    /// empty after restart. Use [`wallets_for_owner`](Self::wallets_for_owner) instead,
+    /// which reads sled-first with an in-memory overlay (#2639, #2971).
+    #[deprecated(
+        since = "0.0.0",
+        note = "Use wallets_for_owner() instead — this only reads the in-memory shadow which is empty after restart"
+    )]
     pub fn get_wallets_for_owner(
         &self,
         owner_identity_id: &Hash,

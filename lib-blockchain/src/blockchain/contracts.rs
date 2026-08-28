@@ -12,7 +12,10 @@ impl Blockchain {
                     {
                         let contract_id = lib_crypto::hash_blake3(web4_contract.domain.as_bytes());
                         self.register_web4_contract(contract_id, web4_contract, block.height());
-                        info!(" Processed Web4Contract deployment in block {}", block.height());
+                        info!(
+                            " Processed Web4Contract deployment in block {}",
+                            block.height()
+                        );
                     } else if let Ok(token_contract) =
                         bincode::deserialize::<crate::contracts::TokenContract>(
                             output.commitment.as_bytes(),
@@ -20,7 +23,10 @@ impl Blockchain {
                     {
                         let contract_id = token_contract.token_id;
                         self.register_token_contract(contract_id, token_contract, block.height());
-                        info!(" Processed TokenContract deployment in block {}", block.height());
+                        info!(
+                            " Processed TokenContract deployment in block {}",
+                            block.height()
+                        );
                     } else {
                         debug!(
                             " Could not deserialize contract in transaction {}",
@@ -209,289 +215,293 @@ impl Blockchain {
         'tx_loop: for transaction in &block.transactions {
             let tx_type = transaction.transaction_type;
             let arm_result: anyhow::Result<()> = (|| -> anyhow::Result<()> {
-            match tx_type {
-                TransactionType::TokenTransfer => {
-                    let transfer = transaction
-                        .token_transfer_data()
-                        .ok_or_else(|| anyhow::anyhow!("TokenTransfer missing data"))?;
+                match tx_type {
+                    TransactionType::TokenTransfer => {
+                        let transfer = transaction
+                            .token_transfer_data()
+                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer missing data"))?;
 
-                    if transfer.amount == 0 {
-                        return Err(anyhow::anyhow!("TokenTransfer amount must be > 0"));
-                    }
+                        if transfer.amount == 0 {
+                            return Err(anyhow::anyhow!("TokenTransfer amount must be > 0"));
+                        }
 
-                    let is_sov = Self::is_sov_token_id(&transfer.token_id);
-                    let token_id = if is_sov {
-                        sov_token_id
-                    } else {
-                        transfer.token_id
-                    };
+                        let is_sov = Self::is_sov_token_id(&transfer.token_id);
+                        let token_id = if is_sov {
+                            sov_token_id
+                        } else {
+                            transfer.token_id
+                        };
 
-                    // Read the canonical nonce from sled via the getter that
-                    // falls through when the in-memory cache is empty. Direct
-                    // `self.token_nonces.get(...)` reads bypass the canonical
-                    // store and were the source of the g3/g5 halt at h=114445.
-                    let nonce_key = (token_id, transfer.from);
-                    let expected_nonce = self.get_token_nonce(&token_id, &transfer.from);
-                    if transfer.nonce != expected_nonce {
-                        return Err(anyhow::anyhow!(
-                            "TokenTransfer nonce mismatch: expected {}, got {}",
-                            expected_nonce,
-                            transfer.nonce
-                        ));
-                    }
+                        // Read the canonical nonce from sled via the getter that
+                        // falls through when the in-memory cache is empty. Direct
+                        // `self.token_nonces.get(...)` reads bypass the canonical
+                        // store and were the source of the g3/g5 halt at h=114445.
+                        let nonce_key = (token_id, transfer.from);
+                        let expected_nonce = self.get_token_nonce(&token_id, &transfer.from);
+                        if transfer.nonce != expected_nonce {
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer nonce mismatch: expected {}, got {}",
+                                expected_nonce,
+                                transfer.nonce
+                            ));
+                        }
 
-                    let sender_pk = transaction.signature.public_key.clone();
+                        let sender_pk = transaction.signature.public_key.clone();
 
-                    if token_id == sov_token_id {
-                        self.ensure_sov_token_contract();
-                    }
+                        if token_id == sov_token_id {
+                            self.ensure_sov_token_contract();
+                        }
 
-                    let amount_u64: u64 = transfer
-                        .amount
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
+                        let amount_u64: u64 = transfer
+                            .amount
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
 
-                    let fee_rate_bps = crate::contracts::tokens::constants::SOV_FEE_RATE_BPS;
-                    let fee_amount: u64 =
-                        (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
-                    let net_amount: u64 = amount_u64.saturating_sub(fee_amount);
+                        let fee_rate_bps = crate::contracts::tokens::constants::SOV_FEE_RATE_BPS;
+                        let fee_amount: u64 =
+                            (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
+                        let net_amount: u64 = amount_u64.saturating_sub(fee_amount);
 
-                    let treasury_pk_opt: Option<PublicKey> = self
-                        .dao_treasury_wallet_id
-                        .as_ref()
-                        .and_then(|hex_id| hex::decode(hex_id).ok())
-                        .and_then(|bytes| {
-                            if bytes.len() == 32 {
-                                let mut arr = [0u8; 32];
-                                arr.copy_from_slice(&bytes);
-                                Some(Self::wallet_key_for_sov(&arr))
-                            } else {
-                                None
-                            }
-                        });
+                        let treasury_pk_opt: Option<PublicKey> = self
+                            .dao_treasury_wallet_id
+                            .as_ref()
+                            .and_then(|hex_id| hex::decode(hex_id).ok())
+                            .and_then(|bytes| {
+                                if bytes.len() == 32 {
+                                    let mut arr = [0u8; 32];
+                                    arr.copy_from_slice(&bytes);
+                                    Some(Self::wallet_key_for_sov(&arr))
+                                } else {
+                                    None
+                                }
+                            });
 
-                    let tx_hash_obj = transaction.hash();
-                    let tx_hash_bytes = tx_hash_obj.as_bytes();
-                    let mut tx_hash = [0u8; 32];
-                    tx_hash.copy_from_slice(tx_hash_bytes);
+                        let tx_hash_obj = transaction.hash();
+                        let tx_hash_bytes = tx_hash_obj.as_bytes();
+                        let mut tx_hash = [0u8; 32];
+                        tx_hash.copy_from_slice(tx_hash_bytes);
 
-                    if is_sov {
-                        let from_wallet_id = hex::encode(transfer.from);
-                        let to_wallet_id = hex::encode(transfer.to);
+                        if is_sov {
+                            let from_wallet_id = hex::encode(transfer.from);
+                            let to_wallet_id = hex::encode(transfer.to);
 
-                        // Wallet lookup with transparent legacy migration.
-                        // Pre-fix wallets were registered under an HD-derived wallet_id; the new
-                        // wallet_id = blake3(dilithium_pk || kyber_pk) == signer's key_id.
-                        // When the sender's key_id is not in the registry, scan for a wallet whose
-                        // dilithium_pk matches the sender and migrate it in place — no user action
-                        // required.
-                        if !self.wallet_registry.contains_key(&from_wallet_id) {
-                            let sender_dilithium = sender_pk.dilithium_pk.to_vec();
-                            let legacy_key = self
-                                .wallet_registry
-                                .iter()
-                                .find(|(_, w)| {
-                                    w.public_key.len() == 2592
-                                        && w.public_key == sender_dilithium
-                                })
-                                .map(|(k, _)| k.clone());
+                            // Wallet lookup with transparent legacy migration.
+                            // Pre-fix wallets were registered under an HD-derived wallet_id; the new
+                            // wallet_id = blake3(dilithium_pk || kyber_pk) == signer's key_id.
+                            // When the sender's key_id is not in the registry, scan for a wallet whose
+                            // dilithium_pk matches the sender and migrate it in place — no user action
+                            // required.
+                            if !self.wallet_registry.contains_key(&from_wallet_id) {
+                                let sender_dilithium = sender_pk.dilithium_pk.to_vec();
+                                let legacy_key = self
+                                    .wallet_registry
+                                    .iter()
+                                    .find(|(_, w)| {
+                                        w.public_key.len() == 2592
+                                            && w.public_key == sender_dilithium
+                                    })
+                                    .map(|(k, _)| k.clone());
 
-                            if let Some(old_key) = legacy_key {
-                                if let Some(mut old_wallet) =
-                                    self.wallet_registry.remove(&old_key)
-                                {
-                                    let old_wallet_id_bytes: [u8; 32] = old_wallet
-                                        .wallet_id
-                                        .as_bytes()
-                                        .try_into()
-                                        .unwrap_or([0u8; 32]);
-                                    old_wallet.wallet_id = Hash::new(transfer.from);
-                                    self.wallet_registry
-                                        .insert(from_wallet_id.clone(), old_wallet);
-
-                                    // Migrate SOV balance: move from old wallet address to new
-                                    // without changing total_supply (purely a re-keying).
-                                    let old_sov_addr =
-                                        Self::wallet_key_for_sov(&old_wallet_id_bytes);
-                                    let new_sov_addr = Self::wallet_key_for_sov(&transfer.from);
-                                    if let Some(token) =
-                                        self.token_contracts.get_mut(&token_id)
+                                if let Some(old_key) = legacy_key {
+                                    if let Some(mut old_wallet) =
+                                        self.wallet_registry.remove(&old_key)
                                     {
-                                        let old_bal = token.balance_of(&old_sov_addr);
-                                        if old_bal > 0 {
-                                            token.set_balance(&old_sov_addr, 0);
-                                            let cur_new = token.balance_of(&new_sov_addr);
-                                            token.set_balance(
-                                                &new_sov_addr,
-                                                cur_new.saturating_add(old_bal),
-                                            );
+                                        let old_wallet_id_bytes: [u8; 32] = old_wallet
+                                            .wallet_id
+                                            .as_bytes()
+                                            .try_into()
+                                            .unwrap_or([0u8; 32]);
+                                        old_wallet.wallet_id = Hash::new(transfer.from);
+                                        self.wallet_registry
+                                            .insert(from_wallet_id.clone(), old_wallet);
+
+                                        // Migrate SOV balance: move from old wallet address to new
+                                        // without changing total_supply (purely a re-keying).
+                                        let old_sov_addr =
+                                            Self::wallet_key_for_sov(&old_wallet_id_bytes);
+                                        let new_sov_addr = Self::wallet_key_for_sov(&transfer.from);
+                                        if let Some(token) = self.token_contracts.get_mut(&token_id)
+                                        {
+                                            let old_bal = token.balance_of(&old_sov_addr);
+                                            if old_bal > 0 {
+                                                token.set_balance(&old_sov_addr, 0);
+                                                let cur_new = token.balance_of(&new_sov_addr);
+                                                token.set_balance(
+                                                    &new_sov_addr,
+                                                    cur_new.saturating_add(old_bal),
+                                                );
+                                            }
                                         }
-                                    }
-                                    info!(
+                                        info!(
                                         "🔄 Migrated SOV wallet {} → {} (transparent key_id migration)",
                                         old_key, from_wallet_id
                                     );
-                                }
-                            } else {
-                                // Same-block deterministic wallet materialization for legacy
-                                // senders (signature proves ownership). No welcome SOV mint —
-                                // inventing supply here was a #1983 / #1993 divergence source.
-                                // initial_balance stays 0; funding must be TokenMint history.
-                                let wallet_data = crate::transaction::WalletTransactionData {
-                                    wallet_id: Hash::new(transfer.from),
-                                    owner_identity_id: None,
-                                    alias: Some(format!("migrated_{}", &from_wallet_id[..8])),
-                                    wallet_name: "Migrated Wallet".to_string(),
-                                    wallet_type: "Primary".to_string(),
-                                    public_key: sender_pk.dilithium_pk.to_vec(),
-                                    capabilities: 0xFFFFFFFF,
-                                    created_at: 0,
-                                    registration_fee: 0,
-                                    initial_balance: 0,
-                                    seed_commitment: crate::types::hash::blake3_hash(
-                                        format!("migrated:{}", from_wallet_id).as_bytes(),
-                                    ),
-                                };
-                                self.insert_wallet_shadow(from_wallet_id.clone(), wallet_data);
-                                info!(
+                                    }
+                                } else {
+                                    // Same-block deterministic wallet materialization for legacy
+                                    // senders (signature proves ownership). No welcome SOV mint —
+                                    // inventing supply here was a #1983 / #1993 divergence source.
+                                    // initial_balance stays 0; funding must be TokenMint history.
+                                    let wallet_data = crate::transaction::WalletTransactionData {
+                                        wallet_id: Hash::new(transfer.from),
+                                        owner_identity_id: None,
+                                        alias: Some(format!("migrated_{}", &from_wallet_id[..8])),
+                                        wallet_name: "Migrated Wallet".to_string(),
+                                        wallet_type: "Primary".to_string(),
+                                        public_key: sender_pk.dilithium_pk.to_vec(),
+                                        kyber_public_key: vec![],
+                                        capabilities: 0xFFFFFFFF,
+                                        created_at: 0,
+                                        registration_fee: 0,
+                                        initial_balance: 0,
+                                        seed_commitment: crate::types::hash::blake3_hash(
+                                            format!("migrated:{}", from_wallet_id).as_bytes(),
+                                        ),
+                                    };
+                                    self.insert_wallet_shadow(from_wallet_id.clone(), wallet_data);
+                                    info!(
                                     "🔄 Transparent migration: materialised wallet {} at block execution (0 SOV; no mint)",
                                     &from_wallet_id[..16.min(from_wallet_id.len())],
                                 );
+                                }
                             }
-                        }
 
-                        if !self.wallet_registry.contains_key(&to_wallet_id) {
-                            return Err(anyhow::anyhow!(
-                                "TokenTransfer SOV recipient wallet not found"
-                            ));
-                        }
+                            if !self.wallet_registry.contains_key(&to_wallet_id) {
+                                return Err(anyhow::anyhow!(
+                                    "TokenTransfer SOV recipient wallet not found"
+                                ));
+                            }
 
-                        // Ownership check: compare dilithium_pk bytes directly.
-                        // PublicKey::new() computed key_id = blake3(dilithium_pk) only, ignoring
-                        // kyber — broken for kyber-enabled keys. Compare raw bytes instead.
-                        let from_wallet = self
-                            .wallet_registry
-                            .get(&from_wallet_id)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("TokenTransfer SOV sender wallet not found")
-                            })?;
-                        let sender_dilithium = sender_pk.dilithium_pk.as_slice();
-                        if from_wallet.public_key.len() != 2592
-                            || from_wallet.public_key.as_slice() != sender_dilithium
-                        {
-                            return Err(anyhow::anyhow!(
-                                "TokenTransfer SOV sender does not own wallet"
-                            ));
-                        }
+                            // Ownership check: compare dilithium_pk bytes directly.
+                            // PublicKey::new() computed key_id = blake3(dilithium_pk) only, ignoring
+                            // kyber — broken for kyber-enabled keys. Compare raw bytes instead.
+                            let from_wallet =
+                                self.wallet_registry.get(&from_wallet_id).ok_or_else(|| {
+                                    anyhow::anyhow!("TokenTransfer SOV sender wallet not found")
+                                })?;
+                            let sender_dilithium = sender_pk.dilithium_pk.as_slice();
+                            if from_wallet.public_key.len() != 2592
+                                || from_wallet.public_key.as_slice() != sender_dilithium
+                            {
+                                return Err(anyhow::anyhow!(
+                                    "TokenTransfer SOV sender does not own wallet"
+                                ));
+                            }
 
-                        let from_wallet_addr = Self::wallet_key_for_sov(&transfer.from);
-                        let to_wallet_addr = Self::wallet_key_for_sov(&transfer.to);
+                            let from_wallet_addr = Self::wallet_key_for_sov(&transfer.from);
+                            let to_wallet_addr = Self::wallet_key_for_sov(&transfer.to);
 
-                        let ctx = crate::contracts::executor::ExecutionContext::new(
-                            from_wallet_addr.clone(),
-                            block.height(),
-                            block.header.timestamp,
-                            0,
-                            tx_hash,
-                        );
+                            let ctx = crate::contracts::executor::ExecutionContext::new(
+                                from_wallet_addr.clone(),
+                                block.height(),
+                                block.header.timestamp,
+                                0,
+                                tx_hash,
+                            );
 
-                        let token = self
-                            .token_contracts
-                            .get_mut(&token_id)
-                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        // Writes path: in-memory transfer below; balance_of is correct here (#2637).
-                        let from_bal = token.balance_of(&from_wallet_addr);
-                        if from_bal < amount_u64 as u128 {
-                            return Err(anyhow::anyhow!(
-                                "TokenTransfer insufficient balance: have {}, need {}",
-                                from_bal,
-                                amount_u64
-                            ));
-                        }
-                        token
-                            .transfer(&ctx, &to_wallet_addr, net_amount as u128)
-                            .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
-                        Self::apply_token_transfer_with_fee(
-                            token,
-                            &from_wallet_addr,
-                            amount_u64,
-                            fee_amount,
-                            &treasury_pk_opt,
-                            block.height(),
-                        )?;
-                    } else {
-                        if sender_pk.key_id != transfer.from {
-                            return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
-                        }
-
-                        let recipient_pk_bytes = self
-                            .resolve_public_key_by_key_id(&transfer.to)
-                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer recipient not found"))?;
-                        let recipient_pk = PublicKey::new(
-                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
-                        );
-
-                        let ctx = crate::contracts::executor::ExecutionContext::new(
-                            sender_pk.clone(),
-                            block.height(),
-                            block.header.timestamp,
-                            0,
-                            tx_hash,
-                        );
-
-                        let token = self
-                            .token_contracts
-                            .get_mut(&token_id)
-                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        // Writes path: in-memory transfer below; balance_of is correct here (#2637).
-                        let sender_bal = token.balance_of(&sender_pk);
-                        if sender_bal < amount_u64 as u128 {
-                            return Err(anyhow::anyhow!(
-                                "TokenTransfer insufficient balance: have {}, need {}",
-                                sender_bal,
-                                amount_u64
-                            ));
-                        }
-                        token
-                            .transfer(&ctx, &recipient_pk, net_amount as u128)
-                            .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
-                        Self::apply_token_transfer_with_fee(
-                            token,
-                            &sender_pk,
-                            amount_u64,
-                            fee_amount,
-                            &treasury_pk_opt,
-                            block.height(),
-                        )?;
-                    };
-
-                    // Nonce advance: sled is canonical in production (BlockExecutor
-                    // mode), so this in-memory write must be a no-op when the
-                    // executor is attached — `BlockExecutor::increment_token_nonce`
-                    // owns the canonical advance and a second write source here is
-                    // exactly what caused the g3/g5 halt at h=114445 (executor
-                    // wrote sled, this path wrote in-memory, the two drifted, and
-                    // validation/apply disagreed at commit time).
-                    //
-                    // When NO executor is attached (legacy store-less mode used by
-                    // tests and the deprecated processing path), there is no sled
-                    // for `get_token_nonce` to fall through to, so the in-memory
-                    // map IS the only nonce store and must continue to be written
-                    // here (CR PR #2675).
-                    if !self.has_executor() {
-                        *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
-                    }
-
-                    if tracing::enabled!(tracing::Level::INFO) {
-                        let cbe_token_id = Self::derive_cbe_token_id_pub();
-                        let token_label: std::borrow::Cow<'_, str> = if is_sov {
-                            "SOV".into()
-                        } else if token_id == cbe_token_id {
-                            "CBE".into()
+                            let token = self
+                                .token_contracts
+                                .get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            // Writes path: in-memory transfer below; balance_of is correct here (#2637).
+                            let from_bal = token.balance_of(&from_wallet_addr);
+                            if from_bal < amount_u64 as u128 {
+                                return Err(anyhow::anyhow!(
+                                    "TokenTransfer insufficient balance: have {}, need {}",
+                                    from_bal,
+                                    amount_u64
+                                ));
+                            }
+                            token
+                                .transfer(&ctx, &to_wallet_addr, net_amount as u128)
+                                .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                            Self::apply_token_transfer_with_fee(
+                                token,
+                                &from_wallet_addr,
+                                amount_u64,
+                                fee_amount,
+                                &treasury_pk_opt,
+                                block.height(),
+                            )?;
                         } else {
-                            hex::encode(&token_id[..4]).into()
+                            if sender_pk.key_id != transfer.from {
+                                return Err(anyhow::anyhow!(
+                                    "TokenTransfer sender key_id mismatch"
+                                ));
+                            }
+
+                            let recipient_pk_bytes =
+                                self.resolve_public_key_by_key_id(&transfer.to).ok_or_else(
+                                    || anyhow::anyhow!("TokenTransfer recipient not found"),
+                                )?;
+                            let recipient_pk = PublicKey::new(
+                                recipient_pk_bytes
+                                    .as_slice()
+                                    .try_into()
+                                    .unwrap_or([0u8; 2592]),
+                            );
+
+                            let ctx = crate::contracts::executor::ExecutionContext::new(
+                                sender_pk.clone(),
+                                block.height(),
+                                block.header.timestamp,
+                                0,
+                                tx_hash,
+                            );
+
+                            let token = self
+                                .token_contracts
+                                .get_mut(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            // Writes path: in-memory transfer below; balance_of is correct here (#2637).
+                            let sender_bal = token.balance_of(&sender_pk);
+                            if sender_bal < amount_u64 as u128 {
+                                return Err(anyhow::anyhow!(
+                                    "TokenTransfer insufficient balance: have {}, need {}",
+                                    sender_bal,
+                                    amount_u64
+                                ));
+                            }
+                            token
+                                .transfer(&ctx, &recipient_pk, net_amount as u128)
+                                .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
+                            Self::apply_token_transfer_with_fee(
+                                token,
+                                &sender_pk,
+                                amount_u64,
+                                fee_amount,
+                                &treasury_pk_opt,
+                                block.height(),
+                            )?;
                         };
-                        info!(
+
+                        // Nonce advance: sled is canonical in production (BlockExecutor
+                        // mode), so this in-memory write must be a no-op when the
+                        // executor is attached — `BlockExecutor::increment_token_nonce`
+                        // owns the canonical advance and a second write source here is
+                        // exactly what caused the g3/g5 halt at h=114445 (executor
+                        // wrote sled, this path wrote in-memory, the two drifted, and
+                        // validation/apply disagreed at commit time).
+                        //
+                        // When NO executor is attached (legacy store-less mode used by
+                        // tests and the deprecated processing path), there is no sled
+                        // for `get_token_nonce` to fall through to, so the in-memory
+                        // map IS the only nonce store and must continue to be written
+                        // here (CR PR #2675).
+                        if !self.has_executor() {
+                            *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
+                        }
+
+                        if tracing::enabled!(tracing::Level::INFO) {
+                            let cbe_token_id = Self::derive_cbe_token_id_pub();
+                            let token_label: std::borrow::Cow<'_, str> = if is_sov {
+                                "SOV".into()
+                            } else if token_id == cbe_token_id {
+                                "CBE".into()
+                            } else {
+                                hex::encode(&token_id[..4]).into()
+                            };
+                            info!(
                             "[token/transfer] committed: token={} from={} to={} amount={} fee={} net={} nonce={} height={} tx={}",
                             token_label,
                             hex::encode(&transfer.from[..4]),
@@ -503,366 +513,372 @@ impl Blockchain {
                             block.height(),
                             hex::encode(&tx_hash[..4]),
                         );
-                    }
+                        }
 
-                    if let Some(store) = &self.store {
-                        if let Some(token) = self.token_contracts.get(&token_id) {
-                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                            if let Err(e) = store_ref.put_token_contract(token) {
-                                warn!("[token/transfer] failed to persist token contract: height={} token={} err={}", block.height(), hex::encode(&token_id[..4]), e);
+                        if let Some(store) = &self.store {
+                            if let Some(token) = self.token_contracts.get(&token_id) {
+                                let store_ref: &dyn crate::storage::BlockchainStore =
+                                    store.as_ref();
+                                if let Err(e) = store_ref.put_token_contract(token) {
+                                    warn!("[token/transfer] failed to persist token contract: height={} token={} err={}", block.height(), hex::encode(&token_id[..4]), e);
+                                }
                             }
                         }
                     }
-                }
-                TransactionType::TokenMint => {
-                    if transaction.version < 2 {
-                        return Err(anyhow::anyhow!(
-                            "TokenMint not supported in this serialization version"
-                        ));
-                    }
-
-                    let mint = transaction
-                        .token_mint_data()
-                        .ok_or_else(|| anyhow::anyhow!("TokenMint missing data"))?;
-
-                    if mint.amount == 0 {
-                        return Err(anyhow::anyhow!("TokenMint amount must be > 0"));
-                    }
-
-                    let is_sov = Self::is_sov_token_id(&mint.token_id);
-                    let recipient_pk = if is_sov {
-                        Self::wallet_key_for_sov(&mint.to)
-                    } else {
-                        let recipient_pk_bytes = self
-                            .resolve_public_key_by_key_id(&mint.to)
-                            .ok_or_else(|| anyhow::anyhow!("TokenMint recipient not found"))?;
-                        PublicKey::new(
-                            recipient_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
-                        )
-                    };
-
-                    let mut migration_from: Option<PublicKey> = None;
-                    if let Ok(memo_str) = std::str::from_utf8(&transaction.memo) {
-                        if let Some(rest) = memo_str.strip_prefix("UBI_DISTRIBUTION_V1:") {
-                            let mut parts = rest.split(':');
-                            let identity_id = parts.next().unwrap_or("").to_string();
-                            let wallet_id = parts.next().unwrap_or("").to_string();
-
-                            let entry = self
-                                .ubi_registry
-                                .get_mut(&identity_id)
-                                .ok_or_else(|| anyhow::anyhow!("UBI mint for unknown identity"))?;
-                            if entry.ubi_wallet_id != wallet_id {
-                                return Err(anyhow::anyhow!("UBI mint wallet mismatch"));
-                            }
-                            if Self::is_sov_token_id(&mint.token_id) {
-                                let mint_wallet_id = hex::encode(mint.to);
-                                if mint_wallet_id != wallet_id {
-                                    return Err(anyhow::anyhow!(
-                                        "UBI mint recipient wallet mismatch"
-                                    ));
-                                }
-                            }
-
-                            let is_due = match entry.last_payout_block {
-                                Some(last_block) => {
-                                    block.height().saturating_sub(last_block)
-                                        >= Self::BLOCKS_PER_DAY
-                                }
-                                None => true,
-                            };
-                            if !is_due {
-                                return Err(anyhow::anyhow!("UBI mint not due for identity"));
-                            }
-
-                            let mut expected_payout = entry.daily_amount;
-                            let mut new_remainder =
-                                entry.remainder_balance + (entry.monthly_amount % 30);
-                            if new_remainder >= 30 {
-                                expected_payout += new_remainder / 30;
-                                new_remainder %= 30;
-                            }
-
-                            if mint.amount != expected_payout {
-                                return Err(anyhow::anyhow!("UBI mint amount mismatch"));
-                            }
-
-                            entry.last_payout_block = Some(block.height());
-                            entry.total_received =
-                                entry.total_received.saturating_add(expected_payout);
-                            entry.remainder_balance = new_remainder;
-
-                            if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
-                                wallet.initial_balance =
-                                    wallet.initial_balance.saturating_add(expected_payout);
-                            }
-                        } else if let Some(rest) = memo_str.strip_prefix("TOKEN_MIGRATE_V1:") {
-                            let old_pk_bytes = hex::decode(rest)
-                                .map_err(|_| anyhow::anyhow!("Invalid TOKEN_MIGRATE_V1 memo"))?;
-                            migration_from = Some(PublicKey::new(
-                                old_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592])
+                    TransactionType::TokenMint => {
+                        if transaction.version < 2 {
+                            return Err(anyhow::anyhow!(
+                                "TokenMint not supported in this serialization version"
                             ));
                         }
-                    }
 
-                    let token_id = if is_sov { sov_token_id } else { mint.token_id };
+                        let mint = transaction
+                            .token_mint_data()
+                            .ok_or_else(|| anyhow::anyhow!("TokenMint missing data"))?;
 
-                    if token_id == sov_token_id {
-                        self.ensure_sov_token_contract();
-                    }
+                        if mint.amount == 0 {
+                            return Err(anyhow::anyhow!("TokenMint amount must be > 0"));
+                        }
 
-                    let is_ubi_mint = std::str::from_utf8(&transaction.memo)
-                        .ok()
-                        .is_some_and(|s| s.starts_with("UBI_DISTRIBUTION_V1:"));
-                    let is_migration = migration_from.is_some();
+                        let is_sov = Self::is_sov_token_id(&mint.token_id);
+                        let recipient_pk = if is_sov {
+                            Self::wallet_key_for_sov(&mint.to)
+                        } else {
+                            let recipient_pk_bytes = self
+                                .resolve_public_key_by_key_id(&mint.to)
+                                .ok_or_else(|| anyhow::anyhow!("TokenMint recipient not found"))?;
+                            PublicKey::new(
+                                recipient_pk_bytes
+                                    .as_slice()
+                                    .try_into()
+                                    .unwrap_or([0u8; 2592]),
+                            )
+                        };
 
-                    let amount_u64: u64 = mint
-                        .amount
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
+                        let mut migration_from: Option<PublicKey> = None;
+                        if let Ok(memo_str) = std::str::from_utf8(&transaction.memo) {
+                            if let Some(rest) = memo_str.strip_prefix("UBI_DISTRIBUTION_V1:") {
+                                let mut parts = rest.split(':');
+                                let identity_id = parts.next().unwrap_or("").to_string();
+                                let wallet_id = parts.next().unwrap_or("").to_string();
 
-                    let is_kernel_controlled = self
-                        .token_contracts
-                        .get(&token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?
-                        .kernel_mint_authority
-                        .is_some();
+                                let entry =
+                                    self.ubi_registry.get_mut(&identity_id).ok_or_else(|| {
+                                        anyhow::anyhow!("UBI mint for unknown identity")
+                                    })?;
+                                if entry.ubi_wallet_id != wallet_id {
+                                    return Err(anyhow::anyhow!("UBI mint wallet mismatch"));
+                                }
+                                if Self::is_sov_token_id(&mint.token_id) {
+                                    let mint_wallet_id = hex::encode(mint.to);
+                                    if mint_wallet_id != wallet_id {
+                                        return Err(anyhow::anyhow!(
+                                            "UBI mint recipient wallet mismatch"
+                                        ));
+                                    }
+                                }
 
-                    if !is_sov && !is_ubi_mint && !is_migration && !is_kernel_controlled {
-                        let token = self
+                                let is_due = match entry.last_payout_block {
+                                    Some(last_block) => {
+                                        block.height().saturating_sub(last_block)
+                                            >= Self::BLOCKS_PER_DAY
+                                    }
+                                    None => true,
+                                };
+                                if !is_due {
+                                    return Err(anyhow::anyhow!("UBI mint not due for identity"));
+                                }
+
+                                let mut expected_payout = entry.daily_amount;
+                                let mut new_remainder =
+                                    entry.remainder_balance + (entry.monthly_amount % 30);
+                                if new_remainder >= 30 {
+                                    expected_payout += new_remainder / 30;
+                                    new_remainder %= 30;
+                                }
+
+                                if mint.amount != expected_payout {
+                                    return Err(anyhow::anyhow!("UBI mint amount mismatch"));
+                                }
+
+                                entry.last_payout_block = Some(block.height());
+                                entry.total_received =
+                                    entry.total_received.saturating_add(expected_payout);
+                                entry.remainder_balance = new_remainder;
+
+                                if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
+                                    wallet.initial_balance =
+                                        wallet.initial_balance.saturating_add(expected_payout);
+                                }
+                            } else if let Some(rest) = memo_str.strip_prefix("TOKEN_MIGRATE_V1:") {
+                                let old_pk_bytes = hex::decode(rest).map_err(|_| {
+                                    anyhow::anyhow!("Invalid TOKEN_MIGRATE_V1 memo")
+                                })?;
+                                migration_from = Some(PublicKey::new(
+                                    old_pk_bytes.as_slice().try_into().unwrap_or([0u8; 2592]),
+                                ));
+                            }
+                        }
+
+                        let token_id = if is_sov { sov_token_id } else { mint.token_id };
+
+                        if token_id == sov_token_id {
+                            self.ensure_sov_token_contract();
+                        }
+
+                        let is_ubi_mint = std::str::from_utf8(&transaction.memo)
+                            .ok()
+                            .is_some_and(|s| s.starts_with("UBI_DISTRIBUTION_V1:"));
+                        let is_migration = migration_from.is_some();
+
+                        let amount_u64: u64 = mint
+                            .amount
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
+
+                        let is_kernel_controlled = self
                             .token_contracts
                             .get(&token_id)
-                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token
-                            .check_mint_authorization(&transaction.signature.public_key)
-                            .map_err(|e| anyhow::anyhow!("{}", e))?;
-                    }
+                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?
+                            .kernel_mint_authority
+                            .is_some();
 
-                    if let Some(from_pk) = migration_from {
-                        if is_kernel_controlled {
-                            let mut kernel = self.treasury_kernel.take().ok_or_else(|| {
+                        if !is_sov && !is_ubi_mint && !is_migration && !is_kernel_controlled {
+                            let token = self
+                                .token_contracts
+                                .get(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            token
+                                .check_mint_authorization(&transaction.signature.public_key)
+                                .map_err(|e| anyhow::anyhow!("{}", e))?;
+                        }
+
+                        if let Some(from_pk) = migration_from {
+                            if is_kernel_controlled {
+                                let mut kernel = self.treasury_kernel.take().ok_or_else(|| {
                                 anyhow::anyhow!(
                                     "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
                                 )
                             })?;
-                            let burn_result = {
+                                let burn_result = {
+                                    let token =
+                                        self.token_contracts.get_mut(&token_id).ok_or_else(
+                                            || anyhow::anyhow!("Token contract not found"),
+                                        )?;
+                                    kernel.debit(
+                                        token,
+                                        &transaction.signature.public_key,
+                                        &from_pk,
+                                        amount_u64,
+                                        crate::contracts::treasury_kernel::DebitReason::Burn,
+                                    )
+                                };
+                                self.treasury_kernel = Some(kernel);
+                                burn_result.map_err(|e| {
+                                    anyhow::anyhow!("Token migration burn failed: {}", e)
+                                })?;
+                            } else {
                                 let token = self
                                     .token_contracts
                                     .get_mut(&token_id)
                                     .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                                kernel.debit(
-                                    token,
-                                    &transaction.signature.public_key,
-                                    &from_pk,
-                                    amount_u64,
-                                    crate::contracts::treasury_kernel::DebitReason::Burn,
-                                )
-                            };
-                            self.treasury_kernel = Some(kernel);
-                            burn_result.map_err(|e| {
-                                anyhow::anyhow!("Token migration burn failed: {}", e)
-                            })?;
-                        } else {
-                            let token = self
-                                .token_contracts
-                                .get_mut(&token_id)
-                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                            token.burn(&from_pk, amount_u64 as u128).map_err(|e| {
-                                anyhow::anyhow!("Token migration burn failed: {}", e)
-                            })?;
+                                token.burn(&from_pk, amount_u64 as u128).map_err(|e| {
+                                    anyhow::anyhow!("Token migration burn failed: {}", e)
+                                })?;
+                            }
                         }
-                    }
 
-                    if is_kernel_controlled {
-                        let mut kernel = self.treasury_kernel.take().ok_or_else(|| {
+                        if is_kernel_controlled {
+                            let mut kernel = self.treasury_kernel.take().ok_or_else(|| {
                             anyhow::anyhow!(
                                 "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
                             )
                         })?;
-                        let mint_result = {
+                            let mint_result = {
+                                let token = self
+                                    .token_contracts
+                                    .get_mut(&token_id)
+                                    .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                                kernel.credit(
+                                    token,
+                                    &transaction.signature.public_key,
+                                    &recipient_pk,
+                                    amount_u64,
+                                    crate::contracts::treasury_kernel::CreditReason::Mint,
+                                )
+                            };
+                            self.treasury_kernel = Some(kernel);
+                            mint_result.map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                        } else {
                             let token = self
                                 .token_contracts
                                 .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                            kernel.credit(
-                                token,
-                                &transaction.signature.public_key,
-                                &recipient_pk,
-                                amount_u64,
-                                crate::contracts::treasury_kernel::CreditReason::Mint,
-                            )
-                        };
-                        self.treasury_kernel = Some(kernel);
-                        mint_result.map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
-                    } else {
-                        let token = self
-                            .token_contracts
-                            .get_mut(&token_id)
-                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token
-                            .mint(&recipient_pk, amount_u64 as u128)
-                            .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
-                    }
+                            token
+                                .mint(&recipient_pk, amount_u64 as u128)
+                                .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
+                        }
 
-                    if let Some(store) = &self.store {
-                        let token = self
-                            .token_contracts
-                            .get(&token_id)
-                            .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                        if let Err(e) = store_ref.put_token_contract(token) {
-                            warn!("Failed to persist token contract after mint: {}", e);
+                        if let Some(store) = &self.store {
+                            let token = self
+                                .token_contracts
+                                .get(&token_id)
+                                .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
+                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                            if let Err(e) = store_ref.put_token_contract(token) {
+                                warn!("Failed to persist token contract after mint: {}", e);
+                            }
+                        }
+
+                        // PoUW reward index (option A): a TokenMint carrying a
+                        // `pouw:mint:` memo is a proof-of-useful-work payout. Record
+                        // it keyed by recipient key_id so /api/v1/pouw/rewards can
+                        // report consensus-derived history. This runs in every
+                        // block-processing path (live commit + replay), so the
+                        // index is rebuilt deterministically and is identical on
+                        // every node. Dedup by tx_hash guards against a block being
+                        // processed twice.
+                        if transaction.memo.starts_with(b"pouw:mint:") {
+                            let tx_hash = transaction.hash().as_array();
+                            let entry = self.pouw_mint_index.entry(mint.to).or_default();
+                            if !entry.iter().any(|r| r.tx_hash == tx_hash) {
+                                entry.push(crate::PouwMintRecord {
+                                    amount: mint.amount,
+                                    block_height: block.height(),
+                                    tx_hash,
+                                });
+                            }
                         }
                     }
+                    TransactionType::TokenCreation => {
+                        let payload = crate::transaction::TokenCreationPayloadV1::decode_memo(
+                            &transaction.memo,
+                        )
+                        .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
+                        let (creator_allocation, treasury_allocation) =
+                            payload.split_initial_supply();
 
-                    // PoUW reward index (option A): a TokenMint carrying a
-                    // `pouw:mint:` memo is a proof-of-useful-work payout. Record
-                    // it keyed by recipient key_id so /api/v1/pouw/rewards can
-                    // report consensus-derived history. This runs in every
-                    // block-processing path (live commit + replay), so the
-                    // index is rebuilt deterministically and is identical on
-                    // every node. Dedup by tx_hash guards against a block being
-                    // processed twice.
-                    if transaction.memo.starts_with(b"pouw:mint:") {
-                        let tx_hash = transaction.hash().as_array();
-                        let entry = self.pouw_mint_index.entry(mint.to).or_default();
-                        if !entry.iter().any(|r| r.tx_hash == tx_hash) {
-                            entry.push(crate::PouwMintRecord {
-                                amount: mint.amount,
-                                block_height: block.height(),
-                                tx_hash,
-                            });
-                        }
-                    }
-                }
-                TransactionType::TokenCreation => {
-                    let payload =
-                        crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
-                            .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
-                    let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
-
-                    let creator = transaction.signature.public_key.clone();
-                    if payload.treasury_recipient == creator.key_id {
-                        return Err(anyhow::anyhow!(
-                            "TokenCreation treasury_recipient must differ from creator"
-                        ));
-                    }
-
-                    let symbol_upper = payload.symbol.to_uppercase();
-                    for existing_token in self.token_contracts.values() {
-                        if existing_token.symbol.to_uppercase() == symbol_upper {
+                        let creator = transaction.signature.public_key.clone();
+                        if payload.treasury_recipient == creator.key_id {
                             return Err(anyhow::anyhow!(
-                                "Token symbol '{}' already exists",
-                                payload.symbol
+                                "TokenCreation treasury_recipient must differ from creator"
                             ));
                         }
-                    }
 
-                    let mut token = crate::contracts::TokenContract::new_custom(
-                        payload.name.clone(),
-                        payload.symbol.clone(),
-                        0,
-                        creator.clone(),
-                    );
-                    token.decimals = if payload.decimals == 0 {
-                        8
-                    } else {
-                        payload.decimals
-                    };
-                    token.max_supply = payload.initial_supply;
-                    token
-                        .mint(&creator, creator_allocation)
-                        .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
-                    let treasury_pk = lib_crypto::types::keys::PublicKey {
-                        dilithium_pk: [0u8; 2592],
-                        kyber_pk: [0u8; 1568],
-                        key_id: payload.treasury_recipient,
-                    };
-                    token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
-                        anyhow::anyhow!("TokenCreation treasury mint failed: {}", e)
-                    })?;
+                        let symbol_upper = payload.symbol.to_uppercase();
+                        for existing_token in self.token_contracts.values() {
+                            if existing_token.symbol.to_uppercase() == symbol_upper {
+                                return Err(anyhow::anyhow!(
+                                    "Token symbol '{}' already exists",
+                                    payload.symbol
+                                ));
+                            }
+                        }
 
-                    let token_id = token.token_id;
-                    if self.token_contracts.contains_key(&token_id) {
-                        return Err(anyhow::anyhow!(
-                            "Token with same name and symbol already exists"
-                        ));
-                    }
-
-                    self.contract_blocks.insert(token_id, block.height());
-                    self.token_contracts.insert(token_id, token.clone());
-
-                    if let Some(store) = &self.store {
-                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                        if let Err(e) = store_ref.put_token_contract(&token) {
-                            warn!("Failed to persist token contract after creation: {}", e);
+                        let mut token = crate::contracts::TokenContract::new_custom(
+                            payload.name.clone(),
+                            payload.symbol.clone(),
+                            0,
+                            creator.clone(),
+                        );
+                        token.decimals = if payload.decimals == 0 {
+                            8
                         } else {
-                            let token_storage_id = crate::storage::TokenId(token_id);
-                            let creator_addr =
-                                crate::storage::Address::new(creator.key_id);
-                            let treasury_addr =
-                                crate::storage::Address::new(payload.treasury_recipient);
-                            // Idempotent: only seed sled rows that are still zero.
-                            if creator_allocation > 0
-                                && store_ref
-                                    .get_token_balance(&token_storage_id, &creator_addr)
-                                    .unwrap_or(0)
-                                    == 0
-                            {
-                                if let Err(e) = store_ref.set_token_balance(
-                                    &token_storage_id,
-                                    &creator_addr,
-                                    creator_allocation,
-                                ) {
-                                    warn!(
+                            payload.decimals
+                        };
+                        token.max_supply = payload.initial_supply;
+                        token
+                            .mint(&creator, creator_allocation)
+                            .map_err(|e| anyhow::anyhow!("TokenCreation mint failed: {}", e))?;
+                        let treasury_pk = lib_crypto::types::keys::PublicKey {
+                            dilithium_pk: [0u8; 2592],
+                            kyber_pk: [0u8; 1568],
+                            key_id: payload.treasury_recipient,
+                        };
+                        token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                            anyhow::anyhow!("TokenCreation treasury mint failed: {}", e)
+                        })?;
+
+                        let token_id = token.token_id;
+                        if self.token_contracts.contains_key(&token_id) {
+                            return Err(anyhow::anyhow!(
+                                "Token with same name and symbol already exists"
+                            ));
+                        }
+
+                        self.contract_blocks.insert(token_id, block.height());
+                        self.token_contracts.insert(token_id, token.clone());
+
+                        if let Some(store) = &self.store {
+                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                            if let Err(e) = store_ref.put_token_contract(&token) {
+                                warn!("Failed to persist token contract after creation: {}", e);
+                            } else {
+                                let token_storage_id = crate::storage::TokenId(token_id);
+                                let creator_addr = crate::storage::Address::new(creator.key_id);
+                                let treasury_addr =
+                                    crate::storage::Address::new(payload.treasury_recipient);
+                                // Idempotent: only seed sled rows that are still zero.
+                                if creator_allocation > 0
+                                    && store_ref
+                                        .get_token_balance(&token_storage_id, &creator_addr)
+                                        .unwrap_or(0)
+                                        == 0
+                                {
+                                    if let Err(e) = store_ref.set_token_balance(
+                                        &token_storage_id,
+                                        &creator_addr,
+                                        creator_allocation,
+                                    ) {
+                                        warn!(
                                         "Failed to persist creator balance after TokenCreation: {}",
                                         e
                                     );
+                                    }
                                 }
-                            }
-                            if treasury_allocation > 0
-                                && store_ref
-                                    .get_token_balance(&token_storage_id, &treasury_addr)
-                                    .unwrap_or(0)
-                                    == 0
-                            {
-                                if let Err(e) = store_ref.set_token_balance(
-                                    &token_storage_id,
-                                    &treasury_addr,
-                                    treasury_allocation,
-                                ) {
-                                    warn!(
+                                if treasury_allocation > 0
+                                    && store_ref
+                                        .get_token_balance(&token_storage_id, &treasury_addr)
+                                        .unwrap_or(0)
+                                        == 0
+                                {
+                                    if let Err(e) = store_ref.set_token_balance(
+                                        &token_storage_id,
+                                        &treasury_addr,
+                                        treasury_allocation,
+                                    ) {
+                                        warn!(
                                         "Failed to persist treasury balance after TokenCreation: {}",
                                         e
                                     );
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                TransactionType::BondingCurveDeploy => {
-                    return Err(anyhow::anyhow!(
+                    TransactionType::BondingCurveDeploy => {
+                        return Err(anyhow::anyhow!(
                         "BondingCurveDeploy requires BlockExecutor; legacy bonding-curve mutation path is disabled"
                     ));
-                }
-                TransactionType::BondingCurveBuy => {
-                    return Err(anyhow::anyhow!(
+                    }
+                    TransactionType::BondingCurveBuy => {
+                        return Err(anyhow::anyhow!(
                         "BondingCurveBuy requires BlockExecutor; legacy bonding-curve mutation path is disabled"
                     ));
-                }
-                TransactionType::BondingCurveSell => {
-                    return Err(anyhow::anyhow!(
+                    }
+                    TransactionType::BondingCurveSell => {
+                        return Err(anyhow::anyhow!(
                         "BondingCurveSell requires BlockExecutor; legacy bonding-curve mutation path is disabled"
                     ));
-                }
-                TransactionType::BondingCurveGraduate => {
-                    return Err(anyhow::anyhow!(
+                    }
+                    TransactionType::BondingCurveGraduate => {
+                        return Err(anyhow::anyhow!(
                         "BondingCurveGraduate requires BlockExecutor; legacy bonding-curve mutation path is disabled"
                     ));
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            Ok(())
+                Ok(())
             })();
             if let Err(e) = arm_result {
                 return Err(e);
@@ -1453,7 +1469,9 @@ impl Blockchain {
         self.web4_contracts.get_mut(contract_id)
     }
 
-    pub(crate) fn get_all_token_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::TokenContract> {
+    pub(crate) fn get_all_token_contracts(
+        &self,
+    ) -> &HashMap<[u8; 32], crate::contracts::TokenContract> {
         &self.token_contracts
     }
 
@@ -1502,12 +1520,7 @@ impl Blockchain {
     }
 
     /// Legacy in-memory shadow insert — genesis/bootstrap/tests (#2640).
-    pub fn insert_token_nonce_shadow(
-        &mut self,
-        token_id: [u8; 32],
-        sender: [u8; 32],
-        nonce: u64,
-    ) {
+    pub fn insert_token_nonce_shadow(&mut self, token_id: [u8; 32], sender: [u8; 32], nonce: u64) {
         self.token_nonces.insert((token_id, sender), nonce);
     }
 
@@ -1578,8 +1591,7 @@ impl Blockchain {
                                 continue;
                             }
                         }
-                        let expires_at =
-                            block_ts + payload.duration_days.saturating_mul(86_400);
+                        let expires_at = block_ts + payload.duration_days.saturating_mul(86_400);
                         let record = crate::transaction::OnChainDomainRecord {
                             domain: payload.domain.clone(),
                             owner_did: payload.owner_did,
@@ -1672,9 +1684,12 @@ impl Blockchain {
                             collection_id,
                             data.name.clone(),
                             data.symbol.clone(),
-                            format!("did:zhtp:{}", hex::encode(
-                                lib_crypto::hashing::hash_blake3(&tx.signature.public_key.dilithium_pk)
-                            )),
+                            format!(
+                                "did:zhtp:{}",
+                                hex::encode(lib_crypto::hashing::hash_blake3(
+                                    &tx.signature.public_key.dilithium_pk
+                                ))
+                            ),
                             tx.signature.public_key.key_id,
                             data.max_supply,
                             tx.signature.timestamp,
@@ -1697,7 +1712,8 @@ impl Blockchain {
                 }
                 TransactionType::NftMint => {
                     if let Some(data) = tx.nft_mint_data() {
-                        if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                        if let Some(collection) = self.nft_collections.get_mut(&data.collection_id)
+                        {
                             let metadata = NftMetadata {
                                 name: data.name.clone(),
                                 description: data.description.clone(),
@@ -1734,8 +1750,11 @@ impl Blockchain {
                                 hex::encode(&tx.signature.public_key.key_id[..8]),
                                 hex::encode(&data.from[..8]),
                             );
-                        } else if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
-                            if let Err(e) = collection.transfer(data.token_id, &data.from, data.to) {
+                        } else if let Some(collection) =
+                            self.nft_collections.get_mut(&data.collection_id)
+                        {
+                            if let Err(e) = collection.transfer(data.token_id, &data.from, data.to)
+                            {
                                 warn!("NFT transfer failed: {}", e);
                             } else {
                                 info!(
@@ -1756,7 +1775,9 @@ impl Blockchain {
                                 hex::encode(&tx.signature.public_key.key_id[..8]),
                                 hex::encode(&data.owner[..8]),
                             );
-                        } else if let Some(collection) = self.nft_collections.get_mut(&data.collection_id) {
+                        } else if let Some(collection) =
+                            self.nft_collections.get_mut(&data.collection_id)
+                        {
                             if let Err(e) = collection.burn(data.token_id, &data.owner) {
                                 warn!("NFT burn failed: {}", e);
                             } else {
@@ -1856,15 +1877,15 @@ impl Blockchain {
         treasury_wallet_id.copy_from_slice(&treasury_bytes);
 
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let payer_key =
-            crate::contracts::utils::wallet_key_for_sov(payload.fee_payer_wallet_id);
-        let treasury_key =
-            crate::contracts::utils::wallet_key_for_sov(treasury_wallet_id);
+        let payer_key = crate::contracts::utils::wallet_key_for_sov(payload.fee_payer_wallet_id);
+        let treasury_key = crate::contracts::utils::wallet_key_for_sov(treasury_wallet_id);
 
-        let token = self
-            .token_contracts
-            .get_mut(&sov_id)
-            .ok_or_else(|| anyhow!("SOV token contract not initialised at height {}", block_height))?;
+        let token = self.token_contracts.get_mut(&sov_id).ok_or_else(|| {
+            anyhow!(
+                "SOV token contract not initialised at height {}",
+                block_height
+            )
+        })?;
 
         // (3) Lock-aware debit. debit_balance subtracts `locked_balances`
         // before checking sufficiency and returns an explicit Err with the
@@ -1903,8 +1924,8 @@ impl Blockchain {
             let tx_signer_key_id = tx.signature.public_key.key_id;
             match crate::transaction::DomainRegistrationPayload::decode_memo(&tx.memo) {
                 Ok(payload) => {
-                    let is_v2 = payload.fee_amount_atoms > 0
-                        || payload.fee_payer_wallet_id != [0u8; 32];
+                    let is_v2 =
+                        payload.fee_amount_atoms > 0 || payload.fee_payer_wallet_id != [0u8; 32];
                     if !is_v2 {
                         continue;
                     }
@@ -1984,8 +2005,8 @@ impl Blockchain {
         treasury_wallet_id: [u8; 32],
         fee_atoms: u128,
     ) -> Result<()> {
-        use anyhow::anyhow;
         use crate::storage::{Address, TokenId};
+        use anyhow::anyhow;
 
         let token = TokenId::new(sov_token_id);
         let payer_addr = Address::new(payer_wallet_id);

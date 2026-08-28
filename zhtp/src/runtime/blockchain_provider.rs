@@ -478,9 +478,7 @@ fn spawn_projection_listener(mut rx: tokio::sync::broadcast::Receiver<Blockchain
                         identity_data,
                         ..
                     } => {
-                        if let Err(e) =
-                            handle_identity_registered(tx_hash, identity_data).await
-                        {
+                        if let Err(e) = handle_identity_registered(tx_hash, identity_data).await {
                             warn!(
                                 "Failed to rebuild identity projection from committed event: {}",
                                 e
@@ -493,10 +491,7 @@ fn spawn_projection_listener(mut rx: tokio::sync::broadcast::Receiver<Blockchain
                         ..
                     } => {
                         if let Err(e) = handle_wallet_registered(tx_hash, wallet_data).await {
-                            warn!(
-                                "Failed to rebuild wallet index from committed event: {}",
-                                e
-                            );
+                            warn!("Failed to rebuild wallet index from committed event: {}", e);
                         }
                     }
                     _ => {}
@@ -577,8 +572,13 @@ pub async fn set_global_blockchain(blockchain: Arc<RwLock<Blockchain>>) -> Resul
 
     // Start IPC server for out-of-process services (Phase 4)
     let socket_path = crate::node_data_dir().join("blockchain.sock");
-    if let Err(e) = lib_blockchain::ipc::server::start_ipc_server(&socket_path, blockchain.clone()).await {
-        warn!("Failed to start blockchain IPC server: {} (services will use in-process path)", e);
+    if let Err(e) =
+        lib_blockchain::ipc::server::start_ipc_server(&socket_path, blockchain.clone()).await
+    {
+        warn!(
+            "Failed to start blockchain IPC server: {} (services will use in-process path)",
+            e
+        );
     } else {
         info!("Blockchain IPC server started at {}", socket_path.display());
     }
@@ -798,9 +798,8 @@ mod tests {
 
         let provider_for_check = provider.clone();
         let did = council_did.to_string();
-        let membership_check = tokio::spawn(async move {
-            provider_for_check.is_council_member(&did).await
-        });
+        let membership_check =
+            tokio::spawn(async move { provider_for_check.is_council_member(&did).await });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(
@@ -847,7 +846,8 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_council_cache_does_not_clobber_seeded_cache_when_chain_empty() {
-        let council_did = "did:zhtp:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let council_did =
+            "did:zhtp:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
         let mut bc = Blockchain::new().expect("genesis");
         // load_from_store replaces bc; council_members is not sled-persisted.
         bc.council_members.clear();
@@ -867,7 +867,11 @@ mod tests {
         // Simulate load_from_store replacing bc with empty council_members.
         provider.refresh_council_member_cache().await;
         assert_eq!(
-            provider.council_member_cache.read().expect("cache lock").len(),
+            provider
+                .council_member_cache
+                .read()
+                .expect("cache lock")
+                .len(),
             1,
             "refresh must not clobber config-seeded cache"
         );
@@ -888,7 +892,8 @@ mod tests {
     async fn seed_council_cache_after_bootstrap_startup_order() {
         use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry};
 
-        let council_did = "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let council_did =
+            "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let mut bc = Blockchain::new().expect("genesis");
         let bc_arc = Arc::new(RwLock::new(bc));
         let provider = BlockchainProvider::new();
@@ -973,9 +978,8 @@ mod tests {
         let read_guard = bc_arc.read().await;
         let provider_clone = provider.clone();
         let did = council_did.to_string();
-        let check = tokio::task::spawn_blocking(move || {
-            provider_clone.is_council_member_blocking(&did)
-        });
+        let check =
+            tokio::task::spawn_blocking(move || provider_clone.is_council_member_blocking(&did));
 
         let result = tokio::time::timeout(std::time::Duration::from_millis(500), check).await;
         drop(read_guard);
@@ -983,10 +987,7 @@ mod tests {
             result.is_ok(),
             "nested-read + cold cache must not deadlock when no writer is queued"
         );
-        assert_eq!(
-            result.unwrap().expect("join"),
-            Some(true)
-        );
+        assert_eq!(result.unwrap().expect("join"), Some(true));
     }
 
     #[tokio::test]
@@ -1094,6 +1095,7 @@ mod tests {
                 wallet_name: "Canonical Wallet".to_string(),
                 alias: None,
                 public_key: vec![0x66; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: Some(lib_blockchain::Hash::from_slice(&[0x11; 32])),
                 seed_commitment: lib_blockchain::Hash::zero(),
                 created_at: 1234,
@@ -1139,6 +1141,7 @@ mod tests {
                 wallet_name: "Canonical Wallet".to_string(),
                 alias: None,
                 public_key: vec![0x66; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: Some(lib_blockchain::Hash::from_slice(&[0x11; 32])),
                 seed_commitment: lib_blockchain::Hash::zero(),
                 created_at: 1234,

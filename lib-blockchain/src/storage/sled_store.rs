@@ -125,14 +125,14 @@ pub struct SledStore {
     bubl_reward_partner: Tree,
     bubl_reward_partner_count: Tree,
     bubl_reward_streak: Tree,
-    utxo_merkle_leaves: Tree,    // leaf_index (u64 BE) → [u8; 32] leaf hash
-    utxo_merkle_index: Tree,     // outpoint (36 bytes) → leaf_index (u64 BE)
-    utxo_merkle_meta: Tree,      // metadata: next_leaf_index, current_root
-    utxo_merkle_nodes: Tree,     // level (u32 BE) || node_index (u64 BE) → [u8; 32]
+    utxo_merkle_leaves: Tree, // leaf_index (u64 BE) → [u8; 32] leaf hash
+    utxo_merkle_index: Tree,  // outpoint (36 bytes) → leaf_index (u64 BE)
+    utxo_merkle_meta: Tree,   // metadata: next_leaf_index, current_root
+    utxo_merkle_nodes: Tree,  // level (u32 BE) || node_index (u64 BE) → [u8; 32]
     meta: Tree,
-    wal: Tree,                   // Write-ahead log: durable block-commit post-image
-    fork_points: Tree,           // Fork audit log: direct durable writes (non-batched)
-    receipts: Tree,              // Transaction receipts: tx_hash → TransactionReceipt
+    wal: Tree,         // Write-ahead log: durable block-commit post-image
+    fork_points: Tree, // Fork audit log: direct durable writes (non-batched)
+    receipts: Tree,    // Transaction receipts: tx_hash → TransactionReceipt
     projection_hot_state_meta: Tree,
     projection_validators: Tree,
     projection_gateways: Tree,
@@ -672,7 +672,9 @@ impl SledStore {
     }
 
     /// Iterate all wallet projection entries.
-    pub fn iter_wallet_projections(&self) -> StorageResult<Vec<([u8; 32], WalletProjectionRecord)>> {
+    pub fn iter_wallet_projections(
+        &self,
+    ) -> StorageResult<Vec<([u8; 32], WalletProjectionRecord)>> {
         let mut entries = Vec::new();
         for item in self.wallets.iter() {
             let (key, value) = item.map_err(|e| StorageError::Database(e.to_string()))?;
@@ -697,7 +699,9 @@ impl SledStore {
         records: &[([u8; 32], WalletProjectionRecord)],
     ) -> StorageResult<()> {
         let mut batch = Batch::default();
-        self.wallets.clear().map_err(|e| StorageError::Database(e.to_string()))?;
+        self.wallets
+            .clear()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         for (wallet_id, record) in records {
             let value = Self::serialize(record)?;
             batch.insert(wallet_id.as_ref(), value);
@@ -758,7 +762,9 @@ impl SledStore {
             let mut zh = vec![[0u8; 32]];
             for _ in 1..=lib_proofs::transaction::circuit::MERKLE_DEPTH {
                 let last = *zh.last().unwrap();
-                zh.push(lib_proofs::transaction::circuit::real::hash_pair_u8(last, last));
+                zh.push(lib_proofs::transaction::circuit::real::hash_pair_u8(
+                    last, last,
+                ));
             }
             zh
         })
@@ -787,13 +793,11 @@ impl SledStore {
     }
 
     /// Update the Merkle path from `leaf_index` up to the root using `leaf_hash`.
-    fn update_merkle_path(
-        &self,
-        leaf_index: u64,
-        leaf_hash: [u8; 32],
-    ) -> StorageResult<()> {
+    fn update_merkle_path(&self, leaf_index: u64, leaf_hash: [u8; 32]) -> StorageResult<()> {
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
 
         let mut current_hash = leaf_hash;
         let mut current_index = leaf_index;
@@ -801,7 +805,9 @@ impl SledStore {
         for level in 0..lib_proofs::transaction::circuit::MERKLE_DEPTH as u32 {
             let key = Self::merkle_node_key(level, current_index);
             batch.utxo_merkle_nodes_cache.insert(key, current_hash);
-            batch.tree(TREE_UTXO_MERKLE_NODES).insert(key.as_ref(), current_hash.as_ref());
+            batch
+                .tree(TREE_UTXO_MERKLE_NODES)
+                .insert(key.as_ref(), current_hash.as_ref());
 
             let sibling_index = current_index ^ 1;
             let sibling_hash = self.get_merkle_node(batch, level, sibling_index)?;
@@ -817,11 +823,12 @@ impl SledStore {
         let depth = lib_proofs::transaction::circuit::MERKLE_DEPTH as u32;
         let root_key = Self::merkle_node_key(depth, 0);
         batch.utxo_merkle_nodes_cache.insert(root_key, current_hash);
-        batch.tree(TREE_UTXO_MERKLE_NODES).insert(root_key.as_ref(), current_hash.as_ref());
-        batch.tree(TREE_UTXO_MERKLE_META).insert(
-            keys::meta::UTXO_MERKLE_ROOT,
-            current_hash.as_ref(),
-        );
+        batch
+            .tree(TREE_UTXO_MERKLE_NODES)
+            .insert(root_key.as_ref(), current_hash.as_ref());
+        batch
+            .tree(TREE_UTXO_MERKLE_META)
+            .insert(keys::meta::UTXO_MERKLE_ROOT, current_hash.as_ref());
 
         Ok(())
     }
@@ -862,8 +869,8 @@ impl SledStore {
         match bincode::deserialize::<RewardsModuleState>(bytes) {
             Ok(state) => Ok(state),
             Err(_) => {
-                let legacy: LegacyRewardsModuleState =
-                    bincode::deserialize(bytes).map_err(|e| StorageError::Serialization(e.to_string()))?;
+                let legacy: LegacyRewardsModuleState = bincode::deserialize(bytes)
+                    .map_err(|e| StorageError::Serialization(e.to_string()))?;
                 Ok(RewardsModuleState {
                     spend_delegate_key_id: legacy.spend_delegate_key_id,
                     policy_cid: legacy.policy_cid,
@@ -1174,7 +1181,12 @@ impl SledStore {
         })
     }
 
-    fn put_in_block_batch(&self, tree: &'static str, key: &[u8], value: Vec<u8>) -> StorageResult<()> {
+    fn put_in_block_batch(
+        &self,
+        tree: &'static str,
+        key: &[u8],
+        value: Vec<u8>,
+    ) -> StorageResult<()> {
         let mut guard = self.tx_batch.lock().map_err(|e| {
             StorageError::Database(format!("lock poisoned in put_in_block_batch: {e}"))
         })?;
@@ -1272,7 +1284,9 @@ impl BlockchainStore for SledStore {
             batch
                 .tree(TREE_BLOCKS_BY_HEIGHT)
                 .insert(height_key.as_ref(), block_hash.as_bytes().as_ref());
-            batch.tree(TREE_BLOCKS_BY_HASH).insert(hash_key.as_ref(), block_bytes);
+            batch
+                .tree(TREE_BLOCKS_BY_HASH)
+                .insert(hash_key.as_ref(), block_bytes);
             for tx in &block.transactions {
                 for input in &tx.inputs {
                     batch
@@ -1392,10 +1406,7 @@ impl BlockchainStore for SledStore {
         let iter = self.utxos.iter().map(|result| {
             let (key, value) = result.map_err(|e| StorageError::Database(e.to_string()))?;
             let outpoint = keys::parse_utxo_key(key.as_ref()).ok_or_else(|| {
-                StorageError::CorruptedData(format!(
-                    "Invalid UTXO key length: {}",
-                    key.len()
-                ))
+                StorageError::CorruptedData(format!("Invalid UTXO key length: {}", key.len()))
             })?;
             let utxo: Utxo = Self::deserialize(&value)?;
             Ok((outpoint, utxo))
@@ -1506,7 +1517,9 @@ impl BlockchainStore for SledStore {
 
         let op_key = keys::utxo_key(op);
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
 
         // Ensure outpoint is not already indexed in this block or committed state.
         if batch.utxo_merkle_indexed.contains_key(&op_key) {
@@ -1514,17 +1527,28 @@ impl BlockchainStore for SledStore {
                 "UTXO already has a Merkle leaf in the current block".to_string(),
             ));
         }
-        if self.utxo_merkle_index.get(op_key.as_ref()).map(|v| v.is_some()).unwrap_or(false) {
+        if self
+            .utxo_merkle_index
+            .get(op_key.as_ref())
+            .map(|v| v.is_some())
+            .unwrap_or(false)
+        {
             return Err(StorageError::CorruptedData(
                 "UTXO already has a committed Merkle leaf".to_string(),
             ));
         }
 
-        let next_index = self.tx_utxo_merkle_next_index.fetch_add(1, Ordering::SeqCst);
+        let next_index = self
+            .tx_utxo_merkle_next_index
+            .fetch_add(1, Ordering::SeqCst);
         let index_bytes = next_index.to_be_bytes();
 
-        batch.tree(TREE_UTXO_MERKLE_LEAVES).insert(index_bytes.as_ref(), &leaf[..]);
-        batch.tree(TREE_UTXO_MERKLE_INDEX).insert(op_key.as_ref(), index_bytes.as_ref());
+        batch
+            .tree(TREE_UTXO_MERKLE_LEAVES)
+            .insert(index_bytes.as_ref(), &leaf[..]);
+        batch
+            .tree(TREE_UTXO_MERKLE_INDEX)
+            .insert(op_key.as_ref(), index_bytes.as_ref());
         batch.tree(TREE_UTXO_MERKLE_META).insert(
             keys::meta::UTXO_MERKLE_NEXT_INDEX,
             (next_index + 1).to_be_bytes().as_ref(),
@@ -1541,7 +1565,9 @@ impl BlockchainStore for SledStore {
 
         let op_key = keys::utxo_key(op);
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
 
         // If the outpoint was inserted in the current block, use the cached index.
         let index_bytes = if let Some(&idx) = batch.utxo_merkle_indexed.get(&op_key) {
@@ -1556,11 +1582,12 @@ impl BlockchainStore for SledStore {
         };
 
         if let Some(bytes) = index_bytes {
-            batch.tree(TREE_UTXO_MERKLE_LEAVES).insert(bytes.as_slice(), &[0u8; 32][..]);
+            batch
+                .tree(TREE_UTXO_MERKLE_LEAVES)
+                .insert(bytes.as_slice(), &[0u8; 32][..]);
             batch.tree(TREE_UTXO_MERKLE_INDEX).remove(op_key.as_ref());
             let idx = u64::from_be_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3],
-                bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             ]);
             drop(batch_guard);
             self.update_merkle_path(idx, [0u8; 32])?;
@@ -1613,7 +1640,9 @@ impl BlockchainStore for SledStore {
             for level in 0..lib_proofs::transaction::circuit::MERKLE_DEPTH as u32 {
                 let sibling_index = current_index ^ 1;
                 let sibling_key = Self::merkle_node_key(level, sibling_index);
-                let sibling_hash = if let Some(hash) = batch_ref.and_then(|b| b.utxo_merkle_nodes_cache.get(&sibling_key)) {
+                let sibling_hash = if let Some(hash) =
+                    batch_ref.and_then(|b| b.utxo_merkle_nodes_cache.get(&sibling_key))
+                {
                     *hash
                 } else {
                     match self.utxo_merkle_nodes.get(sibling_key) {
@@ -1632,7 +1661,9 @@ impl BlockchainStore for SledStore {
 
             let depth = lib_proofs::transaction::circuit::MERKLE_DEPTH as u32;
             let root_key = Self::merkle_node_key(depth, 0);
-            let root = if let Some(hash) = batch_ref.and_then(|b| b.utxo_merkle_nodes_cache.get(&root_key)) {
+            let root = if let Some(hash) =
+                batch_ref.and_then(|b| b.utxo_merkle_nodes_cache.get(&root_key))
+            {
                 *hash
             } else {
                 match self.utxo_merkle_nodes.get(root_key) {
@@ -1781,7 +1812,9 @@ impl BlockchainStore for SledStore {
     fn iter_sovereign_asset_records(
         &self,
     ) -> StorageResult<
-        Box<dyn Iterator<Item = ([u8; 32], crate::contracts::sovereign_asset::SovereignAsset)> + '_>,
+        Box<
+            dyn Iterator<Item = ([u8; 32], crate::contracts::sovereign_asset::SovereignAsset)> + '_,
+        >,
     > {
         let mut results = Vec::new();
         for result in self.assets.iter() {
@@ -1839,7 +1872,9 @@ impl BlockchainStore for SledStore {
         let key = keys::asset_symbol_key(symbol);
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_ASSET_SYMBOLS).insert(key, asset_id.as_ref());
+            batch
+                .tree(TREE_ASSET_SYMBOLS)
+                .insert(key, asset_id.as_ref());
         }
         Ok(())
     }
@@ -2031,7 +2066,9 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(state)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_ASSET_GOVERNANCE).insert(key.as_ref(), value);
+            batch
+                .tree(TREE_ASSET_GOVERNANCE)
+                .insert(key.as_ref(), value);
         }
         Ok(())
     }
@@ -2066,7 +2103,9 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_TOKEN_SUPPLY).insert(key.as_ref(), value.as_ref());
+            batch
+                .tree(TREE_TOKEN_SUPPLY)
+                .insert(key.as_ref(), value.as_ref());
         }
 
         Ok(())
@@ -2142,7 +2181,9 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_CONTRACT_STORAGE).remove(IVec::from(composite_key));
+            batch
+                .tree(TREE_CONTRACT_STORAGE)
+                .remove(IVec::from(composite_key));
         }
 
         Ok(())
@@ -2165,7 +2206,9 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(snapshot)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_META).insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
+            batch
+                .tree(TREE_META)
+                .insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
         }
 
         Ok(())
@@ -2590,11 +2633,7 @@ impl BlockchainStore for SledStore {
     ) -> StorageResult<
         Box<
             dyn Iterator<
-                    Item = StorageResult<(
-                        [u8; 32],
-                        IdentityConsensus,
-                        Option<IdentityMetadata>,
-                    )>,
+                    Item = StorageResult<([u8; 32], IdentityConsensus, Option<IdentityMetadata>)>,
                 > + '_,
         >,
     > {
@@ -2711,9 +2750,7 @@ impl BlockchainStore for SledStore {
         {
             let batch_guard = self.tx_batch.lock().unwrap();
             if let Some(ref batch) = *batch_guard {
-                if let Some(staged) =
-                    batch.tree_lookup(TREE_IDENTITY_METADATA, did_hash.as_ref())
-                {
+                if let Some(staged) = batch.tree_lookup(TREE_IDENTITY_METADATA, did_hash.as_ref()) {
                     return match staged {
                         Some(bytes) => {
                             let metadata: IdentityMetadata = Self::deserialize(&bytes)?;
@@ -2746,7 +2783,9 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_IDENTITY_METADATA).insert(did_hash.as_ref(), value);
+            batch
+                .tree(TREE_IDENTITY_METADATA)
+                .insert(did_hash.as_ref(), value);
         }
 
         Ok(())
@@ -2892,8 +2931,7 @@ impl BlockchainStore for SledStore {
         for entry in self.validators.iter() {
             match entry {
                 Ok((key, value)) => {
-                    let record: crate::storage::StoredValidatorRecord =
-                        Self::deserialize(&value)?;
+                    let record: crate::storage::StoredValidatorRecord = Self::deserialize(&value)?;
                     if crate::storage::did_to_hash(&record.consensus.identity_id).as_ref()
                         != key.as_ref()
                     {
@@ -3060,7 +3098,10 @@ impl BlockchainStore for SledStore {
 
         // Initialize batch
         self.tx_height.store(height, Ordering::SeqCst);
-        let next_index = match self.utxo_merkle_meta.get(keys::meta::UTXO_MERKLE_NEXT_INDEX) {
+        let next_index = match self
+            .utxo_merkle_meta
+            .get(keys::meta::UTXO_MERKLE_NEXT_INDEX)
+        {
             Ok(Some(bytes)) if bytes.len() >= 8 => {
                 let mut arr = [0u8; 8];
                 arr.copy_from_slice(&bytes[..8]);
@@ -3068,7 +3109,8 @@ impl BlockchainStore for SledStore {
             }
             _ => 0,
         };
-        self.tx_utxo_merkle_next_index.store(next_index, Ordering::SeqCst);
+        self.tx_utxo_merkle_next_index
+            .store(next_index, Ordering::SeqCst);
         let mut batch_guard = self.tx_batch.lock().unwrap();
         *batch_guard = Some(PendingBatch::new());
 
@@ -3207,9 +3249,9 @@ impl BlockchainStore for SledStore {
     // =========================================================================
 
     fn get_raw(&self, tree: &'static str, key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
-        let t = self.tree_by_name(tree).ok_or_else(|| {
-            StorageError::Database(format!("unknown table keyspace '{}'", tree))
-        })?;
+        let t = self
+            .tree_by_name(tree)
+            .ok_or_else(|| StorageError::Database(format!("unknown table keyspace '{}'", tree)))?;
         match t.get(key) {
             Ok(Some(v)) => Ok(Some(v.to_vec())),
             Ok(None) => Ok(None),
@@ -3217,12 +3259,7 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn stage_raw(
-        &self,
-        tree: &'static str,
-        key: &[u8],
-        value: Option<&[u8]>,
-    ) -> StorageResult<()> {
+    fn stage_raw(&self, tree: &'static str, key: &[u8], value: Option<&[u8]>) -> StorageResult<()> {
         self.require_transaction()?;
         if self.tree_by_name(tree).is_none() {
             return Err(StorageError::Database(format!(
@@ -3244,9 +3281,9 @@ impl BlockchainStore for SledStore {
         &self,
         tree: &'static str,
     ) -> StorageResult<Box<dyn Iterator<Item = StorageResult<(Vec<u8>, Vec<u8>)>> + '_>> {
-        let t = self.tree_by_name(tree).ok_or_else(|| {
-            StorageError::Database(format!("unknown table keyspace '{}'", tree))
-        })?;
+        let t = self
+            .tree_by_name(tree)
+            .ok_or_else(|| StorageError::Database(format!("unknown table keyspace '{}'", tree)))?;
         Ok(Box::new(t.iter().map(|r| {
             r.map(|(k, v)| (k.to_vec(), v.to_vec()))
                 .map_err(|e| StorageError::Database(e.to_string()))
@@ -3426,7 +3463,9 @@ impl BlockchainStore for SledStore {
 
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_BONDING_CURVE_SYMBOLS).remove(symbol.as_bytes());
+            batch
+                .tree(TREE_BONDING_CURVE_SYMBOLS)
+                .remove(symbol.as_bytes());
         }
 
         Ok(())
@@ -3456,7 +3495,9 @@ impl BlockchainStore for SledStore {
         let value = Self::serialize(state)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.tree(TREE_META).insert(keys::meta::CBE_ECONOMIC_STATE, value);
+            batch
+                .tree(TREE_META)
+                .insert(keys::meta::CBE_ECONOMIC_STATE, value);
         }
 
         Ok(())
@@ -3494,7 +3535,6 @@ impl BlockchainStore for SledStore {
 
         Ok(())
     }
-
 
     fn put_quorum_proof(
         &self,
@@ -3549,7 +3589,9 @@ impl BlockchainStore for SledStore {
         let key = keys::dao_stake_key(&record.sector_dao_key_id, &record.staker);
         let value = Self::serialize(record)?;
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
         batch.tree(TREE_DAO_STAKES).insert(key.as_ref(), value);
         Ok(())
     }
@@ -3562,7 +3604,9 @@ impl BlockchainStore for SledStore {
         self.require_transaction()?;
         let key = keys::dao_stake_key(sector_dao_key_id, staker);
         let mut batch_guard = self.tx_batch.lock().unwrap();
-        let batch = batch_guard.as_mut().ok_or(StorageError::NoActiveTransaction)?;
+        let batch = batch_guard
+            .as_mut()
+            .ok_or(StorageError::NoActiveTransaction)?;
         batch.tree(TREE_DAO_STAKES).remove(key.as_ref());
         Ok(())
     }
@@ -3613,7 +3657,9 @@ impl BlockchainStore for SledStore {
             StorageError::Database(format!("lock poisoned in put_observer_record: {e}"))
         })?;
         if let Some(batch) = guard.as_mut() {
-            batch.tree(TREE_OBSERVER_REGISTRY).insert(did_hash.as_slice(), bytes);
+            batch
+                .tree(TREE_OBSERVER_REGISTRY)
+                .insert(did_hash.as_slice(), bytes);
             Ok(())
         } else {
             Err(StorageError::Database(
@@ -3627,7 +3673,9 @@ impl BlockchainStore for SledStore {
             StorageError::Database(format!("lock poisoned in delete_observer_record: {e}"))
         })?;
         if let Some(batch) = guard.as_mut() {
-            batch.tree(TREE_OBSERVER_REGISTRY).remove(did_hash.as_slice());
+            batch
+                .tree(TREE_OBSERVER_REGISTRY)
+                .remove(did_hash.as_slice());
             Ok(())
         } else {
             Err(StorageError::Database(
@@ -3660,9 +3708,9 @@ impl BlockchainStore for SledStore {
             return Ok(staged);
         }
         match self.bubl_reward_welcome.get(key) {
-            Ok(Some(bytes)) if bytes.len() == 8 => Ok(Some(u64::from_le_bytes(
-                bytes.as_ref().try_into().unwrap(),
-            ))),
+            Ok(Some(bytes)) if bytes.len() == 8 => {
+                Ok(Some(u64::from_le_bytes(bytes.as_ref().try_into().unwrap())))
+            }
             Ok(_) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -3682,9 +3730,9 @@ impl BlockchainStore for SledStore {
             return Ok(staged);
         }
         match self.bubl_reward_daily.get(key) {
-            Ok(Some(bytes)) if bytes.len() == 8 => Ok(Some(u64::from_le_bytes(
-                bytes.as_ref().try_into().unwrap(),
-            ))),
+            Ok(Some(bytes)) if bytes.len() == 8 => {
+                Ok(Some(u64::from_le_bytes(bytes.as_ref().try_into().unwrap())))
+            }
             Ok(_) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -3704,9 +3752,9 @@ impl BlockchainStore for SledStore {
             return Ok(staged);
         }
         match self.bubl_reward_partner.get(key) {
-            Ok(Some(bytes)) if bytes.len() == 8 => Ok(Some(u64::from_le_bytes(
-                bytes.as_ref().try_into().unwrap(),
-            ))),
+            Ok(Some(bytes)) if bytes.len() == 8 => {
+                Ok(Some(u64::from_le_bytes(bytes.as_ref().try_into().unwrap())))
+            }
             Ok(_) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -3726,9 +3774,9 @@ impl BlockchainStore for SledStore {
             return Ok(staged);
         }
         match self.bubl_reward_partner_count.get(key) {
-            Ok(Some(bytes)) if bytes.len() == 4 => Ok(Some(u32::from_le_bytes(
-                bytes.as_ref().try_into().unwrap(),
-            ))),
+            Ok(Some(bytes)) if bytes.len() == 4 => {
+                Ok(Some(u32::from_le_bytes(bytes.as_ref().try_into().unwrap())))
+            }
             Ok(_) => Ok(None),
             Err(e) => Err(StorageError::Database(e.to_string())),
         }
@@ -3836,9 +3884,7 @@ impl BlockchainStore for SledStore {
         Ok(out)
     }
 
-    fn get_observer_policy(
-        &self,
-    ) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
+    fn get_observer_policy(&self) -> StorageResult<Option<lib_types::ObserverAdmissionPolicy>> {
         match self.meta.get(keys::meta::OBSERVER_POLICY) {
             Ok(Some(bytes)) => {
                 let policy: lib_types::ObserverAdmissionPolicy = Self::deserialize(&bytes)?;
@@ -4131,6 +4177,7 @@ mod tests {
                 wallet_name: "Projection Wallet".to_string(),
                 alias: Some("wallet-proj".to_string()),
                 public_key: vec![0x11; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: Some(Hash::new([0x22; 32])),
                 seed_commitment: Hash::new([0x33; 32]),
                 created_at: 1234,
@@ -4164,7 +4211,10 @@ mod tests {
         store
             .replace_wallet_projections(&[(wallet_id, record.clone())])
             .unwrap();
-        assert_eq!(store.get_wallet_projection(&wallet_id).unwrap(), Some(record));
+        assert_eq!(
+            store.get_wallet_projection(&wallet_id).unwrap(),
+            Some(record)
+        );
     }
 
     #[test]
@@ -4263,6 +4313,7 @@ mod tests {
                 wallet_name: "Recovery Wallet".to_string(),
                 alias: None,
                 public_key: vec![0x22; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: Some(Hash::new([0x33; 32])),
                 seed_commitment: Hash::new([0x44; 32]),
                 created_at: 1_700_000_000,
@@ -4598,7 +4649,9 @@ mod tests {
 
         let mut updated_metadata = read_metadata.clone();
         updated_metadata.kyber_public_key = vec![0x26; 1568];
-        store.put_identity_metadata(&did_hash, &updated_metadata).unwrap();
+        store
+            .put_identity_metadata(&did_hash, &updated_metadata)
+            .unwrap();
 
         let after_update = store.get_identity_metadata(&did_hash).unwrap().unwrap();
         assert_eq!(after_update.kyber_public_key, vec![0x26; 1568]);
@@ -4761,11 +4814,17 @@ mod tests {
         assert!(root1.is_some(), "Merkle root should be set after commit");
 
         // 3. Proofs should be queryable
-        let proof1 = store.get_utxo_merkle_proof(&outpoint1).unwrap().expect("proof1");
+        let proof1 = store
+            .get_utxo_merkle_proof(&outpoint1)
+            .unwrap()
+            .expect("proof1");
         assert_eq!(proof1.leaf_index, 0);
         assert_eq!(proof1.root, root1.unwrap());
 
-        let proof2 = store.get_utxo_merkle_proof(&outpoint2).unwrap().expect("proof2");
+        let proof2 = store
+            .get_utxo_merkle_proof(&outpoint2)
+            .unwrap()
+            .expect("proof2");
         assert_eq!(proof2.leaf_index, 1);
         assert_eq!(proof2.root, root1.unwrap());
 
@@ -4778,7 +4837,10 @@ mod tests {
         assert!(store.get_utxo_merkle_proof(&outpoint1).unwrap().is_none());
 
         // 6. outpoint2 should still have a proof, but the root changed because leaf1 is now zero
-        let proof2_after = store.get_utxo_merkle_proof(&outpoint2).unwrap().expect("proof2_after");
+        let proof2_after = store
+            .get_utxo_merkle_proof(&outpoint2)
+            .unwrap()
+            .expect("proof2_after");
         assert_eq!(proof2_after.leaf_index, 1);
         let root2 = store.get_utxo_merkle_root().unwrap().expect("root2");
         assert_ne!(root2, root1.unwrap(), "Root should change after deletion");
@@ -4849,7 +4911,10 @@ mod tests {
                 let total = store
                     .debug_interrupt_commit(stop_after, write_latest_height)
                     .unwrap();
-                assert!(total >= 4, "block 1 should touch several trees ({scenario})");
+                assert!(
+                    total >= 4,
+                    "block 1 should touch several trees ({scenario})"
+                );
 
                 assert!(
                     store.wal.get(WAL_PENDING_KEY).unwrap().is_some(),
@@ -4868,7 +4933,10 @@ mod tests {
                     "recovery must finish block 1 ({scenario})"
                 );
                 let block = store.get_block_by_height(1).unwrap();
-                assert!(block.is_some(), "block 1 must be present after recovery ({scenario})");
+                assert!(
+                    block.is_some(),
+                    "block 1 must be present after recovery ({scenario})"
+                );
                 assert_eq!(block.unwrap().header.height, 1);
 
                 let recovered_account = store
@@ -4975,14 +5043,24 @@ mod tests {
 
         store.begin_block(0).unwrap();
         store.append_block(&block0).unwrap();
-        store.stage::<TableProbe>(&1u64.to_be_bytes(), &111u64).unwrap();
-        store.stage::<TableProbe>(&2u64.to_be_bytes(), &222u64).unwrap();
+        store
+            .stage::<TableProbe>(&1u64.to_be_bytes(), &111u64)
+            .unwrap();
+        store
+            .stage::<TableProbe>(&2u64.to_be_bytes(), &222u64)
+            .unwrap();
         // Staged writes are not visible until the block commits.
         assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), None);
         store.commit_block().unwrap();
 
-        assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), Some(111));
-        assert_eq!(store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(), Some(222));
+        assert_eq!(
+            store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(),
+            Some(111)
+        );
+        assert_eq!(
+            store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(),
+            Some(222)
+        );
         assert_eq!(store.get::<TableProbe>(&9u64.to_be_bytes()).unwrap(), None);
 
         let mut all = store.iter::<TableProbe>().unwrap();
@@ -4995,10 +5073,15 @@ mod tests {
         let block1 = create_test_block(1, block0.header.block_hash);
         store.begin_block(1).unwrap();
         store.append_block(&block1).unwrap();
-        store.stage_delete::<TableProbe>(&1u64.to_be_bytes()).unwrap();
+        store
+            .stage_delete::<TableProbe>(&1u64.to_be_bytes())
+            .unwrap();
         store.commit_block().unwrap();
         assert_eq!(store.get::<TableProbe>(&1u64.to_be_bytes()).unwrap(), None);
-        assert_eq!(store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(), Some(222));
+        assert_eq!(
+            store.get::<TableProbe>(&2u64.to_be_bytes()).unwrap(),
+            Some(222)
+        );
     }
 
     /// Generic table writes outside `begin_block` are rejected, like every

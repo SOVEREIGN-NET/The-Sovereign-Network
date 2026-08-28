@@ -160,6 +160,65 @@ impl WalletManager {
         Ok(wallet_id)
     }
 
+    /// Add a client-key wallet with a deterministic (client-derived) wallet ID.
+    ///
+    /// For remote registrations the client derives `key_id = blake3(dilithium_pk || kyber_pk)`,
+    /// so the wallet ID and public key are fixed by the client's keys — not an HD seed.
+    /// `public_key` is the client's real Dilithium5 public key (2592 bytes).
+    pub fn add_client_wallet(
+        &mut self,
+        wallet_id: WalletId,
+        wallet_type: WalletType,
+        name: String,
+        alias: Option<String>,
+        public_key: Vec<u8>,
+    ) -> Result<WalletId> {
+        if let Some(ref alias) = alias {
+            if self.alias_map.contains_key(alias) {
+                return Err(anyhow!("Wallet alias '{}' already exists", alias));
+            }
+        }
+        if self.wallets.contains_key(&wallet_id) {
+            return Ok(wallet_id);
+        }
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let wallet = QuantumWallet {
+            id: wallet_id.clone(),
+            wallet_type,
+            name,
+            alias: alias.clone(),
+            balance: 0, // Will be synced from blockchain registry
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: self.owner_id.clone(),
+            public_key,
+            seed_phrase: None,
+            encrypted_seed: None,
+            seed_commitment: None,
+            created_at: current_time,
+            last_transaction: None,
+            recent_transactions: Vec::new(),
+            is_active: true,
+            dao_properties: None,
+            derivation_index: None,
+            password_hash: None,
+            owned_content: Vec::new(),
+            total_storage_used: 0,
+            total_content_value: 0,
+        };
+
+        self.wallets.insert(wallet_id.clone(), wallet);
+        if let Some(alias) = alias {
+            self.alias_map.insert(alias, wallet_id.clone());
+        }
+        Ok(wallet_id)
+    }
+
     // Note: Basic wallet creation removed - use create_wallet_with_seed_phrase() for all wallets
     // This ensures consistent seed phrase support across all wallet types
 

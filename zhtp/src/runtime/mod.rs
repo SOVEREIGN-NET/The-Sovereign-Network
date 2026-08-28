@@ -65,11 +65,12 @@ impl std::fmt::Display for RemoteChainState {
 
 pub mod blockchain_provider;
 pub mod bootstrap_peers_provider; // FIX: Global access to bootstrap peers for UnifiedServer
+pub mod chain_identity_resolve;
 pub mod components;
 pub mod dht_indexing;
 pub mod did_startup;
+pub mod divergence_service;
 pub mod edge_state_provider; // Global access to edge node state for header-only sync
-pub mod chain_identity_resolve;
 pub mod grant_registry_provider;
 pub mod identity_manager_provider;
 pub mod manifest_pin_bridge;
@@ -88,21 +89,20 @@ pub mod services;
 pub mod shared_blockchain;
 pub mod shared_dht;
 pub mod storage_provider; // Global access to storage for component sharing
-pub mod validator_ip;
-pub mod divergence_service;
 pub mod storage_rewards;
 #[cfg(test)]
 pub mod test_api_integration;
 pub mod token_utils;
+pub mod validator_ip;
 
 pub use blockchain_provider::{
     initialize_global_blockchain_provider, is_global_blockchain_available, set_global_blockchain,
     set_global_catchup_trigger, trigger_global_catchup,
 };
-pub use components::*;
 pub use chain_identity_resolve::{
     resolve_pouw_client_identity, PouwClientIdentity, PouwIdentitySource,
 };
+pub use components::*;
 pub use identity_manager_provider::{
     get_global_identity_manager, initialize_global_identity_manager_provider,
     set_global_identity_manager,
@@ -452,7 +452,10 @@ async fn try_initial_sync_from_peer(
                     }
                     info!(
                         "✅ Per-block fallback succeeded for blocks {}-{} from {} ({} blocks)",
-                        start, end, peer_addr, singles.len()
+                        start,
+                        end,
+                        peer_addr,
+                        singles.len()
                     );
                     singles
                 }
@@ -1036,7 +1039,8 @@ impl RuntimeOrchestrator {
                     Err(e) => {
                         tracing::error!(
                             "Invalid zdns bind address '{}': {} — skipping ZDNS init",
-                            self.config.zdns_config.bind, e
+                            self.config.zdns_config.bind,
+                            e
                         );
                     }
                     Ok(bind) => {
@@ -1055,7 +1059,9 @@ impl RuntimeOrchestrator {
                                         }
                                     }
                                 }
-                                if found.is_some() { break; }
+                                if found.is_some() {
+                                    break;
+                                }
                             }
                             match found {
                                 Some(ip) => ip,
@@ -1080,18 +1086,25 @@ impl RuntimeOrchestrator {
                         protocols.zdns_gateway_ip = gateway_ip;
                         protocols.zdns_bind_addr = bind;
                         protocols.zdns_port = self.config.zdns_config.port;
-                        protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                        protocols.zdns_bootstrap_ips = self
+                            .config
+                            .network_config
+                            .bootstrap_peers
                             .iter()
                             .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
                             .collect();
-                        info!("ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
-                            bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
+                        info!(
+                            "ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                            bind,
+                            self.config.zdns_config.port,
+                            gateway_ip,
+                            protocols.zdns_bootstrap_ips.len()
+                        );
                     }
                 }
             }
 
-            self.register_component(Arc::new(protocols))
-            .await?;
+            self.register_component(Arc::new(protocols)).await?;
         }
 
         if !is_registered(ComponentId::Consensus).await {
@@ -1273,9 +1286,7 @@ impl RuntimeOrchestrator {
                             &mut bc,
                             &self.config.network_config.bootstrap_validators,
                         ) {
-                            warn!(
-                                "Failed to seed bootstrap validators after load_from_store: {e}"
-                            );
+                            warn!("Failed to seed bootstrap validators after load_from_store: {e}");
                         }
                         bc.ensure_council_bootstrap(&self.config.consensus_config.council);
                         info!(
@@ -1407,7 +1418,13 @@ impl RuntimeOrchestrator {
                     stake: 1_000,
                     storage_provided: 0,
                     commission_rate: 500,
-                    consensus_key: wallet.node_private_data.quantum_keypair.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                    consensus_key: wallet
+                        .node_private_data
+                        .quantum_keypair
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
                     network_address: std::env::var("ZHTP_VALIDATOR_ENDPOINT").unwrap_or_default(),
                 }]
             };
@@ -1463,10 +1480,7 @@ impl RuntimeOrchestrator {
                             n
                         ),
                         Ok(_) => {}
-                        Err(e) => warn!(
-                            "⚠️ Failed to persist genesis SOV balances to sled: {}",
-                            e
-                        ),
+                        Err(e) => warn!("⚠️ Failed to persist genesis SOV balances to sled: {}", e),
                     }
                 }
             }
@@ -1563,7 +1577,10 @@ impl RuntimeOrchestrator {
     }
 
     fn trusted_sync_sources(config: &NodeConfig) -> &[crate::config::TrustedSyncSource] {
-        &config.network_config.observer_admission.trusted_sync_sources
+        &config
+            .network_config
+            .observer_admission
+            .trusted_sync_sources
     }
 
     fn validate_observer_admission_policy_config(
@@ -1754,7 +1771,10 @@ impl RuntimeOrchestrator {
             }
         }
         if !all_peers.is_empty() {
-            info!(" Bootstrap peers for mesh (config+discovery): {} peer(s)", all_peers.len());
+            info!(
+                " Bootstrap peers for mesh (config+discovery): {} peer(s)",
+                all_peers.len()
+            );
             crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(all_peers).await?;
         }
 
@@ -2090,14 +2110,16 @@ impl RuntimeOrchestrator {
 
         // Create signing context for TLS certificate pinning (Issue #739)
         // This requires the TLS certificate to exist (created by QUIC server)
-        let signing_ctx = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(&crate::node_data_path("data/tls/server.crt"))
-            .map(|tls_spki_sha256| {
-                lib_network::discovery::local_network::DiscoverySigningContext {
-                    dilithium_sk: keypair.private_key.dilithium_sk.clone(),
-                    dilithium_pk: keypair.public_key.dilithium_pk.clone(),
-                    tls_spki_sha256,
-                }
-            });
+        let signing_ctx = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(
+            &crate::node_data_path("data/tls/server.crt"),
+        )
+        .map(|tls_spki_sha256| {
+            lib_network::discovery::local_network::DiscoverySigningContext {
+                dilithium_sk: keypair.private_key.dilithium_sk.clone(),
+                dilithium_pk: keypair.public_key.dilithium_pk.clone(),
+                tls_spki_sha256,
+            }
+        });
 
         if signing_ctx.is_some() {
             info!("TLS certificate pinning enabled for discovery announcements");
@@ -2662,7 +2684,8 @@ impl RuntimeOrchestrator {
                     }
                 }
                 if !all_peers.is_empty() {
-                    crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(all_peers).await?;
+                    crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(all_peers)
+                        .await?;
                 }
             }
 
@@ -2788,10 +2811,17 @@ impl RuntimeOrchestrator {
         if self.config.zdns_config.enabled {
             match self.config.zdns_config.bind.parse::<std::net::IpAddr>() {
                 Err(e) => {
-                    tracing::error!("Invalid zdns bind '{}': {} — skipping", self.config.zdns_config.bind, e);
+                    tracing::error!(
+                        "Invalid zdns bind '{}': {} — skipping",
+                        self.config.zdns_config.bind,
+                        e
+                    );
                 }
                 Ok(bind) => {
-                    let gateway_ip = self.config.network_config.bootstrap_validators
+                    let gateway_ip = self
+                        .config
+                        .network_config
+                        .bootstrap_validators
                         .iter()
                         .flat_map(|bv| bv.endpoints.iter())
                         .filter_map(|ep| ep.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
@@ -2810,12 +2840,20 @@ impl RuntimeOrchestrator {
                     protocols.zdns_gateway_ip = gateway_ip;
                     protocols.zdns_bind_addr = bind;
                     protocols.zdns_port = self.config.zdns_config.port;
-                    protocols.zdns_bootstrap_ips = self.config.network_config.bootstrap_peers
+                    protocols.zdns_bootstrap_ips = self
+                        .config
+                        .network_config
+                        .bootstrap_peers
                         .iter()
                         .filter_map(|p| p.split(':').next()?.parse::<std::net::Ipv4Addr>().ok())
                         .collect();
-                    info!("🌐 ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
-                        bind, self.config.zdns_config.port, gateway_ip, protocols.zdns_bootstrap_ips.len());
+                    info!(
+                        "🌐 ZDNS enabled: bind={}:{} gateway_ip={} bootstrap_ips={}",
+                        bind,
+                        self.config.zdns_config.port,
+                        gateway_ip,
+                        protocols.zdns_bootstrap_ips.len()
+                    );
                 }
             }
         }
@@ -2918,6 +2956,7 @@ impl RuntimeOrchestrator {
                             wallet_name: wallet.name.clone(),
                             wallet_type: format!("{:?}", wallet.wallet_type),
                             public_key: wallet.public_key.clone(),
+                            kyber_public_key: vec![],
                             capabilities: 0,
                             created_at: wallet.created_at,
                             registration_fee: 0,
@@ -2957,11 +2996,10 @@ impl RuntimeOrchestrator {
                                     let welcome_bonus = SOV_WELCOME_BONUS;
 
                                     // Update wallet registry balance
-                                    blockchain_ref
-                                        .update_wallet_shadow_initial_balance(
-                                            &wallet_id_hex,
-                                            welcome_bonus,
-                                        );
+                                    blockchain_ref.update_wallet_shadow_initial_balance(
+                                        &wallet_id_hex,
+                                        welcome_bonus,
+                                    );
 
                                     // Create spendable UTXO for the welcome bonus
                                     let utxo_output =
@@ -2978,8 +3016,8 @@ impl RuntimeOrchestrator {
                                                     .as_bytes(),
                                             ),
                                             recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                                                                    merkle_leaf: lib_blockchain::Hash::default(),
-};
+                                            merkle_leaf: lib_blockchain::Hash::default(),
+                                        };
                                     let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                                         format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes(),
                                     );
@@ -3111,6 +3149,7 @@ impl RuntimeOrchestrator {
                                             wallet_name: wallet.name.clone(),
                                             wallet_type: format!("{:?}", wallet.wallet_type),
                                             public_key: wallet.public_key.clone(),
+                                            kyber_public_key: vec![],
                                             capabilities: 0,
                                             created_at: wallet.created_at,
                                             registration_fee: 0,
@@ -3231,8 +3270,8 @@ impl RuntimeOrchestrator {
                                                         .as_bytes(),
                                                 ),
                                                 recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                                                                            merkle_leaf: lib_blockchain::Hash::default(),
-};
+                                                merkle_leaf: lib_blockchain::Hash::default(),
+                                            };
                                         let utxo_hash = lib_blockchain::types::hash::blake3_hash(
                                             format!("welcome_bonus_utxo:{}", wallet_id_hex)
                                                 .as_bytes(),
@@ -3274,6 +3313,7 @@ impl RuntimeOrchestrator {
                                             wallet_name: wallet.name.clone(),
                                             wallet_type: format!("{:?}", wallet.wallet_type),
                                             public_key: wallet.public_key.clone(),
+                                            kyber_public_key: vec![],
                                             capabilities: 0,
                                             created_at: wallet.created_at,
                                             registration_fee: 0,
@@ -3402,9 +3442,9 @@ impl RuntimeOrchestrator {
         {
             let own_did = {
                 let wallet_guard = self.user_wallet.read().await;
-                wallet_guard.as_ref().map(|w| {
-                    format!("did:zhtp:{}", hex::encode(&w.node_identity.id.0))
-                })
+                wallet_guard
+                    .as_ref()
+                    .map(|w| format!("did:zhtp:{}", hex::encode(&w.node_identity.id.0)))
             };
             // Initial discovery + periodic re-check, all in background
             crate::runtime::validator_ip::spawn_periodic_ip_update(own_did, 300);
@@ -3415,7 +3455,9 @@ impl RuntimeOrchestrator {
         // ZHTP_DIVERGENCE_DETECT is set. Samples in-memory vs sled state and
         // reports drift before the read-migration phases flip to sled-first.
         // ====================================================================
-        if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+        if let Ok(blockchain_arc) =
+            crate::runtime::blockchain_provider::get_global_blockchain().await
+        {
             crate::runtime::divergence_service::spawn_divergence_detector(blockchain_arc);
         }
 
@@ -3425,20 +3467,25 @@ impl RuntimeOrchestrator {
         // this gateway via block processing.
         // ====================================================================
         if self.config.zdns_config.enabled {
-            if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            if let Ok(blockchain_arc) =
+                crate::runtime::blockchain_provider::get_global_blockchain().await
+            {
                 let wallet_guard = self.user_wallet.read().await;
                 if let Some(wallet) = wallet_guard.as_ref() {
                     let did = format!("did:zhtp:{}", hex::encode(&wallet.user_identity.id.0));
                     let gateway_key_bytes = wallet.user_identity.public_key.as_bytes();
-                    let gateway_key: [u8; 2592] = gateway_key_bytes
-                        .try_into()
-                        .unwrap_or([0u8; 2592]);
+                    let gateway_key: [u8; 2592] =
+                        gateway_key_bytes.try_into().unwrap_or([0u8; 2592]);
 
                     // Determine public endpoint
-                    let endpoint = crate::runtime::validator_ip::discover_public_ip().await
+                    let endpoint = crate::runtime::validator_ip::discover_public_ip()
+                        .await
                         .map(|ip| format!("{}:{}", ip, self.config.protocols_config.api_port))
                         .unwrap_or_else(|| {
-                            self.config.network_config.bootstrap_peers.first()
+                            self.config
+                                .network_config
+                                .bootstrap_peers
+                                .first()
                                 .cloned()
                                 .unwrap_or_default()
                         });
@@ -3486,19 +3533,21 @@ impl RuntimeOrchestrator {
                         };
 
                         // Create temp tx to compute signing_hash, then sign it
-                        let memo = format!("Gateway registration: {} @ {}", &did[..30], endpoint).into_bytes();
+                        let memo = format!("Gateway registration: {} @ {}", &did[..30], endpoint)
+                            .into_bytes();
                         let empty_sig = lib_crypto::Signature {
                             signature: vec![],
                             public_key: lib_crypto::PublicKey::new([0u8; 2592]),
                             algorithm: lib_crypto::SignatureAlgorithm::DEFAULT,
                             timestamp,
                         };
-                        let temp_tx = lib_blockchain::transaction::Transaction::new_gateway_registration(
-                            gateway_data.clone(),
-                            vec![],
-                            empty_sig,
-                            memo.clone(),
-                        );
+                        let temp_tx =
+                            lib_blockchain::transaction::Transaction::new_gateway_registration(
+                                gateway_data.clone(),
+                                vec![],
+                                empty_sig,
+                                memo.clone(),
+                            );
                         let signing_hash = temp_tx.signing_hash();
 
                         match lib_crypto::sign_message(&keypair, signing_hash.as_bytes()) {
@@ -3519,7 +3568,9 @@ impl RuntimeOrchestrator {
                                 // Submit to local mempool first
                                 {
                                     let mut blockchain = blockchain_arc.write().await;
-                                    if let Err(e) = blockchain.add_pending_transaction(transaction.clone()) {
+                                    if let Err(e) =
+                                        blockchain.add_pending_transaction(transaction.clone())
+                                    {
                                         warn!("⚠️ Gateway registration tx local mempool: {}", e);
                                     }
                                 }
@@ -3538,9 +3589,8 @@ impl RuntimeOrchestrator {
                                     "transaction_data": tx_hex,
                                 });
                                 let own_ip = endpoint.split(':').next().unwrap_or("");
-                                if let Some(validator_ep) = self.config.network_config.bootstrap_peers
-                                    .iter()
-                                    .find(|p| {
+                                if let Some(validator_ep) =
+                                    self.config.network_config.bootstrap_peers.iter().find(|p| {
                                         let peer_ip = p.split(':').next().unwrap_or("");
                                         peer_ip != own_ip && !peer_ip.is_empty()
                                     })
@@ -3548,14 +3598,19 @@ impl RuntimeOrchestrator {
                                     let validator_ep = validator_ep.clone();
                                     let wallet_guard2 = self.user_wallet.read().await;
                                     if let Some(w) = wallet_guard2.as_ref() {
-                                        let trust = lib_network::web4::trust::TrustConfig::bootstrap();
+                                        let trust =
+                                            lib_network::web4::trust::TrustConfig::bootstrap();
                                         let cfg = lib_network::client::ZhtpClientConfig {
                                             allow_bootstrap: true,
                                             ..Default::default()
                                         };
                                         match lib_network::client::ZhtpClient::new_with_config(
-                                            w.node_identity.clone(), trust, cfg
-                                        ).await {
+                                            w.node_identity.clone(),
+                                            trust,
+                                            cfg,
+                                        )
+                                        .await
+                                        {
                                             Ok(mut client) => {
                                                 match client.connect(&validator_ep).await {
                                                     Ok(()) => {
@@ -3574,7 +3629,11 @@ impl RuntimeOrchestrator {
                                         }
                                     }
                                 }
-                                info!("🌐 Gateway registration tx submitted: {} @ {}", &did[..30], endpoint);
+                                info!(
+                                    "🌐 Gateway registration tx submitted: {} @ {}",
+                                    &did[..30],
+                                    endpoint
+                                );
                             }
                             Err(e) => warn!("⚠️ Failed to sign gateway registration: {}", e),
                         }
@@ -5073,7 +5132,9 @@ impl RuntimeOrchestrator {
         tracing::info!("🔌 register_runtime_handlers: acquiring components read lock...");
         // Get ProtocolsComponent from the components HashMap
         let components = self.components.read().await;
-        tracing::info!("🔌 register_runtime_handlers: components lock acquired, looking up Protocols...");
+        tracing::info!(
+            "🔌 register_runtime_handlers: components lock acquired, looking up Protocols..."
+        );
         let component = components
             .get(&ComponentId::Protocols)
             .ok_or_else(|| anyhow::anyhow!("ProtocolsComponent not found"))?;
@@ -5200,12 +5261,14 @@ impl RuntimeOrchestrator {
         {
             let cfg_peers = orchestrator.config.network_config.bootstrap_peers.clone();
             if !cfg_peers.is_empty() {
-                if let Err(e) = crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(
-                    cfg_peers.clone(),
-                )
-                .await
+                if let Err(e) =
+                    crate::runtime::bootstrap_peers_provider::set_bootstrap_peers(cfg_peers.clone())
+                        .await
                 {
-                    warn!("Failed to store bootstrap peers for QUIC connections: {}", e);
+                    warn!(
+                        "Failed to store bootstrap peers for QUIC connections: {}",
+                        e
+                    );
                 } else {
                     info!(
                         "Stored {} bootstrap peer(s) for persistent QUIC connections: {:?}",
@@ -5317,14 +5380,16 @@ impl RuntimeOrchestrator {
         };
 
         // Create signing context for TLS certificate pinning (Issue #739)
-        let signing_ctx = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(&crate::node_data_path("data/tls/server.crt"))
-            .map(|tls_spki_sha256| {
-                lib_network::discovery::local_network::DiscoverySigningContext {
-                    dilithium_sk: keypair.private_key.dilithium_sk.clone(),
-                    dilithium_pk: keypair.public_key.dilithium_pk.clone(),
-                    tls_spki_sha256,
-                }
-            });
+        let signing_ctx = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(
+            &crate::node_data_path("data/tls/server.crt"),
+        )
+        .map(|tls_spki_sha256| {
+            lib_network::discovery::local_network::DiscoverySigningContext {
+                dilithium_sk: keypair.private_key.dilithium_sk.clone(),
+                dilithium_pk: keypair.public_key.dilithium_pk.clone(),
+                tls_spki_sha256,
+            }
+        });
 
         // Start local discovery service (broadcasts immediately, then every 30s)
         if let Err(e) = lib_network::discovery::local_network::start_local_discovery(
@@ -5338,8 +5403,10 @@ impl RuntimeOrchestrator {
         {
             warn!("      Failed to start local discovery: {}", e);
         } else {
-            let signed =
-                lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(&crate::node_data_path("data/tls/server.crt")).is_some();
+            let signed = lib_network::protocols::quic_mesh::tls_spki_hash_at_or_none(
+                &crate::node_data_path("data/tls/server.crt"),
+            )
+            .is_some();
             info!(
                 "      ✓ Multicast broadcasting started (224.0.1.75:37775, TLS pinning: {})",
                 signed
@@ -5566,9 +5633,7 @@ fn validate_local_restore_compatibility(
         );
         if allow_genesis_mismatch {
             warn!("⚠️  {}", message);
-            warn!(
-                "⚠️  Proceeding because --allow-emergency-restore-genesis-mismatch was set"
-            );
+            warn!("⚠️  Proceeding because --allow-emergency-restore-genesis-mismatch was set");
             Ok(())
         } else {
             Err(anyhow::anyhow!(
@@ -5619,9 +5684,7 @@ pub(super) fn try_restore_oracle_from_dat(
             Ok(true)
         }
         Some(_) => {
-            warn!(
-                "⚠️  Emergency restore requested, but blockchain.dat has no oracle committee"
-            );
+            warn!("⚠️  Emergency restore requested, but blockchain.dat has no oracle committee");
             Ok(false)
         }
         None => Ok(false),
@@ -5640,13 +5703,9 @@ pub(super) async fn ensure_council_bootstrap_and_cache(
         let mut bc = blockchain_arc.write().await;
         bc.ensure_council_bootstrap(council_config);
     }
-    if let Some(provider) = crate::runtime::blockchain_provider::get_global_blockchain_provider()
-    {
+    if let Some(provider) = crate::runtime::blockchain_provider::get_global_blockchain_provider() {
         provider.seed_council_member_cache(
-            council_config
-                .members
-                .iter()
-                .map(|m| m.identity_id.clone()),
+            council_config.members.iter().map(|m| m.identity_id.clone()),
         );
         provider.refresh_council_member_cache().await;
     }
@@ -5686,9 +5745,9 @@ pub(super) fn seed_validators_from_bootstrap_config(
             let hash = blake3::hash(format!("{}::consensus", bv.identity_id).as_bytes());
             key[..32].copy_from_slice(hash.as_bytes());
             // Fill rest with derived data to avoid all-zeros
-            for i in 1..(2592/32) {
+            for i in 1..(2592 / 32) {
                 let chunk_hash = blake3::hash(&[hash.as_bytes(), &[i as u8][..]].concat());
-                key[i*32..(i+1)*32].copy_from_slice(chunk_hash.as_bytes());
+                key[i * 32..(i + 1) * 32].copy_from_slice(chunk_hash.as_bytes());
             }
             key
         });
@@ -5736,10 +5795,7 @@ pub(super) fn try_restore_validators_from_dat(
 ) -> Result<bool> {
     match load_validated_blockchain_dat(dat_path, allow_genesis_mismatch)? {
         Some(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
-            let restored: Vec<_> = dat_bc
-                .validator_registry_snapshot()
-                .into_values()
-                .collect();
+            let restored: Vec<_> = dat_bc.validator_registry_snapshot().into_values().collect();
             let count = restored.len();
             bc.validator_blocks = dat_bc.validator_blocks;
             bc.install_bootstrap_validator_records(restored)?;
@@ -5871,7 +5927,10 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            chain_state: crate::runtime::RemoteChainState::Committed { height: 42, hash: [0u8; 32] },
+            chain_state: crate::runtime::RemoteChainState::Committed {
+                height: 42,
+                hash: [0u8; 32],
+            },
             network_id: "testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: crate::config::Environment::Development,
@@ -5977,12 +6036,13 @@ mod runtime_orchestrator_tests {
         config.node_role = NodeRole::Observer;
         config.consensus_config.validator_enabled = false;
         config.network_config.observer_admission.required = true;
-        config.network_config.observer_admission.trusted_sync_sources = vec![
-            crate::config::TrustedSyncSource {
-                address: "127.0.0.1:9334".to_string(),
-                peer_did: None,
-            },
-        ];
+        config
+            .network_config
+            .observer_admission
+            .trusted_sync_sources = vec![crate::config::TrustedSyncSource {
+            address: "127.0.0.1:9334".to_string(),
+            peer_did: None,
+        }];
 
         let err = RuntimeOrchestrator::validate_observer_admission_policy_config(&config, false)
             .expect_err("observer admission should require an explicit local DID allowlist");
@@ -6076,7 +6136,10 @@ mod runtime_orchestrator_tests {
 
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            chain_state: crate::runtime::RemoteChainState::Committed { height: 128, hash: [0u8; 32] },
+            chain_state: crate::runtime::RemoteChainState::Committed {
+                height: 128,
+                hash: [0u8; 32],
+            },
             network_id: "observer-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
             environment: Environment::Development,
@@ -6131,7 +6194,10 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 4,
-            chain_state: crate::runtime::RemoteChainState::Committed { height: 128, hash: [0u8; 32] },
+            chain_state: crate::runtime::RemoteChainState::Committed {
+                height: 128,
+                hash: [0u8; 32],
+            },
             network_id: "observer-sequence-testnet".to_string(),
             bootstrap_peers: vec!["127.0.0.1:9334".to_string(), "127.0.0.1:9335".to_string()],
             environment: Environment::Development,
@@ -6199,7 +6265,10 @@ mod runtime_orchestrator_tests {
             .expect("observer runtime should initialize");
         let network_info = crate::runtime::ExistingNetworkInfo {
             peer_count: 1,
-            chain_state: crate::runtime::RemoteChainState::Committed { height: 42, hash: [0u8; 32] },
+            chain_state: crate::runtime::RemoteChainState::Committed {
+                height: 42,
+                hash: [0u8; 32],
+            },
             network_id: "observer-runtime-join".to_string(),
             bootstrap_peers: vec!["127.0.0.1:1".to_string()],
             environment: Environment::Development,
@@ -6294,7 +6363,10 @@ mod runtime_orchestrator_tests {
 
         let discovered_network = crate::runtime::ExistingNetworkInfo {
             peer_count: 3,
-            chain_state: crate::runtime::RemoteChainState::Committed { height: 64, hash: [0u8; 32] },
+            chain_state: crate::runtime::RemoteChainState::Committed {
+                height: 64,
+                hash: [0u8; 32],
+            },
             network_id: "observer-shared-network".to_string(),
             bootstrap_peers: vec![
                 "127.0.0.1:9334".to_string(),
@@ -6532,23 +6604,23 @@ mod oracle_startup_tests {
         let consensus_key = [0xABu8; 2592];
         let key_id = lib_blockchain::blake3_hash(&consensus_key).as_array();
         bc.insert_validator_shadow(ValidatorInfo {
-                identity_id: "did:zhtp:validator-test".to_string(),
-                stake: 1_000_000,
-                storage_provided: 0,
-                consensus_key,
-                networking_key: vec![0xCDu8; 32],
-                rewards_key: vec![0xEFu8; 32],
-                network_address: "10.0.0.1:9334".to_string(),
-                commission_rate: 5,
-                status: "active".to_string(),
-                registered_at: 0,
-                last_activity: 0,
-                blocks_validated: 0,
-                slash_count: 0,
-                admission_source: "test".to_string(),
-                governance_proposal_id: None,
-                oracle_key_id: None,
-            });
+            identity_id: "did:zhtp:validator-test".to_string(),
+            stake: 1_000_000,
+            storage_provided: 0,
+            consensus_key,
+            networking_key: vec![0xCDu8; 32],
+            rewards_key: vec![0xEFu8; 32],
+            network_address: "10.0.0.1:9334".to_string(),
+            commission_rate: 5,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        });
 
         // Replicate the bootstrap logic from seed_blockchain_validator_registry.
         // Type system now enforces 2592-byte keys, no length check needed.
@@ -6578,23 +6650,23 @@ mod oracle_startup_tests {
         // Insert a validator with an all-zeros consensus key (invalid).
         // Type system enforces 2592-byte size, but we can still test for invalid content.
         bc.insert_validator_shadow(ValidatorInfo {
-                identity_id: "did:zhtp:bad-validator".to_string(),
-                stake: 1_000_000,
-                storage_provided: 0,
-                consensus_key: [0u8; 2592], // all zeros — invalid key
-                networking_key: vec![0x01u8; 32],
-                rewards_key: vec![0x02u8; 32],
-                network_address: "10.0.0.2:9334".to_string(),
-                commission_rate: 0,
-                status: "active".to_string(),
-                registered_at: 0,
-                last_activity: 0,
-                blocks_validated: 0,
-                slash_count: 0,
-                admission_source: "test".to_string(),
-                governance_proposal_id: None,
-                oracle_key_id: None,
-            });
+            identity_id: "did:zhtp:bad-validator".to_string(),
+            stake: 1_000_000,
+            storage_provided: 0,
+            consensus_key: [0u8; 2592], // all zeros — invalid key
+            networking_key: vec![0x01u8; 32],
+            rewards_key: vec![0x02u8; 32],
+            network_address: "10.0.0.2:9334".to_string(),
+            commission_rate: 0,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        });
 
         // Filter out validators with all-zeros keys (invalid)
         let committee_members: Vec<([u8; 32], [u8; 2592])> = bc

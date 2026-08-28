@@ -63,7 +63,7 @@ impl IdentityManager {
     /// Create a new citizen identity with quantum-resistant keys and full citizenship benefits.
     ///
     /// # Migration Note
-    /// 
+    ///
     /// This method now uses real Dilithium5 key generation via `lib_crypto::KeyPair::generate()`.
     /// The old fake hash-based key generation has been removed.
     ///
@@ -435,7 +435,9 @@ impl IdentityManager {
         };
         let relation = self.determine_relation(principal, &identity);
         let policy = lib_access_control::AccessPolicy::default();
-        policy.check_access(principal, relation, domain, operation).is_allowed()
+        policy
+            .check_access(principal, relation, domain, operation)
+            .is_allowed()
     }
 
     /// Add an existing identity to the manager
@@ -581,47 +583,49 @@ impl IdentityManager {
             "external_citizen".to_string(),
         );
 
-        // Generate master seed for HD wallet derivation (64 bytes)
-        let mut master_seed = [0u8; 64];
-        {
-            use rand::RngCore;
-            rand::rngs::OsRng.fill_bytes(&mut master_seed);
-        }
+        // Client-aligned wallet IDs (#2979): derive deterministically from the
+        // client's PQC keys — NOT from a server-side HD master seed. The client
+        // derives key_id = blake3(dilithium_pk || kyber_pk) locally and never
+        // transmits its private key, so the server must reproduce the same IDs.
+        let primary_wallet_id = {
+            let mut input = public_key.dilithium_pk.to_vec();
+            input.extend_from_slice(&kyber_public_key);
+            Hash(lib_crypto::hash_blake3(&input))
+        };
+        let ubi_wallet_id = {
+            let mut input = primary_wallet_id.0.to_vec();
+            input.extend_from_slice(b"ubi");
+            Hash(lib_crypto::hash_blake3(&input))
+        };
+        let savings_wallet_id = {
+            let mut input = primary_wallet_id.0.to_vec();
+            input.extend_from_slice(b"savings");
+            Hash(lib_crypto::hash_blake3(&input))
+        };
 
-        // Initialize wallet manager with master seed for HD derivation
-        identity.wallet_manager =
-            crate::wallets::WalletManager::from_master_seed(id.clone(), master_seed);
-
-        // Create HD wallets at fixed indices: 0=Primary, 1=UBI, 2=Savings
-        let (primary_wallet_id, _) = identity
-            .wallet_manager
-            .create_hd_wallet(
-                WalletType::Primary,
-                "Primary Wallet".to_string(),
-                Some("primary".to_string()),
-            )
-            .await?;
-
-        let (ubi_wallet_id, _) = identity
-            .wallet_manager
-            .create_hd_wallet(
-                WalletType::UBI,
-                "UBI Wallet".to_string(),
-                Some("ubi".to_string()),
-            )
-            .await?;
-
-        let (savings_wallet_id, _) = identity
-            .wallet_manager
-            .create_hd_wallet(
-                WalletType::Savings,
-                "Savings Wallet".to_string(),
-                Some("savings".to_string()),
-            )
-            .await?;
-
-        // Generate 24-word master seed phrase from first 32 bytes of master seed
-        let master_seed_phrase = crate::recovery::RecoveryPhrase::from_entropy(&master_seed[..32])?;
+        // Register the three wallets carrying the client's real Dilithium public key.
+        identity.wallet_manager = crate::wallets::WalletManager::new(id.clone());
+        identity.wallet_manager.add_client_wallet(
+            primary_wallet_id.clone(),
+            WalletType::Primary,
+            "Primary Wallet".to_string(),
+            Some("primary".to_string()),
+            public_key.dilithium_pk.to_vec(),
+        )?;
+        identity.wallet_manager.add_client_wallet(
+            ubi_wallet_id.clone(),
+            WalletType::UBI,
+            "UBI Wallet".to_string(),
+            Some("ubi".to_string()),
+            public_key.dilithium_pk.to_vec(),
+        )?;
+        identity.wallet_manager.add_client_wallet(
+            savings_wallet_id.clone(),
+            WalletType::Savings,
+            "Savings Wallet".to_string(),
+            Some("savings".to_string()),
+            public_key.dilithium_pk.to_vec(),
+        )?;
 
         // Register for DAO governance
         let dao_registration =
@@ -687,9 +691,17 @@ impl IdentityManager {
             hex::encode(&id.0[..8])
         );
 
-        // Compile master seed phrase for secure storage (single phrase derives all wallets)
-        let wallet_seed_phrases =
-            crate::citizenship::onboarding::WalletSeedPhrases { master_seed_phrase };
+        // No server-side seed phrase for remote registrations — the client holds the
+        // private key and derives wallets from its own keys (#2979).
+        let wallet_seed_phrases = crate::citizenship::onboarding::WalletSeedPhrases {
+            master_seed_phrase: crate::recovery::RecoveryPhrase {
+                words: Vec::new(),
+                entropy: Vec::new(),
+                checksum: String::new(),
+                language: "english".to_string(),
+                word_count: 0,
+            },
+        };
 
         Ok(CitizenshipResult::new(
             id,
@@ -1001,7 +1013,7 @@ impl IdentityManager {
             proof_data: final_proof.to_vec(),
             public_inputs: public_inputs,
             verification_key: verification_key.to_vec(),
-            proof: vec![],       // Legacy compatibility field
+            proof: vec![], // Legacy compatibility field
             ..lib_proofs::ZkProof::empty()
         })
     }
@@ -1125,27 +1137,31 @@ impl IdentityManager {
                 arr[..4864].copy_from_slice(&private_key_bytes);
                 arr
             }
-            _ => return Err(anyhow!(
-                "Invalid private key size: expected 4864 or 4896 bytes for Dilithium5, got {}",
-                private_key_bytes.len()
-            )),
+            _ => {
+                return Err(anyhow!(
+                    "Invalid private key size: expected 4864 or 4896 bytes for Dilithium5, got {}",
+                    private_key_bytes.len()
+                ))
+            }
         };
-        let dilithium_pk: [u8; 2592] = public_key.as_slice().try_into()
+        let dilithium_pk: [u8; 2592] = public_key
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow!("Invalid public key size: expected 2592 bytes for Dilithium5"))?;
 
         // Wrap in PrivateKey struct
         let private_key = lib_crypto::PrivateKey {
             dilithium_sk,
             dilithium_pk,
-            kyber_sk: [0u8; 3168],    // Not used in current implementation
-            master_seed: [0u8; 64],   // Derived separately
+            kyber_sk: [0u8; 3168],  // Not used in current implementation
+            master_seed: [0u8; 64], // Derived separately
         };
 
         // Create identity structure
         let mut identity = ZhtpIdentity::from_legacy_fields(
             identity_id.clone(),
             IdentityType::Device, // Device avoids age/jurisdiction requirement
-            public_key, // Pass the Vec<u8> for API compatibility
+            public_key,           // Pass the Vec<u8> for API compatibility
             private_key.clone(),
             "restored".to_string(), // Device name for restored identity
             self.generate_ownership_proof(&dilithium_sk, &dilithium_pk)
@@ -1631,9 +1647,10 @@ mod access_control_tests {
     fn test_unknown_identity_returns_none() {
         let manager = IdentityManager::new();
         let principal = SecurityPrincipal::public();
-        let fake_id =
-            IdentityId::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
-                .unwrap();
+        let fake_id = IdentityId::from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
         let view = manager.get_identity_view(&principal, &fake_id);
         assert!(view.is_none(), "Unknown identity should return None");
     }
@@ -1694,7 +1711,10 @@ mod access_control_tests {
         device.owner_identity_id = Some(user_id.clone());
         let device_did = device.did.clone();
         manager.add_identity(device);
-        assert_ne!(user_did, device_did, "test setup: user/device DIDs must differ");
+        assert_ne!(
+            user_did, device_did,
+            "test setup: user/device DIDs must differ"
+        );
 
         // Role::Device is the production role for mobile QUIC principals;
         // get_identity_view's DeviceOwner branch is gated on it.
@@ -1733,8 +1753,7 @@ mod access_control_tests {
         let device_principal =
             SecurityPrincipal::new(&device_did, Role::Device, NodeType::FullNode);
 
-        let unrelated_view =
-            manager.get_identity_view_by_did(&device_principal, &other_did);
+        let unrelated_view = manager.get_identity_view_by_did(&device_principal, &other_did);
         assert!(
             matches!(unrelated_view, Some(IdentityView::Public(_))),
             "Device principal with no owner link must only see Public \
@@ -1743,8 +1762,7 @@ mod access_control_tests {
 
         // And the user (subject from previous test) without the owner
         // link wired up must also be Public.
-        let user_view =
-            manager.get_identity_view_by_did(&device_principal, &user_did);
+        let user_view = manager.get_identity_view_by_did(&device_principal, &user_did);
         assert!(
             matches!(user_view, Some(IdentityView::Public(_))),
             "Device principal without owner_identity_id wired to user \

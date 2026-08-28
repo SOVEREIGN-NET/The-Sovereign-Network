@@ -225,8 +225,7 @@ fn audit_wallet_migration(
         total_wallets_in_local_state: blockchain.wallet_registry_shadow_len(),
         noncanonical_wallet_count: blockchain.collect_noncanonical_wallets().len(),
         treasury_wallet_id: treasury_wallet_id_hex.clone(),
-        treasury_wallet_present_in_local_state: blockchain
-            .wallet_exists(&treasury_wallet_id_hex),
+        treasury_wallet_present_in_local_state: blockchain.wallet_exists(&treasury_wallet_id_hex),
         treasury_wallet_canonical_in_history: blockchain.dao_treasury_wallet_is_canonical(),
         treasury_wallet_requires_schema_change: blockchain
             .wallet_transaction_data(&treasury_wallet_id_hex)
@@ -630,6 +629,7 @@ mod tests {
             wallet_name: "Ghost Wallet".to_string(),
             alias: Some("primary".to_string()),
             public_key: vec![0x22; 2592],
+            kyber_public_key: vec![],
             owner_identity_id: Some(lib_blockchain::Hash::new([0x33; 32])),
             seed_commitment: lib_blockchain::Hash::new([0x44; 32]),
             created_at: 1_700_000_000,
@@ -651,6 +651,7 @@ mod tests {
             wallet_name: "DAO Treasury".to_string(),
             alias: None,
             public_key: vec![],
+            kyber_public_key: vec![],
             owner_identity_id: None,
             seed_commitment: lib_blockchain::Hash::zero(),
             created_at: 0,

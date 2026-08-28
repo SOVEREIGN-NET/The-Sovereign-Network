@@ -5,18 +5,17 @@ use crate::web4_manifest::{
 };
 use anyhow::anyhow;
 use base64::{engine::general_purpose, Engine as _};
+use lib_access_control::{Role, SecurityPrincipal};
 use lib_blockchain::BlockchainQuery;
 use lib_identity::{types::IdentityView, wallets::wallet_types::WalletType, ZhtpIdentity};
-use lib_access_control::{SecurityPrincipal, Role};
-use lib_types::NodeType;
 use lib_network::web4::{
-    domain_signing::validate_domain_owner_signature_hex,
-    DomainEconomicSettings, DomainLookupResponse, DomainMetadata, DomainRegistrationRequest,
-    PublicOwnerInfo,
+    domain_signing::validate_domain_owner_signature_hex, DomainEconomicSettings,
+    DomainLookupResponse, DomainMetadata, DomainRegistrationRequest, PublicOwnerInfo,
 };
 use lib_proofs::ZeroKnowledgeProof;
 use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_types::NodeType;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
@@ -47,10 +46,7 @@ fn attach_client_domain_tx_signature(
     };
 
     if let Some(err) = validate_domain_owner_signature_hex(domain_tx_signature_hex) {
-        return Err(anyhow!(
-            "domain_tx_signature_hex invalid: {}",
-            err
-        ));
+        return Err(anyhow!("domain_tx_signature_hex invalid: {}", err));
     }
 
     let owner_pk: [u8; 2592] = owner_dilithium_pk
@@ -235,7 +231,9 @@ impl Web4Handler {
         if let Ok(manifest_request) =
             serde_json::from_slice::<ManifestDomainRegistrationRequest>(&request_body)
         {
-            return self.register_domain_from_manifest(manifest_request, principal).await;
+            return self
+                .register_domain_from_manifest(manifest_request, principal)
+                .await;
         }
 
         // Fall back to simple request with inline content
@@ -305,11 +303,10 @@ impl Web4Handler {
                 })?;
                 drop(bc);
 
-                let pubkey = lib_crypto::PublicKey::new(
-                    pk.as_slice().try_into().map_err(|_| {
+                let pubkey =
+                    lib_crypto::PublicKey::new(pk.as_slice().try_into().map_err(|_| {
                         anyhow!("Chain identity public_key is not Dilithium5 size (2592)")
-                    })?,
-                );
+                    })?);
                 // `IdentityTransactionData` doesn't carry device_id/node_id —
                 // those are local-only fields populated when we see a peer
                 // over QUIC. For a chain-loaded owner identity we hand in
@@ -370,8 +367,7 @@ impl Web4Handler {
         // amount as `u64` whole tokens, not atoms). Truncating division —
         // governance rates are expected to be whole-SOV multiples and the
         // signature gate just enforces that the client knew the price.
-        let registration_fee_whole: u64 =
-            (registration_fee_sov / lib_types::TOKEN_SCALE_18) as u64;
+        let registration_fee_whole: u64 = (registration_fee_sov / lib_types::TOKEN_SCALE_18) as u64;
 
         // Fee is fixed; if the client provides it explicitly, it must match.
         let user_provided_fee = simple_request.fee.unwrap_or(registration_fee_whole);
@@ -493,7 +489,9 @@ impl Web4Handler {
         // unrelated branches.
         let is_register = {
             let blockchain = self.blockchain.read().await;
-            !blockchain.domain_registry.contains_key(&simple_request.domain)
+            !blockchain
+                .domain_registry
+                .contains_key(&simple_request.domain)
         };
 
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
@@ -532,9 +530,7 @@ impl Web4Handler {
                         "SOV token contract not initialized. Network may still be bootstrapping."
                     ));
                 }
-                let user_sov_balance = blockchain
-                    .token_balance(&sov_token_id, &bytes)
-                    .unwrap_or(0);
+                let user_sov_balance = blockchain.token_balance(&sov_token_id, &bytes).unwrap_or(0);
 
                 info!(
                     " User SOV balance: {} atoms (fee: {} atoms)",
@@ -556,7 +552,8 @@ impl Web4Handler {
                      signed TokenTransfer of {} atoms ({} SOV) from your Primary wallet to \
                      the DAO treasury. Use lib-client \
                      `build_domain_register_request_with_fee_payment` to construct it.",
-                    registration_fee_sov, registration_fee_whole
+                    registration_fee_sov,
+                    registration_fee_whole
                 )
             })?;
             let trimmed = fee_tx_hex.trim();
@@ -596,9 +593,9 @@ impl Web4Handler {
             // Validate the payload contents match what the registration
             // requires: SOV token, ≥ registration fee, from owner's
             // Primary wallet, to the deterministic DAO treasury wallet.
-            let transfer = fee_tx.token_transfer_data().ok_or_else(|| {
-                anyhow!("fee_payment_tx missing TokenTransfer payload")
-            })?;
+            let transfer = fee_tx
+                .token_transfer_data()
+                .ok_or_else(|| anyhow!("fee_payment_tx missing TokenTransfer payload"))?;
             if transfer.token_id != sov_token_id {
                 return Err(anyhow!(
                     "fee_payment_tx must use the SOV token (token_id={}), got {}",
@@ -621,8 +618,7 @@ impl Web4Handler {
                     hex::encode(transfer.from)
                 ));
             }
-            let expected_treasury =
-                lib_blockchain::Blockchain::deterministic_treasury_wallet_id();
+            let expected_treasury = lib_blockchain::Blockchain::deterministic_treasury_wallet_id();
             if transfer.to != expected_treasury.as_array() {
                 return Err(anyhow!(
                     "fee_payment_tx recipient must be the DAO treasury wallet (expected {}, got {})",
@@ -833,7 +829,9 @@ impl Web4Handler {
             // Check if domain already exists to choose registration vs update
             let is_update = {
                 let blockchain = self.blockchain.read().await;
-                blockchain.domain_registry.contains_key(&simple_request.domain)
+                blockchain
+                    .domain_registry
+                    .contains_key(&simple_request.domain)
             };
 
             let (tx_type, memo) = if is_update {
@@ -846,8 +844,12 @@ impl Web4Handler {
                     message: Some(format!("{}: {}", title, description)),
                     fee_tx_hash: fee_tx_hash_hex.clone(),
                 };
-                (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
-                    .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
+                (
+                    lib_blockchain::TransactionType::DomainUpdate,
+                    payload
+                        .encode_memo()
+                        .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?,
+                )
             } else {
                 // Optional DAO asset binding (M4 / Q10): shared parser so
                 // client/server domain_tx_signature skeletons stay byte-identical.
@@ -873,8 +875,12 @@ impl Web4Handler {
                     fee_payer_wallet_id: [0u8; 32],
                     asset_id: bound_asset_id,
                 };
-                (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
-                    .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
+                (
+                    lib_blockchain::TransactionType::DomainRegistration,
+                    payload.encode_memo().map_err(|e| {
+                        anyhow::anyhow!("Failed to encode domain registration: {}", e)
+                    })?,
+                )
             };
 
             if simple_request.domain_tx_signature_hex.is_empty() {
@@ -893,15 +899,13 @@ impl Web4Handler {
             )?;
             let domain_tx_hash_hex = hex::encode(domain_tx.hash().as_bytes());
             let mut blockchain = self.blockchain.write().await;
-            blockchain
-                .add_pending_transaction(domain_tx)
-                .map_err(|e| {
-                    anyhow!(
-                        "domain {} tx rejected by mempool: {}",
-                        if is_update { "update" } else { "registration" },
-                        e
-                    )
-                })?;
+            blockchain.add_pending_transaction(domain_tx).map_err(|e| {
+                anyhow!(
+                    "domain {} tx rejected by mempool: {}",
+                    if is_update { "update" } else { "registration" },
+                    e
+                )
+            })?;
             info!(
                 " Domain {} tx submitted: {}",
                 if is_update { "update" } else { "registration" },
@@ -1169,15 +1173,18 @@ impl Web4Handler {
                     message: Some(format!("DeployManifest {}", request.deploy_manifest_cid)),
                     fee_tx_hash: fee_tx_hash_hex.clone(),
                 };
-                (lib_blockchain::TransactionType::DomainUpdate, payload.encode_memo()
-                    .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?)
+                (
+                    lib_blockchain::TransactionType::DomainUpdate,
+                    payload
+                        .encode_memo()
+                        .map_err(|e| anyhow::anyhow!("Failed to encode domain update: {}", e))?,
+                )
             } else {
                 // Resolve the signer's Primary wallet so the V2 payload can
                 // carry `fee_payer_wallet_id`. Validator + executor both
                 // require this for the canonical fee debit; without it
                 // mempool admit rejects the tx.
-                let owner_identity_hash =
-                    lib_blockchain::Hash::from_slice(&owner_identity.id.0);
+                let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
                 let owner_wallet_id_bytes: [u8; 32] = {
                     let bc = self.blockchain.read().await;
                     let wallet_id = bc
@@ -1210,8 +1217,12 @@ impl Web4Handler {
                     fee_payer_wallet_id: owner_wallet_id_bytes,
                     asset_id: None,
                 };
-                (lib_blockchain::TransactionType::DomainRegistration, payload.encode_memo()
-                    .map_err(|e| anyhow::anyhow!("Failed to encode domain registration: {}", e))?)
+                (
+                    lib_blockchain::TransactionType::DomainRegistration,
+                    payload.encode_memo().map_err(|e| {
+                        anyhow::anyhow!("Failed to encode domain registration: {}", e)
+                    })?,
+                )
             };
 
             if request.domain_tx_signature_hex.is_empty() {
@@ -1230,15 +1241,13 @@ impl Web4Handler {
             )?;
             let domain_tx_hash_hex = hex::encode(domain_tx.hash().as_bytes());
             let mut blockchain = self.blockchain.write().await;
-            blockchain
-                .add_pending_transaction(domain_tx)
-                .map_err(|e| {
-                    anyhow!(
-                        "domain {} tx rejected by mempool: {}",
-                        if is_update { "update" } else { "registration" },
-                        e
-                    )
-                })?;
+            blockchain.add_pending_transaction(domain_tx).map_err(|e| {
+                anyhow!(
+                    "domain {} tx rejected by mempool: {}",
+                    if is_update { "update" } else { "registration" },
+                    e
+                )
+            })?;
             domain_tx_hash_hex
         };
 
@@ -1262,7 +1271,6 @@ impl Web4Handler {
             None,
         ))
     }
-
 
     /// Register a new Web4 domain
     pub async fn register_domain(&self, request_body: Vec<u8>) -> ZhtpResult<ZhtpResponse> {
@@ -1309,8 +1317,8 @@ impl Web4Handler {
             public: api_request.public,
             economic_settings: DomainEconomicSettings {
                 // Display fee matches client/server default (TxFeeConfig / 10^18).
-                registration_fee:
-                    lib_blockchain::transaction::DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE as f64,
+                registration_fee: lib_blockchain::transaction::DEFAULT_DOMAIN_REGISTRATION_FEE_WHOLE
+                    as f64,
                 renewal_fee: 5.0,
                 transfer_fee: 2.0,
                 hosting_budget: 100.0,
@@ -1436,11 +1444,9 @@ impl Web4Handler {
             })
         });
         let owner = match owner_raw {
-            Some(value) if !value.is_empty() => {
-                urlencoding::decode(value)
-                    .map(|s| s.into_owned())
-                    .unwrap_or_else(|_| value.to_string())
-            }
+            Some(value) if !value.is_empty() => urlencoding::decode(value)
+                .map(|s| s.into_owned())
+                .unwrap_or_else(|_| value.to_string()),
             _ => {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
@@ -2349,7 +2355,11 @@ mod tests {
 
     // ── catalog merge unit tests ──────────────────────────────────────────────
 
-    fn make_on_chain(domain: &str, owner: &str, version: u64) -> lib_blockchain::transaction::OnChainDomainRecord {
+    fn make_on_chain(
+        domain: &str,
+        owner: &str,
+        version: u64,
+    ) -> lib_blockchain::transaction::OnChainDomainRecord {
         lib_blockchain::transaction::OnChainDomainRecord {
             domain: domain.to_string(),
             owner_did: owner.to_string(),
@@ -2368,7 +2378,11 @@ mod tests {
         }
     }
 
-    fn make_sled(domain: &str, owner_bytes: [u8; 32], version: u64) -> lib_network::web4::DomainRecord {
+    fn make_sled(
+        domain: &str,
+        owner_bytes: [u8; 32],
+        version: u64,
+    ) -> lib_network::web4::DomainRecord {
         lib_network::web4::DomainRecord {
             domain: domain.to_string(),
             owner: lib_crypto::Hash(owner_bytes),
@@ -2388,7 +2402,10 @@ mod tests {
     #[test]
     fn catalog_merge_on_chain_wins_over_sled() {
         let mut on_chain = std::collections::HashMap::new();
-        on_chain.insert("foo.sov".to_string(), make_on_chain("foo.sov", "did:zhtp:aaa", 3));
+        on_chain.insert(
+            "foo.sov".to_string(),
+            make_on_chain("foo.sov", "did:zhtp:aaa", 3),
+        );
 
         let sled = vec![make_sled("foo.sov", [0u8; 32], 1)];
         let entries = merge_catalog_entries(&on_chain, sled);
@@ -2425,8 +2442,14 @@ mod tests {
     #[test]
     fn catalog_merge_sorted_alphabetically() {
         let mut on_chain = std::collections::HashMap::new();
-        on_chain.insert("zoo.sov".to_string(), make_on_chain("zoo.sov", "did:zhtp:z", 1));
-        on_chain.insert("aaa.sov".to_string(), make_on_chain("aaa.sov", "did:zhtp:a", 1));
+        on_chain.insert(
+            "zoo.sov".to_string(),
+            make_on_chain("zoo.sov", "did:zhtp:z", 1),
+        );
+        on_chain.insert(
+            "aaa.sov".to_string(),
+            make_on_chain("aaa.sov", "did:zhtp:a", 1),
+        );
 
         let sled = vec![make_sled("mmm.sov", [0u8; 32], 1)];
         let entries = merge_catalog_entries(&on_chain, sled);
@@ -2515,6 +2538,7 @@ mod tests {
             wallet_name: format!("{}-wallet", wallet_type),
             alias: None,
             public_key,
+            kyber_public_key: vec![],
             owner_identity_id,
             seed_commitment: lib_blockchain::Hash::zero(),
             created_at: 1_700_000_000,
@@ -2523,7 +2547,6 @@ mod tests {
             initial_balance: 0,
         }
     }
-
 
     async fn setup_handler() -> anyhow::Result<(
         Web4Handler,
@@ -2581,7 +2604,8 @@ mod tests {
             key_id: owner_wallet_id,
         };
         // 101 SOV — enough to cover the 100 SOV domain registration fee (atoms).
-        sov.mint(&owner_wallet_key, lib_types::sov::atoms(101)).unwrap();
+        sov.mint(&owner_wallet_key, lib_types::sov::atoms(101))
+            .unwrap();
         blockchain.insert_token_contract(generate_lib_token_id(), sov);
 
         let blockchain = Arc::new(RwLock::new(blockchain));
@@ -2589,9 +2613,13 @@ mod tests {
             .private_key
             .clone()
             .expect("test identity should include private key");
-        let handler =
-            Web4Handler::new_with_registry(registry, publisher, identity_manager, blockchain.clone())
-                .await?;
+        let handler = Web4Handler::new_with_registry(
+            registry,
+            publisher,
+            identity_manager,
+            blockchain.clone(),
+        )
+        .await?;
 
         Ok((
             handler,
@@ -2723,8 +2751,8 @@ mod tests {
             memo: memo_v3.clone(),
             payload: lib_blockchain::transaction::TransactionPayload::None,
         };
-        let sig = lib_crypto::sign_message(&keypair, skeleton.signing_hash().as_bytes())
-            .expect("sign");
+        let sig =
+            lib_crypto::sign_message(&keypair, skeleton.signing_hash().as_bytes()).expect("sign");
         let sig_hex = hex::encode(&sig.signature);
 
         attach_client_domain_tx_signature(
@@ -2777,8 +2805,14 @@ mod tests {
     /// debit path — that path silently dropped every fee at block-apply.
     #[tokio::test]
     async fn register_domain_requires_fee_payment_tx() -> anyhow::Result<()> {
-        let (handler, owner_identity, _owner_wallet_id, _treasury_wallet_id, _owner_private, blockchain) =
-            setup_handler().await?;
+        let (
+            handler,
+            owner_identity,
+            _owner_wallet_id,
+            _treasury_wallet_id,
+            _owner_private,
+            blockchain,
+        ) = setup_handler().await?;
         let request =
             simple_registration_request(&owner_identity, "needs-fee.zhtp", "<html>ok</html>")?;
 
@@ -2844,7 +2878,8 @@ mod tests {
                     kyber_pk: [0u8; 1568],
                     key_id: [0u8; 32],
                 },
-                algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+                algorithm:
+                    lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
             memo: vec![],
@@ -2857,11 +2892,8 @@ mod tests {
             .expect("serialize wrong-type tx");
         let wrong_hex = hex::encode(&wrong_bytes);
 
-        let mut request = simple_registration_request(
-            &owner_identity,
-            "wrong-fee-type.zhtp",
-            "<html>x</html>",
-        )?;
+        let mut request =
+            simple_registration_request(&owner_identity, "wrong-fee-type.zhtp", "<html>x</html>")?;
         request["fee_payment_tx"] = serde_json::Value::String(wrong_hex);
 
         let principal = SecurityPrincipal::new(
@@ -2896,8 +2928,14 @@ mod tests {
     /// path succeeds with an empty fee_tx_hash.
     #[tokio::test]
     async fn update_domain_does_not_require_fee_payment_tx() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, _treasury_wallet_id, _owner_private, blockchain) =
-            setup_handler().await?;
+        let (
+            handler,
+            owner_identity,
+            owner_wallet_id,
+            _treasury_wallet_id,
+            _owner_private,
+            blockchain,
+        ) = setup_handler().await?;
         let domain = "already-registered.zhtp";
 
         // Pre-seed the on-chain domain registry so the handler sees
@@ -2928,8 +2966,7 @@ mod tests {
 
         // Build the request WITHOUT fee_payment_tx — the update path
         // must accept it (no fee charged).
-        let request =
-            simple_registration_request(&owner_identity, domain, "<html>updated</html>")?;
+        let request = simple_registration_request(&owner_identity, domain, "<html>updated</html>")?;
         assert!(
             request.get("fee_payment_tx").is_none(),
             "request must not include fee_payment_tx for this test"
@@ -2951,9 +2988,7 @@ mod tests {
         let fee_txs = bc
             .pending_transactions
             .iter()
-            .filter(|t| {
-                t.transaction_type == lib_blockchain::TransactionType::TokenTransfer
-            })
+            .filter(|t| t.transaction_type == lib_blockchain::TransactionType::TokenTransfer)
             .count();
         assert_eq!(
             fee_txs, 0,
@@ -2965,8 +3000,14 @@ mod tests {
 
     #[tokio::test]
     async fn register_domain_insufficient_balance_fails() -> anyhow::Result<()> {
-        let (handler, owner_identity, owner_wallet_id, _treasury_wallet_id, _owner_private, blockchain) =
-            setup_handler().await?;
+        let (
+            handler,
+            owner_identity,
+            owner_wallet_id,
+            _treasury_wallet_id,
+            _owner_private,
+            blockchain,
+        ) = setup_handler().await?;
 
         // Drain the owner balance so fee cannot be paid
         {

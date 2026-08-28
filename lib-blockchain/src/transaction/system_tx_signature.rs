@@ -163,8 +163,19 @@ pub fn allows_empty_system_signature(transaction: &Transaction) -> bool {
             if transaction.signature.public_key.dilithium_pk != wallet_pk {
                 return false;
             }
+            // Legacy/validator wallets (zero kyber): wallet_id == blake3(pk).
             let key_id = crate::types::hash::blake3_hash(wallet_pk.as_slice());
-            w.wallet_id.as_bytes() == key_id.as_bytes()
+            if w.wallet_id.as_bytes() == key_id.as_bytes() {
+                return true;
+            }
+            // Client wallets: wallet_id == blake3(pk || kyber_pk).
+            if w.kyber_public_key.is_empty() {
+                return false;
+            }
+            let mut client_input = wallet_pk.to_vec();
+            client_input.extend_from_slice(&w.kyber_public_key);
+            let client_key_id = crate::types::hash::blake3_hash(&client_input);
+            w.wallet_id.as_bytes() == client_key_id.as_bytes()
         }
         _ => false,
     }
@@ -320,6 +331,7 @@ mod tests {
             wallet_name: "p".to_string(),
             alias: None,
             public_key: dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             owner_identity_id: None,
             seed_commitment: Hash::default(),
             created_at: 1,
@@ -360,5 +372,45 @@ mod tests {
             !allows_empty_system_signature(&forged),
             "empty sig must not allow wallet_id unbound from public_key"
         );
+    }
+
+    #[test]
+    fn wallet_registration_empty_sig_accepts_client_pk_kyber_binding() {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::core::WalletTransactionData;
+        use crate::types::Hash;
+
+        let dilithium_pk = [0xABu8; 2592];
+        let kyber_pk = vec![0x42u8; 1568];
+        let mut input = dilithium_pk.to_vec();
+        input.extend_from_slice(&kyber_pk);
+        let client_key_id = crate::types::hash::blake3_hash(&input);
+
+        let good = WalletTransactionData {
+            wallet_id: client_key_id,
+            wallet_type: "Primary".to_string(),
+            wallet_name: "p".to_string(),
+            alias: None,
+            public_key: dilithium_pk.to_vec(),
+            kyber_public_key: kyber_pk.clone(),
+            owner_identity_id: None,
+            seed_commitment: Hash::default(),
+            created_at: 1,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+        let good_tx = Transaction::new_wallet_registration(
+            good,
+            vec![],
+            Signature {
+                signature: Vec::new(),
+                public_key: PublicKey::new(dilithium_pk),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 1,
+            },
+            b"wallet-reg".to_vec(),
+        );
+        assert!(allows_empty_system_signature(&good_tx));
     }
 }

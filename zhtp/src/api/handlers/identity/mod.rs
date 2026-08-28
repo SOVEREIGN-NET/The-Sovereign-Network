@@ -23,8 +23,8 @@ use lib_access_control::{Role, SecurityPrincipal};
 use lib_types::NodeType;
 
 // Identity management imports
-use lib_identity::{CitizenshipResult, IdentityManager, IdentityType, RecoveryPhraseManager};
 use lib_identity::types::IdentityView;
+use lib_identity::{CitizenshipResult, IdentityManager, IdentityType, RecoveryPhraseManager};
 
 // Identity and economic model imports
 use lib_identity::economics::EconomicModel as IdentityEconomicModel;
@@ -99,10 +99,7 @@ fn register_wallet_or_abort(
                 blockchain.abort_pending_client_registration(queued_txs, did, wallet_id_hexes);
                 Err((
                     ZhtpStatus::InternalServerError,
-                    format!(
-                        "Failed to track {} wallet for registration rollback",
-                        label
-                    ),
+                    format!("Failed to track {} wallet for registration rollback", label),
                 ))
             }
         },
@@ -420,10 +417,14 @@ impl IdentityHandler {
                     format!("welcome_bonus_note_{}", identity_id_hex).as_bytes(),
                 ),
                 recipient: PublicKey::new(
-                    citizenship_result.identity_id.as_bytes().try_into().unwrap_or([0u8; 2592])
+                    citizenship_result
+                        .identity_id
+                        .as_bytes()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
                 ),
-                            merkle_leaf: Hash::default(),
-};
+                merkle_leaf: Hash::default(),
+            };
 
             let outputs = vec![welcome_bonus_output];
 
@@ -483,6 +484,7 @@ impl IdentityHandler {
                 wallet_name: "Primary Wallet".to_string(),
                 alias: None,
                 public_key: keypair.public_key.dilithium_pk.to_vec(),
+                kyber_public_key: vec![],
                 owner_identity_id: Some(lib_blockchain::Hash::from(
                     citizenship_result.identity_id.0,
                 )),
@@ -507,6 +509,7 @@ impl IdentityHandler {
                 wallet_name: "UBI Wallet".to_string(),
                 alias: None,
                 public_key: keypair.public_key.dilithium_pk.to_vec(),
+                kyber_public_key: vec![],
                 owner_identity_id: Some(lib_blockchain::Hash::from(
                     citizenship_result.identity_id.0,
                 )),
@@ -531,6 +534,7 @@ impl IdentityHandler {
                 wallet_name: "Savings Wallet".to_string(),
                 alias: None,
                 public_key: keypair.public_key.dilithium_pk.to_vec(),
+                kyber_public_key: vec![],
                 owner_identity_id: Some(lib_blockchain::Hash::from(
                     citizenship_result.identity_id.0,
                 )),
@@ -779,10 +783,13 @@ impl IdentityHandler {
                 format!("wallet_init_note_{}", wallet_id_hex).as_bytes(),
             ),
             recipient: PublicKey::new(
-                recipient_identity.as_slice().try_into().unwrap_or([0u8; 2592])
+                recipient_identity
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or([0u8; 2592]),
             ),
-                    merkle_leaf: Hash::default(),
-};
+            merkle_leaf: Hash::default(),
+        };
 
         let outputs = vec![wallet_dust_output];
 
@@ -1626,7 +1633,10 @@ impl IdentityHandler {
         if kyber_pk.len() != 1568 {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                format!("kyber_public_key must be 1568 bytes (got {})", kyber_pk.len()),
+                format!(
+                    "kyber_public_key must be 1568 bytes (got {})",
+                    kyber_pk.len()
+                ),
             ));
         }
 
@@ -1712,11 +1722,18 @@ impl IdentityHandler {
             // Submit IdentityUpdate system transaction for block persistence
             let mut identity_data = blockchain
                 .identity_transaction_data(&req.did)
-                .unwrap_or_else(|| lib_blockchain::transaction::IdentityTransactionData::new(
-                    req.did.clone(), String::new(), identity_pk.clone(),
-                    vec![], "human".to_string(),
-                    lib_blockchain::types::Hash::default(), 0, 0,
-                ));
+                .unwrap_or_else(|| {
+                    lib_blockchain::transaction::IdentityTransactionData::new(
+                        req.did.clone(),
+                        String::new(),
+                        identity_pk.clone(),
+                        vec![],
+                        "human".to_string(),
+                        lib_blockchain::types::Hash::default(),
+                        0,
+                        0,
+                    )
+                });
             identity_data.kyber_public_key = kyber_pk;
 
             let update_tx = lib_blockchain::Transaction::new_identity_update(
@@ -1736,7 +1753,9 @@ impl IdentityHandler {
                 },
                 format!("kyber-key-update:{}", &req.did[..20.min(req.did.len())]).into_bytes(),
             );
-            if let Err(e) = blockchain.add_system_transaction(update_tx, lib_blockchain::SystemOriginator::KyberKeyUpdate) {
+            if let Err(e) = blockchain
+                .add_system_transaction(update_tx, lib_blockchain::SystemOriginator::KyberKeyUpdate)
+            {
                 tracing::warn!("Failed to submit Kyber key update tx: {}", e);
             }
         }
@@ -1879,7 +1898,9 @@ impl IdentityHandler {
 
         {
             let mut blockchain = blockchain_arc.write().await;
-            if let Err(e) = blockchain.add_system_transaction(tx, lib_blockchain::SystemOriginator::CredentialClaim) {
+            if let Err(e) = blockchain
+                .add_system_transaction(tx, lib_blockchain::SystemOriginator::CredentialClaim)
+            {
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     format!("Failed to submit claim tx: {}", e),
@@ -2046,7 +2067,9 @@ impl IdentityHandler {
         }
 
         // Create PublicKey struct from raw bytes - this computes key_id = Blake3(dilithium_pk)
-        let public_key_bytes_array: [u8; 2592] = public_key_bytes.as_slice().try_into()
+        let public_key_bytes_array: [u8; 2592] = public_key_bytes
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid public key length: expected 2592 bytes"))?;
         let public_key = lib_crypto::PublicKey::new(public_key_bytes_array);
 
@@ -2150,9 +2173,7 @@ impl IdentityHandler {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("user_{}", &hex::encode(&public_key.key_id)[..8]));
 
-        if let Err(e) =
-            lib_blockchain::transaction::credentials::validate_username(&display_name)
-        {
+        if let Err(e) = lib_blockchain::transaction::credentials::validate_username(&display_name) {
             return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e));
         }
 
@@ -2197,10 +2218,7 @@ impl IdentityHandler {
         }
 
         let wait_for_inclusion = req_data.wait_for_inclusion;
-        let wait_timeout = req_data
-            .wait_timeout_secs
-            .unwrap_or(30)
-            .clamp(1, 120);
+        let wait_timeout = req_data.wait_timeout_secs.unwrap_or(30).clamp(1, 120);
 
         // Create identity record (without private key - client keeps it)
         let created_at = std::time::SystemTime::now()
@@ -2373,6 +2391,13 @@ impl IdentityHandler {
             let seed_commitment =
                 lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed");
             let owner_identity_id = Some(lib_blockchain::Hash::from_slice(&identity_id.0));
+
+            // Client-aligned wallets (#2979): wallet public_key = the client's real
+            // Dilithium key, kyber_public_key = the client's Kyber key. The binding
+            // check validates wallet_id == blake3(pk) or blake3(pk || kyber_pk).
+            let client_dilithium_pk = public_key_bytes.clone();
+            let client_kyber_pk = kyber_public_key.clone().unwrap_or_default();
+
             let wallet_specs = [
                 (
                     "primary",
@@ -2381,7 +2406,8 @@ impl IdentityHandler {
                         wallet_type: "Primary".to_string(),
                         wallet_name: "Primary Wallet".to_string(),
                         alias: Some("primary".to_string()),
-                        public_key: public_key_bytes.clone(),
+                        public_key: client_dilithium_pk.clone(),
+                        kyber_public_key: client_kyber_pk.clone(),
                         owner_identity_id,
                         seed_commitment,
                         created_at,
@@ -2397,7 +2423,8 @@ impl IdentityHandler {
                         wallet_type: "UBI".to_string(),
                         wallet_name: "UBI Wallet".to_string(),
                         alias: Some("ubi".to_string()),
-                        public_key: public_key_bytes.clone(),
+                        public_key: client_dilithium_pk.clone(),
+                        kyber_public_key: client_kyber_pk.clone(),
                         owner_identity_id,
                         seed_commitment,
                         created_at,
@@ -2413,7 +2440,8 @@ impl IdentityHandler {
                         wallet_type: "Savings".to_string(),
                         wallet_name: "Savings Wallet".to_string(),
                         alias: Some("savings".to_string()),
-                        public_key: public_key_bytes.clone(),
+                        public_key: client_dilithium_pk.clone(),
+                        kyber_public_key: client_kyber_pk.clone(),
                         owner_identity_id,
                         seed_commitment,
                         created_at,
@@ -2506,8 +2534,7 @@ impl IdentityHandler {
         let mut status = "queued";
         let mut committed_height: Option<u64> = None;
         if wait_for_inclusion {
-            let deadline = std::time::Instant::now()
-                + std::time::Duration::from_secs(wait_timeout);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_timeout);
             loop {
                 if let Ok(blockchain_arc) =
                     crate::runtime::blockchain_provider::get_global_blockchain().await

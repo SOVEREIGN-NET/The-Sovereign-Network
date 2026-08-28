@@ -222,7 +222,9 @@ where
             Ok(v as u128)
         }
         fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<u128, E> {
-            if v < 0 { return Err(E::custom("negative balance")); }
+            if v < 0 {
+                return Err(E::custom("negative balance"));
+            }
             Ok(v as u128)
         }
         fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<u128, E> {
@@ -587,6 +589,7 @@ impl GenesisConfig {
                     wallet_name: format!("migrated-{}", &w.wallet_id[..8]),
                     alias: None,
                     public_key: pk_bytes,
+                    kyber_public_key: vec![],
                     owner_identity_id: owner_id,
                     seed_commitment: crate::types::Hash::default(),
                     created_at: w.created_at,
@@ -852,9 +855,7 @@ impl GenesisConfig {
     /// `[opaque]` section is present. Pulled out into its own helper so
     /// every Blockchain construction path (apply_genesis_state, load_from_store)
     /// can load it consistently (reviewer #2569 — restart path was skipping it).
-    pub fn load_opaque_setup(
-        &self,
-    ) -> Result<Option<crate::opaque::OpaqueServerSetupBytes>> {
+    pub fn load_opaque_setup(&self) -> Result<Option<crate::opaque::OpaqueServerSetupBytes>> {
         match self.opaque {
             Some(ref op) => {
                 let bytes = crate::opaque::parse_server_setup_b64(&op.server_setup_b64)
@@ -868,9 +869,7 @@ impl GenesisConfig {
                 Ok(Some(bytes))
             }
             None => {
-                info!(
-                    "No [opaque] section in genesis — lobby auth disabled for this network"
-                );
+                info!("No [opaque] section in genesis — lobby auth disabled for this network");
                 Ok(None)
             }
         }
@@ -944,6 +943,7 @@ impl GenesisConfig {
                             wallet_name: String::new(),
                             alias: None,
                             public_key: pk_bytes,
+                            kyber_public_key: vec![],
                             owner_identity_id: owner_id,
                             seed_commitment: crate::types::Hash::default(),
                             created_at: w.created_at,
@@ -960,10 +960,10 @@ impl GenesisConfig {
         // Register usernames for identities with display_names.
         // Populates did_to_username so @username messaging lookups work.
         for id in &self.allocations.identities {
-            if !id.display_name.is_empty()
-                && !bc.did_to_username.contains_key(&id.did)
-            {
-                let username = id.display_name.to_lowercase()
+            if !id.display_name.is_empty() && !bc.did_to_username.contains_key(&id.did) {
+                let username = id
+                    .display_name
+                    .to_lowercase()
                     .chars()
                     .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
                     .collect::<String>();
@@ -1070,8 +1070,12 @@ fn key_from_hex(hex_str: &str) -> Result<crate::integration::crypto_integration:
     let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     let bytes = hex::decode(trimmed).context("Invalid hex in genesis.toml key")?;
     let key_id = lib_crypto::hash_blake3(&bytes);
-    let dilithium_pk: [u8; 2592] = bytes.as_slice().try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid Dilithium key length in genesis.toml key: expected 2592 bytes, got {}", bytes.len()))?;
+    let dilithium_pk: [u8; 2592] = bytes.as_slice().try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "Invalid Dilithium key length in genesis.toml key: expected 2592 bytes, got {}",
+            bytes.len()
+        )
+    })?;
     Ok(crate::integration::crypto_integration::PublicKey {
         dilithium_pk,
         kyber_pk: [0u8; 1568],
@@ -1111,7 +1115,10 @@ mod tests {
         // v2 chain (CONS-305 cutover): chain_id 2, distinct from v1's 1.
         assert_eq!(config.chain.chain_id, 2);
         assert_eq!(config.bootstrap_council.threshold, 1);
-        assert!(!config.bootstrap_council.members.is_empty(), "council must have at least one member");
+        assert!(
+            !config.bootstrap_council.members.is_empty(),
+            "council must have at least one member"
+        );
         assert_eq!(config.bonding_curve.graduation_threshold, 2_745_966);
     }
 
@@ -1132,7 +1139,10 @@ mod tests {
         let bc1 = config.build_block0().expect("build 1");
         let bc2 = config.build_block0().expect("build 2");
         // Both produce the same block hash
-        assert_eq!(bc1.blocks[0].header.block_hash, bc2.blocks[0].header.block_hash);
+        assert_eq!(
+            bc1.blocks[0].header.block_hash,
+            bc2.blocks[0].header.block_hash
+        );
     }
 
     #[test]

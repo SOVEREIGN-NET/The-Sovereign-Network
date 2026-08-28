@@ -12,7 +12,9 @@ use lib_crypto::types::keys::PublicKey;
 
 mod common;
 
-fn create_test_pubkey(_id: u8) -> PublicKey { common::crypto_fixtures::dummy_public_key() }
+fn create_test_pubkey(_id: u8) -> PublicKey {
+    common::crypto_fixtures::dummy_public_key()
+}
 
 /// Setup a blockchain with treasury wallet and SOV token
 fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {
@@ -28,6 +30,7 @@ fn setup_blockchain_with_treasury() -> (Blockchain, PublicKey) {
         wallet_name: "dao_treasury".to_string(),
         alias: Some("DAO Treasury".to_string()),
         public_key: treasury_pubkey.dilithium_pk.to_vec(),
+        kyber_public_key: vec![],
         owner_identity_id: None,
         seed_commitment: Hash::new([0u8; 32]),
         created_at: 0,
@@ -64,8 +67,7 @@ fn test_treasury_balance_uses_token_contract() {
     let treasury_amount: u128 = 1_000_000;
 
     if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
-        token
-            .set_balance(&treasury_pubkey, treasury_amount);
+        token.set_balance(&treasury_pubkey, treasury_amount);
     }
 
     // Query treasury balance - should reflect the credited amount
@@ -87,8 +89,7 @@ fn test_treasury_balance_not_placeholder() {
     let expected_amount: u128 = 5_555_555;
 
     if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
-        token
-            .set_balance(&treasury_pubkey, expected_amount);
+        token.set_balance(&treasury_pubkey, expected_amount);
     }
 
     // Query balance multiple times - should always return the exact amount
@@ -116,6 +117,7 @@ fn test_treasury_balance_returns_zero_without_token_contract() {
         wallet_name: "dao_treasury".to_string(),
         alias: Some("DAO Treasury".to_string()),
         public_key: treasury_pubkey.dilithium_pk.to_vec(),
+        kyber_public_key: vec![],
         owner_identity_id: None,
         seed_commitment: Hash::new([0u8; 32]),
         created_at: 0,

@@ -180,6 +180,7 @@ impl Blockchain {
         let wallet_data = crate::transaction::WalletTransactionData {
             wallet_id: wallet_id_hash,
             public_key: vec![],
+            kyber_public_key: vec![],
             wallet_type: "standard".to_string(),
             wallet_name: "test".to_string(),
             alias: None,
@@ -235,5 +236,4 @@ impl Blockchain {
         self.blocks.push(block);
         self.height = next_height;
     }
-
 }

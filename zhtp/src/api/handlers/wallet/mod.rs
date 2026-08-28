@@ -22,7 +22,6 @@ use lib_economy::wallets::{
 };
 use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
 
-
 // Access control imports
 use crate::api::principal::{
     extract_principal_from_request, identity_id_matches_caller, may_read_wallet_subject,
@@ -89,7 +88,8 @@ impl ZhtpRequestHandler for WalletHandler {
         if crate::session_manager::is_request_password_session(&request).await {
             return Ok(create_error_response(
                 ZhtpStatus::Forbidden,
-                "Wallet access requires key authentication (mobile app or seed phrase recovery)".to_string(),
+                "Wallet access requires key authentication (mobile app or seed phrase recovery)"
+                    .to_string(),
             ));
         }
 
@@ -399,7 +399,9 @@ impl WalletHandler {
                     .map(|bytes| {
                         let mut key_id = [0u8; 32];
                         key_id.copy_from_slice(&bytes);
-                        blockchain.token_balance(&sov_token_id, &key_id).unwrap_or(0)
+                        blockchain
+                            .token_balance(&sov_token_id, &key_id)
+                            .unwrap_or(0)
                     })
                     .unwrap_or(0);
                 let wallet_info = WalletInfo {
@@ -471,7 +473,9 @@ impl WalletHandler {
                     .map(|bytes| {
                         let mut key_id = [0u8; 32];
                         key_id.copy_from_slice(bytes);
-                        blockchain.token_balance(&sov_token_id, &key_id).unwrap_or(0)
+                        blockchain
+                            .token_balance(&sov_token_id, &key_id)
+                            .unwrap_or(0)
                     })
                     .unwrap_or(0)
             };
@@ -616,22 +620,27 @@ impl WalletHandler {
                     // fixes the synthetic-PublicKey balance_of bug that returned 0.
                     let native_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                     if blockchain.get_token_contract(&native_token_id).is_some() {
-                        let addr: [u8; 32] = match hex::decode(&wallet_id_hex)
-                            .ok()
-                            .filter(|b| b.len() == 32)
-                        {
-                            Some(bytes) => {
-                                let mut key_id = [0u8; 32];
-                                key_id.copy_from_slice(&bytes);
-                                key_id
-                            }
-                            None => lib_blockchain::integration::crypto_integration::PublicKey::new(
-                                wallet_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
-                            )
-                            .key_id,
-                        };
-                        let token_balance =
-                            blockchain.token_balance(&native_token_id, &addr).unwrap_or(0);
+                        let addr: [u8; 32] =
+                            match hex::decode(&wallet_id_hex).ok().filter(|b| b.len() == 32) {
+                                Some(bytes) => {
+                                    let mut key_id = [0u8; 32];
+                                    key_id.copy_from_slice(&bytes);
+                                    key_id
+                                }
+                                None => {
+                                    lib_blockchain::integration::crypto_integration::PublicKey::new(
+                                        wallet_data
+                                            .public_key
+                                            .as_slice()
+                                            .try_into()
+                                            .unwrap_or([0u8; 2592]),
+                                    )
+                                    .key_id
+                                }
+                            };
+                        let token_balance = blockchain
+                            .token_balance(&native_token_id, &addr)
+                            .unwrap_or(0);
                         if token_balance != available_balance {
                             tracing::debug!(
                                 "Using SOV token balance for wallet {}: {} (was {})",
@@ -808,7 +817,8 @@ impl WalletHandler {
             }
         };
 
-        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id) {
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id)
+        {
             Ok(b) => b,
             Err(resp) => return Ok(resp),
         };
@@ -897,7 +907,8 @@ impl WalletHandler {
             ));
         }
 
-        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id) {
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id)
+        {
             Ok(b) => b,
             Err(resp) => return Ok(resp),
         };
@@ -994,7 +1005,8 @@ impl WalletHandler {
             ));
         }
 
-        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id) {
+        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&req_data.identity_id)
+        {
             Ok(b) => b,
             Err(resp) => return Ok(resp),
         };
@@ -1114,16 +1126,16 @@ impl WalletHandler {
         // Snapshot is keyed by DID (`did:zhtp:<64-hex>`). O(1) lookup first;
         // fall back to value scan only if a non-canonical key was stored.
         let did_key = format!("did:zhtp:{}", hex::encode(identity_id));
-        let identity_data = identity_registry
-            .get(&did_key)
-            .cloned()
-            .or_else(|| {
-                identity_registry.values().find(|data| {
+        let identity_data = identity_registry.get(&did_key).cloned().or_else(|| {
+            identity_registry
+                .values()
+                .find(|data| {
                     lib_identity::did::parse_did_to_identity_id(&data.did)
                         .map(|id| id.as_bytes() == identity_id.as_slice())
                         .unwrap_or(false)
-                }).cloned()
-            })?;
+                })
+                .cloned()
+        })?;
 
         let identity_type = match identity_data.identity_type.to_ascii_lowercase().as_str() {
             "human" => lib_identity::IdentityType::Human,
@@ -1273,8 +1285,9 @@ impl WalletHandler {
         }
         Some(
             lib_blockchain::integration::crypto_integration::PublicKey::new(
-                public_key.try_into().unwrap_or([0u8; 2592])
-            ).key_id,
+                public_key.try_into().unwrap_or([0u8; 2592]),
+            )
+            .key_id,
         )
     }
 
@@ -1613,10 +1626,11 @@ impl WalletHandler {
             ));
         }
 
-        let identity_id_bytes = match Self::parse_identity_id_or_bad_request(&send_req.from_identity) {
-            Ok(b) => b,
-            Err(resp) => return Ok(resp),
-        };
+        let identity_id_bytes =
+            match Self::parse_identity_id_or_bad_request(&send_req.from_identity) {
+                Ok(b) => b,
+                Err(resp) => return Ok(resp),
+            };
 
         // Parse recipient address (validate format)
         let _to_address_bytes = hex::decode(&send_req.to_address)
@@ -1764,8 +1778,8 @@ impl WalletHandler {
             .map_err(|e| anyhow::anyhow!("invalid provision request: {}", e))?;
 
         // Parse wallet_id
-        let wallet_id_bytes = hex::decode(&req.wallet_id)
-            .map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
+        let wallet_id_bytes =
+            hex::decode(&req.wallet_id).map_err(|_| anyhow::anyhow!("invalid wallet_id hex"))?;
         if wallet_id_bytes.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
@@ -1776,11 +1790,12 @@ impl WalletHandler {
         wallet_id_arr.copy_from_slice(&wallet_id_bytes);
 
         // Parse owner identity ID
-        let owner_hex = req.owner_identity_id
+        let owner_hex = req
+            .owner_identity_id
             .strip_prefix("did:zhtp:")
             .unwrap_or(&req.owner_identity_id);
-        let owner_bytes = hex::decode(owner_hex)
-            .map_err(|_| anyhow::anyhow!("invalid owner_identity_id hex"))?;
+        let owner_bytes =
+            hex::decode(owner_hex).map_err(|_| anyhow::anyhow!("invalid owner_identity_id hex"))?;
         if owner_bytes.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
@@ -1837,11 +1852,16 @@ impl WalletHandler {
             wallet_name: format!("{} Wallet (provisioned)", req.wallet_type),
             alias: Some(req.wallet_type.to_lowercase()),
             public_key: public_key_for_wallet,
+            kyber_public_key: vec![],
             owner_identity_id: Some(lib_blockchain::Hash::from_slice(&owner_arr)),
             seed_commitment: lib_blockchain::types::hash::blake3_hash(b"provisioned_wallet"),
             created_at: now,
             registration_fee: 0,
-            capabilities: if req.wallet_type == "Primary" { 0xFF } else { 0x01 },
+            capabilities: if req.wallet_type == "Primary" {
+                0xFF
+            } else {
+                0x01
+            },
             initial_balance: 0,
         };
 
@@ -1887,7 +1907,10 @@ impl WalletHandler {
                     },
                     format!("Provisioned identity {}", &did[..40.min(did.len())]).into_bytes(),
                 );
-                if let Err(e) = blockchain.add_system_transaction(identity_tx, lib_blockchain::SystemOriginator::IdentityProvisioning) {
+                if let Err(e) = blockchain.add_system_transaction(
+                    identity_tx,
+                    lib_blockchain::SystemOriginator::IdentityProvisioning,
+                ) {
                     tracing::warn!("Failed to submit identity tx: {}", e);
                 }
                 // Cache warmup: identity must be visible immediately for QUIC handshake
@@ -1898,7 +1921,9 @@ impl WalletHandler {
                 // lands), but this is acceptable for the handshake check.
                 blockchain.insert_identity_shadow(did.clone(), identity_data);
                 let current_height = blockchain.get_height();
-                blockchain.identity_blocks.insert(did.clone(), current_height);
+                blockchain
+                    .identity_blocks
+                    .insert(did.clone(), current_height);
                 tracing::info!(
                     "📝 Identity registered: {} (system tx + in-memory)",
                     &did[..40.min(did.len())],
@@ -1908,11 +1933,8 @@ impl WalletHandler {
             match blockchain.register_wallet(wallet_data) {
                 Ok(tx_hash) => {
                     if req.welcome_bonus && welcome_bonus_amount > 0 {
-                        let memo = format!(
-                            "WELCOME_BONUS_V1:{}",
-                            hex::encode(wallet_id_arr)
-                        )
-                        .into_bytes();
+                        let memo =
+                            format!("WELCOME_BONUS_V1:{}", hex::encode(wallet_id_arr)).into_bytes();
                         if let Ok(mint_tx) = crate::runtime::token_utils::build_sov_mint_tx(
                             &wallet_id_arr,
                             welcome_bonus_amount,
@@ -1924,10 +1946,7 @@ impl WalletHandler {
                                 mint_tx,
                                 lib_blockchain::SystemOriginator::TreasuryWalletBootstrap,
                             ) {
-                                tracing::warn!(
-                                    "Failed to queue welcome bonus TokenMint: {}",
-                                    e
-                                );
+                                tracing::warn!("Failed to queue welcome bonus TokenMint: {}", e);
                             }
                         } else {
                             tracing::warn!("Failed to build welcome bonus TokenMint");
@@ -1949,12 +1968,10 @@ impl WalletHandler {
                         "tx_hash": hex::encode(tx_hash.as_bytes()),
                     }))
                 }
-                Err(e) => {
-                    Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        format!("Wallet provision failed: {}", e),
-                    ))
-                }
+                Err(e) => Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Wallet provision failed: {}", e),
+                )),
             }
         }
     }

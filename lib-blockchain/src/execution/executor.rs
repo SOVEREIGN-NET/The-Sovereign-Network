@@ -1,4 +1,4 @@
-﻿//! Block Executor (Single Authority)
+//! Block Executor (Single Authority)
 //!
 //! The BlockExecutor is the **single entry point** for applying blocks to state.
 //! No consensus logic reads or writes state outside this module.
@@ -44,13 +44,14 @@ use crate::storage::{
 use crate::transaction::{
     asset_tx::{
         AssetAuthorityTransferCancelPayloadV1, AssetAuthorityTransferPayloadV1,
-        AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
+        AssetBurnBpsUpdatePayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
         AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
-        AssetBurnBpsUpdatePayloadV1, AssetRewardsPolicyUpdatePayloadV1,
+        AssetRewardsPolicyUpdatePayloadV1,
     },
     contract_deployment::ContractDeploymentPayloadV1,
-    contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
-    envelope_signer_matches_sender, hash_transaction, token_creation::TokenCreationPayloadV1,
+    contract_execution::DecodedContractExecutionMemo,
+    decode_canonical_bonding_curve_tx, envelope_signer_matches_sender, hash_transaction,
+    token_creation::TokenCreationPayloadV1,
     CanonicalBondingCurveEnvelope, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
     BONDING_CURVE_SELL_ACTION, BONDING_CURVE_TX_PAYLOAD_LEN, DEFAULT_TOKEN_CREATION_FEE,
 };
@@ -67,8 +68,8 @@ use super::sovereign_asset::{
     require_cbe_curve_module_if_asset_present, require_governance_mint_signer,
     require_treasury_spend_signer, sync_curve_module_from_cbe_econ, AssetLaunchOutcome,
 };
-use crate::contracts::sovereign_asset::SupplyMode;
 use super::tx_apply::{self, CoinbaseOutcome, StateMutator, TransferOutcome};
+use crate::contracts::sovereign_asset::SupplyMode;
 
 use crate::protocol::ProtocolParams;
 use crate::resources::{BlockAccumulator, BlockLimits};
@@ -387,10 +388,12 @@ impl BlockExecutor {
         let mut contract = mutator
             .get_token_contract(&token_id)?
             .unwrap_or_else(crate::contracts::TokenContract::new_sov_native);
-        let current_supply = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply);
-        let new_supply = current_supply.checked_add(amount).ok_or_else(|| {
-            TxApplyError::InvalidType("SOV total supply overflow".to_string())
-        })?;
+        let current_supply = mutator
+            .get_token_supply(&token_id)?
+            .unwrap_or(contract.total_supply);
+        let new_supply = current_supply
+            .checked_add(amount)
+            .ok_or_else(|| TxApplyError::InvalidType("SOV total supply overflow".to_string()))?;
         let balance = mutator.get_token_balance_u128(&token_id, recipient)?;
         let recipient_pk = lib_crypto::PublicKey {
             dilithium_pk: [0u8; 2592],
@@ -614,8 +617,7 @@ impl BlockExecutor {
         self.store.begin_block(block_height)?;
 
         let guard = RollbackGuard::new(self.store.as_ref());
-        let outcome =
-            self.apply_block_inner(block, fee_floor_atoms, treasury_wallet_id_hex)?;
+        let outcome = self.apply_block_inner(block, fee_floor_atoms, treasury_wallet_id_hex)?;
 
         guard.disarm();
         Ok(outcome)
@@ -706,7 +708,9 @@ impl BlockExecutor {
         let mut total_fees: u128 = 0;
         let mut add_total_fees = |fee: u128| -> BlockApplyResult<()> {
             total_fees = total_fees.checked_add(fee).ok_or_else(|| {
-                BlockApplyError::ValidationFailed("total_fees overflow while applying block".to_string())
+                BlockApplyError::ValidationFailed(
+                    "total_fees overflow while applying block".to_string(),
+                )
             })?;
             Ok(())
         };
@@ -812,7 +816,8 @@ impl BlockExecutor {
                 // Credit 20B CBE to the SOV treasury address in the token ledger.
                 let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
                 let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
-                let current = self.store
+                let current = self
+                    .store
                     .get_token_balance(&cbe_token_id, &treasury_addr)
                     .unwrap_or(0);
                 self.store
@@ -823,9 +828,7 @@ impl BlockExecutor {
                     )
                     .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
 
-                tracing::info!(
-                    "Genesis: 20B CBE treasury allocation credited (off-curve, S_c=0)"
-                );
+                tracing::info!("Genesis: 20B CBE treasury allocation credited (off-curve, S_c=0)");
             }
 
             // SOV-native bootstrap (GENESIS-1 / #2729): contract shell + migrated
@@ -954,10 +957,7 @@ impl BlockExecutor {
             // fully prevent (stateful eligibility at different heights).
             let tx_result = match self.apply_tx(&mutator, tx, block_height, block_timestamp) {
                 Ok(outcome) => outcome,
-                Err(TxApplyError::ReplayDropped {
-                    expected,
-                    actual,
-                }) => {
+                Err(TxApplyError::ReplayDropped { expected, actual }) => {
                     tracing::warn!(
                         index = index,
                         height = block_height,
@@ -1438,7 +1438,8 @@ impl BlockExecutor {
             TransactionType::AssetRewardsDelegateRotate => {
                 if !tx.inputs.is_empty() || !tx.outputs.is_empty() {
                     return Err(TxApplyError::InvalidType(
-                        "AssetRewardsDelegateRotate must not have UTXO inputs or outputs".to_string(),
+                        "AssetRewardsDelegateRotate must not have UTXO inputs or outputs"
+                            .to_string(),
                     ));
                 }
                 AssetRewardsDelegateRotatePayloadV1::decode_memo(&tx.memo).map_err(|e| {
@@ -1568,13 +1569,12 @@ impl BlockExecutor {
         for input in &tx.inputs {
             if !input.zk_proof.has_empty_proofs() {
                 // Step 1: Verify the proof's cryptographic validity.
-                match lib_proofs::transaction::ZkTransactionProof::verify_transaction(&input.zk_proof)
-                {
+                match lib_proofs::transaction::ZkTransactionProof::verify_transaction(
+                    &input.zk_proof,
+                ) {
                     Ok(true) => {}
                     Ok(false) => {
-                        return Err(TxApplyError::InvalidType(
-                            "Invalid ZK proof".to_string(),
-                        ))
+                        return Err(TxApplyError::InvalidType("Invalid ZK proof".to_string()))
                     }
                     Err(e) => {
                         return Err(TxApplyError::InvalidType(format!(
@@ -1933,7 +1933,9 @@ impl BlockExecutor {
         let contract_id = Self::dao_state_contract_id();
         let mut proposal_key = b"proposal:".to_vec();
         proposal_key.extend_from_slice(data.proposal_id.as_bytes());
-        let proposal_raw_opt = self.store.get_contract_storage(&contract_id, &proposal_key)?;
+        let proposal_raw_opt = self
+            .store
+            .get_contract_storage(&contract_id, &proposal_key)?;
 
         // CONS-514 (legacy-DAO tolerance): proposals submitted via the raw
         // broadcast path land in `blockchain.dao_proposals` (legacy tally
@@ -1965,8 +1967,8 @@ impl BlockExecutor {
         //         re-reads the proposal from canonical block iteration and
         //         enforces the deadline there.
         let proposal_in_storage = if let Some(proposal_raw) = proposal_raw_opt {
-            let proposal: crate::transaction::DaoProposalData =
-                bincode::deserialize(&proposal_raw).map_err(|e| {
+            let proposal: crate::transaction::DaoProposalData = bincode::deserialize(&proposal_raw)
+                .map_err(|e| {
                     TxApplyError::Internal(format!(
                         "Failed to deserialize proposal for vote check: {e}"
                     ))
@@ -2239,10 +2241,8 @@ impl BlockExecutor {
 
         // â”€â”€ 8. Balance check (reads from token_balances tree) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if is_buy {
-            let sov_bal = mutator.get_token_balance_u128(
-                &Self::canonical_sov_token_id(),
-                &Address::new(sender),
-            )?;
+            let sov_bal = mutator
+                .get_token_balance_u128(&Self::canonical_sov_token_id(), &Address::new(sender))?;
             if sov_bal < amount_in_or_cbe {
                 return Err(TxApplyError::InvalidType(format!(
                     "BUY_CBE: insufficient SOV balance (have {}, need {})",
@@ -2251,10 +2251,7 @@ impl BlockExecutor {
             }
         } else {
             let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
-            let cbe_bal = mutator.get_token_balance_u128(
-                &cbe_token_id,
-                &Address::new(sender),
-            )?;
+            let cbe_bal = mutator.get_token_balance_u128(&cbe_token_id, &Address::new(sender))?;
             if cbe_bal < amount_in_or_cbe {
                 return Err(TxApplyError::InvalidType(format!(
                     "SELL_CBE: insufficient CBE balance (have {}, need {})",
@@ -2344,16 +2341,16 @@ impl BlockExecutor {
         econ.sov_treasury_cbe_balance = econ
             .sov_treasury_cbe_balance
             .checked_add(sov_treasury_credit)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: sov_treasury overflow".to_string()))?;
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("BUY_CBE: sov_treasury overflow".to_string())
+            })?;
         econ.liquidity_pool
             .mint(liquidity_credit)
             .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: liquidity pool: {e}")))?;
         econ.liquidity_pool_balance = econ.liquidity_pool.balance;
 
         // SOVRN audit: liquidity_credit is already in SOV atoms (1:1).
-        econ.sovrn_total_supply = econ
-            .sovrn_total_supply
-            .saturating_add(liquidity_credit);
+        econ.sovrn_total_supply = econ.sovrn_total_supply.saturating_add(liquidity_credit);
 
         econ.satisfy_pre_backed(liquidity_credit);
 
@@ -2374,11 +2371,7 @@ impl BlockExecutor {
         )?;
 
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
-        mutator.credit_token(
-            &cbe_token_id,
-            &Address::new(sender),
-            delta_s,
-        )?;
+        mutator.credit_token(&cbe_token_id, &Address::new(sender), delta_s)?;
 
         // â”€â”€ Event-driven SOV minting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // The 20% SOV treasury portion represents real SOV value entering
@@ -2387,11 +2380,7 @@ impl BlockExecutor {
         let sov_to_mint = sov_treasury_credit;
         if sov_to_mint > 0 {
             let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
-            mutator.credit_token(
-                &Self::canonical_sov_token_id(),
-                &treasury_addr,
-                sov_to_mint,
-            )?;
+            mutator.credit_token(&Self::canonical_sov_token_id(), &treasury_addr, sov_to_mint)?;
             econ.total_sov_minted = econ
                 .total_sov_minted
                 .checked_add(sov_to_mint)
@@ -2460,11 +2449,7 @@ impl BlockExecutor {
 
         // Wire CBE ledger: debit seller's CBE token balance.
         let cbe_token_id = TokenId::new(crate::Blockchain::derive_cbe_token_id_pub());
-        mutator.debit_token(
-            &cbe_token_id,
-            &Address::new(sender),
-            amount_cbe,
-        )?;
+        mutator.debit_token(&cbe_token_id, &Address::new(sender), amount_cbe)?;
 
         // Wire SOV ledger: credit seller's actual SOV token balance.
         mutator.credit_token(
@@ -2504,11 +2489,9 @@ impl BlockExecutor {
         };
         use crate::transaction::core::ProcessPayrollData;
 
-        let data: &ProcessPayrollData = tx
-            .process_payroll_data()
-            .ok_or_else(|| {
-                TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
-            })?;
+        let data: &ProcessPayrollData = tx.process_payroll_data().ok_or_else(|| {
+            TxApplyError::InvalidType("ProcessPayroll missing payload".to_string())
+        })?;
 
         let amount_cbe = data.amount_cbe; // X â€” what the collaborator earns
         let collaborator = data.collaborator_address;
@@ -2531,15 +2514,13 @@ impl BlockExecutor {
         let gross = amount_cbe
             .checked_mul(PAYROLL_GROSS_NUM)
             .and_then(|v| v.checked_div(PAYROLL_GROSS_DEN))
-            .ok_or_else(|| {
-                TxApplyError::InvalidType("PAYROLL_MINT: gross overflow".to_string())
-            })?;
+            .ok_or_else(|| TxApplyError::InvalidType("PAYROLL_MINT: gross overflow".to_string()))?;
 
-        let treasury_credit = gross * PAYROLL_TREASURY_PCT / 100;     // 20%
-        let base_reserve = gross * PAYROLL_RESERVE_PCT / 100;         // 32%
-        let collaborator_credit = amount_cbe;                         // exactly X
+        let treasury_credit = gross * PAYROLL_TREASURY_PCT / 100; // 20%
+        let base_reserve = gross * PAYROLL_RESERVE_PCT / 100; // 32%
+        let collaborator_credit = amount_cbe; // exactly X
         let rounding_dust = gross - treasury_credit - base_reserve - collaborator_credit;
-        let reserve_credit = base_reserve + rounding_dust;            // 32% + dust
+        let reserve_credit = base_reserve + rounding_dust; // 32% + dust
 
         // â”€â”€ 2. Debt ceiling check (against gross) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let mut econ = mutator.get_cbe_economic_state()?;
@@ -2562,7 +2543,9 @@ impl BlockExecutor {
         // Compensation pool tracks what collaborators received.
         econ.compensation_pool
             .mint(collaborator_credit)
-            .map_err(|e| TxApplyError::InvalidType(format!("PAYROLL_MINT: compensation pool: {e}")))?;
+            .map_err(|e| {
+                TxApplyError::InvalidType(format!("PAYROLL_MINT: compensation pool: {e}"))
+            })?;
 
         // SOV treasury CBE balance (20% of gross).
         econ.sov_treasury_cbe_balance = econ
@@ -2627,11 +2610,7 @@ impl BlockExecutor {
 
         // 20% gross â†’ SOV treasury address (held as CBE)
         let treasury_addr = *self.fee_model.protocol_params.fee_sink_address();
-        mutator.credit_token(
-            &cbe_token_id,
-            &treasury_addr,
-            treasury_credit,
-        )?;
+        mutator.credit_token(&cbe_token_id, &treasury_addr, treasury_credit)?;
 
         // 32% gross â†’ locked reserve (no token credit â€” reserve is an accounting
         // entry in BondingCurveEconomicState, not a wallet balance; it backs the
@@ -2985,8 +2964,8 @@ impl BlockExecutor {
         block_timestamp: u64,
     ) -> Result<(), TxApplyError> {
         use lib_types::{
-            ObserverAdmissionRecord, ObserverAdmissionStatus, ObserverNodeInfo,
-            ObserverSponsorBinding, ObserverNetworkBinding, ObserverAdmissionActionMeta,
+            ObserverAdmissionActionMeta, ObserverAdmissionRecord, ObserverAdmissionStatus,
+            ObserverNetworkBinding, ObserverNodeInfo, ObserverSponsorBinding,
         };
 
         let data = tx.register_observer_data().ok_or_else(|| {
@@ -3217,11 +3196,9 @@ impl BlockExecutor {
         use lib_types::ObserverAdmissionActionMeta;
 
         // Replay protection: enforce monotonic SOV nonce on the signer.
-        let (signer_addr, sov_token) =
-            Self::check_observer_nonce(mutator, tx, nonce, op_name)?;
+        let (signer_addr, sov_token) = Self::check_observer_nonce(mutator, tx, nonce, op_name)?;
 
-        let (did_hash, mut record) =
-            Self::load_observer_record(mutator, observer_did, op_name)?;
+        let (did_hash, mut record) = Self::load_observer_record(mutator, observer_did, op_name)?;
 
         // Only the registered sponsor may drive sponsor-scoped lifecycle changes.
         if actor_did != record.sponsor.sponsoring_user_did {
@@ -3414,11 +3391,7 @@ impl BlockExecutor {
             ));
         }
 
-        self.apply_canonical_bonding_curve_tx_at_height(
-            mutator,
-            &envelope.payload,
-            block_height,
-        )
+        self.apply_canonical_bonding_curve_tx_at_height(mutator, &envelope.payload, block_height)
     }
 
     /// Apply a single transaction
@@ -4246,9 +4219,7 @@ fn validate_buy_limits(
     let effective = U256::from(amount_in)
         .checked_mul(U256::from(SCALE))
         .ok_or_else(|| {
-            TxApplyError::InvalidType(
-                "BUY_CBE: slippage overflow in amount_in * SCALE".to_string(),
-            )
+            TxApplyError::InvalidType("BUY_CBE: slippage overflow in amount_in * SCALE".to_string())
         })?
         / U256::from(delta_s);
     if effective > U256::from(max_price) {
@@ -4313,9 +4284,7 @@ mod tests {
     /// loop), gap must still produce TxApplyError::InvalidNonce (hard fail).
     #[test]
     fn test_validate_tx_stateful_distinguishes_replay_from_gap() {
-        use crate::integration::crypto_integration::{
-            PublicKey, Signature, SignatureAlgorithm,
-        };
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
         use crate::transaction::TokenTransferData;
         let store = create_test_store();
         let executor = create_test_executor(store.clone());
@@ -4485,7 +4454,10 @@ mod tests {
         expected.genesis_treasury_allocation = GENESIS_TREASURY_ALLOCATION;
         assert_eq!(state, expected);
         assert_eq!(state.s_c, 0); // off-curve: S_c stays 0
-        assert_eq!(state.genesis_treasury_allocation, GENESIS_TREASURY_ALLOCATION);
+        assert_eq!(
+            state.genesis_treasury_allocation,
+            GENESIS_TREASURY_ALLOCATION
+        );
         assert!(!state.graduated);
         assert!(!state.sell_enabled);
     }
@@ -4503,7 +4475,9 @@ mod tests {
 
         let cfg = crate::genesis::GenesisConfig::from_embedded().expect("embedded genesis");
         assert!(
-            cfg.sov_allocation_entries().expect("sov entries").is_empty(),
+            cfg.sov_allocation_entries()
+                .expect("sov entries")
+                .is_empty(),
             "GENESIS-3 genesis must not include bulk sov_balances"
         );
 
@@ -4566,7 +4540,10 @@ mod tests {
         store.commit_block().unwrap();
 
         assert!(first.sov_contract_installed);
-        assert_eq!(first.sov_balances_credited, 0, "GENESIS-3: no genesis SOV rows");
+        assert_eq!(
+            first.sov_balances_credited, 0,
+            "GENESIS-3: no genesis SOV rows"
+        );
         assert!(!second.sov_contract_installed);
         assert_eq!(second.sov_balances_credited, 0);
     }
@@ -4604,7 +4581,11 @@ mod tests {
         let initial_balance = fee.saturating_mul(2);
         let sov_token = TokenId::new(generate_lib_token_id());
         store
-            .force_set_token_balances(&[(sov_token, Address::new(payer_wallet_id), initial_balance)])
+            .force_set_token_balances(&[(
+                sov_token,
+                Address::new(payer_wallet_id),
+                initial_balance,
+            )])
             .unwrap();
 
         let treasury_id = crate::Blockchain::deterministic_treasury_wallet_id().as_array();
@@ -4649,11 +4630,7 @@ mod tests {
         );
 
         executor
-            .apply_block_committing_domain_fees(
-                &block1,
-                Some(fee),
-                Some(treasury_hex.as_str()),
-            )
+            .apply_block_committing_domain_fees(&block1, Some(fee), Some(treasury_hex.as_str()))
             .expect("domain fee must commit inside block transaction");
 
         let payer_after = store
@@ -4770,7 +4747,7 @@ mod tests {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: create_dummy_public_key(),
-            merkle_leaf: Hash::default(),
+                merkle_leaf: Hash::default(),
             }],
             fee: 10_000, // High enough for testing fee params
             signature: create_dummy_signature(),
@@ -4789,7 +4766,7 @@ mod tests {
                 commitment: Hash::default(),
                 note: Hash::default(),
                 recipient: recipient_pk,
-            merkle_leaf: Hash::default(),
+                merkle_leaf: Hash::default(),
             }],
             fee: 0,
             signature: create_dummy_signature(),
@@ -5068,6 +5045,7 @@ mod tests {
                 wallet_name: "test-wallet".to_string(),
                 alias: None,
                 public_key: vec![0u8; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: None,
                 seed_commitment: Hash::default(),
                 created_at: 0,
@@ -5306,7 +5284,8 @@ mod tests {
     fn test_token_creation_rejected_at_sunset_height() {
         const SUNSET: u64 = 1;
         let store = create_test_store();
-        let executor = create_test_executor(store.clone()).with_token_creation_sunset_height(SUNSET);
+        let executor =
+            create_test_executor(store.clone()).with_token_creation_sunset_height(SUNSET);
 
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
@@ -5314,14 +5293,21 @@ mod tests {
         let block = create_block_with_txs(
             SUNSET,
             genesis.header.block_hash,
-            vec![create_token_creation_tx("At Sunset", "SUN", 1_000_000, [0xBB; 32])],
+            vec![create_token_creation_tx(
+                "At Sunset",
+                "SUN",
+                1_000_000,
+                [0xBB; 32],
+            )],
         );
         let err = executor
             .apply_block(&block)
             .expect_err("TokenCreation at sunset must reject block");
         let msg = format!("{err:?}");
         assert!(
-            msg.contains("TokenCreation") || msg.contains("deprecated") || msg.contains("Forbidden"),
+            msg.contains("TokenCreation")
+                || msg.contains("deprecated")
+                || msg.contains("Forbidden"),
             "expected sunset rejection, got: {msg}"
         );
     }
@@ -5330,7 +5316,8 @@ mod tests {
     fn test_token_creation_allowed_below_sunset_height() {
         const SUNSET: u64 = 2;
         let store = create_test_store();
-        let executor = create_test_executor(store.clone()).with_token_creation_sunset_height(SUNSET);
+        let executor =
+            create_test_executor(store.clone()).with_token_creation_sunset_height(SUNSET);
 
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
@@ -5338,7 +5325,12 @@ mod tests {
         let block = create_block_with_txs(
             SUNSET - 1,
             genesis.header.block_hash,
-            vec![create_token_creation_tx("Below Sunset", "PRE", 1_000_000, [0xAA; 32])],
+            vec![create_token_creation_tx(
+                "Below Sunset",
+                "PRE",
+                1_000_000,
+                [0xAA; 32],
+            )],
         );
         executor
             .apply_block(&block)
@@ -5357,7 +5349,9 @@ mod tests {
         let block = create_block_with_txs(
             SUNSET,
             genesis.header.block_hash,
-            vec![create_token_creation_tx("Sunset", "SUN", 1_000_000, [0xCC; 32])],
+            vec![create_token_creation_tx(
+                "Sunset", "SUN", 1_000_000, [0xCC; 32],
+            )],
         );
         let err = executor
             .apply_block(&block)
@@ -5436,7 +5430,9 @@ mod tests {
         let expected_asset_id = hash_transaction(&tx).as_array();
 
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
-        executor.apply_block(&block1).expect("AssetLaunch should apply");
+        executor
+            .apply_block(&block1)
+            .expect("AssetLaunch should apply");
 
         let asset = store
             .get_sovereign_asset(&expected_asset_id)
@@ -5445,7 +5441,10 @@ mod tests {
         assert_eq!(asset.asset_id, expected_asset_id);
         assert_eq!(asset.id_source, AssetIdSource::LaunchTx);
         assert_eq!(asset.symbol, "BUBL");
-        assert_eq!(asset.dao_class, crate::contracts::sovereign_asset::DaoClass::Fp);
+        assert_eq!(
+            asset.dao_class,
+            crate::contracts::sovereign_asset::DaoClass::Fp
+        );
 
         let creator = Address::new(create_dummy_signature().public_key.key_id);
         let treasury = Address::new([0xAA; 32]);
@@ -5464,7 +5463,9 @@ mod tests {
         let genesis = create_genesis_block();
         executor.apply_block(&genesis).unwrap();
 
-        use crate::rewards_policy::{legacy_bubl_policy, policy_hash, validate_rewards_policy_value};
+        use crate::rewards_policy::{
+            legacy_bubl_policy, policy_hash, validate_rewards_policy_value,
+        };
 
         let delegate_key = [0xDD; 32];
         let policy = legacy_bubl_policy();
@@ -5511,14 +5512,19 @@ mod tests {
         let expected_asset_id = hash_transaction(&tx).as_array();
 
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
-        executor.apply_block(&block1).expect("AssetLaunch should apply");
+        executor
+            .apply_block(&block1)
+            .expect("AssetLaunch should apply");
 
         let asset = store
             .get_sovereign_asset(&expected_asset_id)
             .expect("read asset")
             .expect("asset exists");
         assert!(asset.module_flags.has_rewards());
-        assert_eq!(asset.module_bitmask() & AssetModuleFlags::REWARDS, AssetModuleFlags::REWARDS);
+        assert_eq!(
+            asset.module_bitmask() & AssetModuleFlags::REWARDS,
+            AssetModuleFlags::REWARDS
+        );
 
         let rewards_state = store
             .get_rewards_module_state(&expected_asset_id)
@@ -5619,7 +5625,9 @@ mod tests {
     #[test]
     fn test_asset_launch_curve_module_discoverable_without_bonding_curve_token() {
         use crate::contracts::bonding_curve::canonical::GRAD_THRESHOLD;
-        use crate::contracts::sovereign_asset::{AssetModuleFlags, CurveModuleState, CurvePhase, SupplyMode};
+        use crate::contracts::sovereign_asset::{
+            AssetModuleFlags, CurveModuleState, CurvePhase, SupplyMode,
+        };
         use crate::transaction::asset_tx::{
             build_dao_launch_manifest_bytes, manifest_cid_hash_from_bytes, AssetLaunchPayloadV1,
             CurveLaunchConfig,
@@ -5768,7 +5776,9 @@ mod tests {
 
     fn launch_rewards_asset(executor: &BlockExecutor, genesis: &Block) -> ([u8; 32], Block) {
         use crate::contracts::sovereign_asset::SupplyMode;
-        use crate::rewards_policy::{legacy_bubl_policy, policy_hash, validate_rewards_policy_value};
+        use crate::rewards_policy::{
+            legacy_bubl_policy, policy_hash, validate_rewards_policy_value,
+        };
         use crate::transaction::asset_tx::{AssetLaunchPayloadV1, RewardsLaunchConfig};
 
         let delegate_key = create_dummy_signature().public_key.key_id;
@@ -5825,16 +5835,14 @@ mod tests {
             create_dummy_signature(),
         );
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![bind_tx]);
-        executor.apply_block(&block2).expect("bind asset_id in policy");
+        executor
+            .apply_block(&block2)
+            .expect("bind asset_id in policy");
 
         (asset_id, block2)
     }
 
-    fn policy_update_tx(
-        asset_id: [u8; 32],
-        welcome_atoms: u128,
-        signer: Signature,
-    ) -> Transaction {
+    fn policy_update_tx(asset_id: [u8; 32], welcome_atoms: u128, signer: Signature) -> Transaction {
         use crate::rewards_policy::{policy_hash, validate_rewards_policy_value};
         use crate::transaction::asset_tx::{
             AssetAuthorityProof, AssetRewardsPolicyUpdatePayloadV1, RewardsPolicyUpdateConfig,
@@ -5882,11 +5890,7 @@ mod tests {
 
         let (asset_id, launch_block) = launch_rewards_asset(&executor, &genesis);
         let increased_welcome = WELCOME * 2;
-        let update_tx = policy_update_tx(
-            asset_id,
-            increased_welcome,
-            create_dummy_signature(),
-        );
+        let update_tx = policy_update_tx(asset_id, increased_welcome, create_dummy_signature());
         let block3 = create_block_with_txs(3, launch_block.header.block_hash, vec![update_tx]);
         executor.apply_block(&block3).expect("policy increase");
 
@@ -5931,7 +5935,9 @@ mod tests {
 
         let update_tx = policy_update_tx(asset_id, WELCOME / 2, create_dummy_signature());
         let block3 = create_block_with_txs(3, launch_block.header.block_hash, vec![update_tx]);
-        executor.apply_block(&block3).expect("policy decrease queue");
+        executor
+            .apply_block(&block3)
+            .expect("policy decrease queue");
 
         let state = store
             .get_rewards_module_state(&asset_id)
@@ -6386,11 +6392,7 @@ mod tests {
         // proposal lives in block history but not in contract_storage.
         let proposal_id = proposal_id_for("legacy-only-proposal");
         let proposal_tx = create_dao_proposal_tx(proposal_id);
-        let proposal_block = create_block_with_txs(
-            1,
-            genesis.header.block_hash,
-            vec![proposal_tx],
-        );
+        let proposal_block = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
         store.begin_block(1).unwrap();
         store.append_block(&proposal_block).unwrap();
         store.commit_block().unwrap();
@@ -6412,11 +6414,8 @@ mod tests {
         // Pre-fix this would error with "DaoVote references unknown
         // proposal" and halt the block; post-fix it applies cleanly.
         let vote_tx = create_dao_vote_tx(proposal_id, "alice", "Yes");
-        let vote_block = create_block_with_txs(
-            2,
-            proposal_block.header.block_hash,
-            vec![vote_tx.clone()],
-        );
+        let vote_block =
+            create_block_with_txs(2, proposal_block.header.block_hash, vec![vote_tx.clone()]);
         executor
             .apply_block(&vote_block)
             .expect("vote on legacy-only proposal must apply, not halt the block");
@@ -6673,8 +6672,14 @@ mod tests {
         let econ = store.get_cbe_economic_state().unwrap();
         assert_eq!(econ.s_c, delta_s, "supply must equal minted tokens");
         assert!(econ.reserve_balance > 0, "reserve (32%) must be credited");
-        assert!(econ.sov_treasury_cbe_balance > 0, "sov treasury (20%) must be credited");
-        assert!(econ.liquidity_pool_balance > 0, "liquidity pool (48%) must be credited");
+        assert!(
+            econ.sov_treasury_cbe_balance > 0,
+            "sov treasury (20%) must be credited"
+        );
+        assert!(
+            econ.liquidity_pool_balance > 0,
+            "liquidity pool (48%) must be credited"
+        );
         assert_eq!(
             econ.reserve_balance + econ.sov_treasury_cbe_balance + econ.liquidity_pool_balance,
             amount_in,
@@ -7428,12 +7433,20 @@ mod tests {
     // =========================================================================
 
     /// Helper: seed SOV balance inside a block-scoped write at the given height.
-    fn seed_sov_balance(store: &Arc<dyn BlockchainStore>, key_id: [u8; 32], amount: u64, block_height: u64, prev_hash: Hash) {
+    fn seed_sov_balance(
+        store: &Arc<dyn BlockchainStore>,
+        key_id: [u8; 32],
+        amount: u64,
+        block_height: u64,
+        prev_hash: Hash,
+    ) {
         let token_id = TokenId::new(crate::contracts::utils::generate_lib_token_id());
         let addr = Address::new(key_id);
         let block = create_block_at_height(block_height, prev_hash);
         store.begin_block(block_height).unwrap();
-        store.set_token_balance(&token_id, &addr, amount as u128).unwrap();
+        store
+            .set_token_balance(&token_id, &addr, amount as u128)
+            .unwrap();
         store.append_block(&block).unwrap();
         store.commit_block().unwrap();
     }
@@ -7527,7 +7540,10 @@ mod tests {
 
         let block2 = create_block_with_txs(2, Hash::new(block1_hash.0), vec![tx]);
         let result = executor.apply_block(&block2);
-        assert!(result.is_err(), "Should reject treasury allocation with insufficient balance");
+        assert!(
+            result.is_err(),
+            "Should reject treasury allocation with insufficient balance"
+        );
     }
 
     #[test]
@@ -7549,7 +7565,9 @@ mod tests {
         {
             let sov_token_id = TokenId::new(crate::contracts::utils::generate_lib_token_id());
             let addr = Address::new(buyer_key);
-            store.set_token_balance(&sov_token_id, &addr, amount_in).unwrap();
+            store
+                .set_token_balance(&sov_token_id, &addr, amount_in)
+                .unwrap();
 
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
@@ -7619,11 +7637,11 @@ mod tests {
     #[test]
     #[cfg(feature = "real-proofs")]
     fn test_real_zk_transaction_proof_end_to_end() {
+        use crate::storage::{OutPoint, TxHash};
         use crate::transaction::hashing::hash_transaction;
         use lib_fees::compute_fee_v2;
         use lib_proofs::transaction::ZkTransactionProof;
         use lib_types::fees::FeeParams;
-        use crate::storage::{OutPoint, TxHash};
 
         let store = create_test_store();
         let executor = BlockExecutor::with_store(store.clone());
@@ -7672,11 +7690,7 @@ mod tests {
             payload: crate::transaction::TransactionPayload::None,
         };
 
-        let funded_block = create_block_with_txs(
-            1,
-            genesis.header.block_hash,
-            vec![coinbase_tx],
-        );
+        let funded_block = create_block_with_txs(1, genesis.header.block_hash, vec![coinbase_tx]);
         executor.apply_block(&funded_block).unwrap();
 
         let coinbase_tx_hash = hash_transaction(&funded_block.transactions[0]);
@@ -7753,13 +7767,16 @@ mod tests {
 
         let fee_params = FeeParams::default();
         let total_fee = compute_fee_v2(&fee_input, &fee_params);
-        assert!(total_fee > 0, "Total fee should include ZK verification cost");
+        assert!(
+            total_fee > 0,
+            "Total fee should include ZK verification cost"
+        );
 
         // 5. Full block application should succeed with a real ZK proof
         let spend_block = create_block_with_txs(2, funded_block.header.block_hash, vec![tx]);
-        executor.apply_block(&spend_block).expect(
-            "Transaction with real ZK proof should be accepted into the chain"
-        );
+        executor
+            .apply_block(&spend_block)
+            .expect("Transaction with real ZK proof should be accepted into the chain");
         assert_eq!(store.latest_height().unwrap(), 2);
 
         // 6. The spent UTXO should no longer have a Merkle proof in the store.
@@ -7774,7 +7791,7 @@ mod tests {
     // =========================================================================
 
     use crate::transaction::{
-        RegisterObserverData, SuspendObserverData, RevokeObserverData, ReauthorizeObserverData,
+        ReauthorizeObserverData, RegisterObserverData, RevokeObserverData, SuspendObserverData,
     };
 
     /// Compute the signer key_id used by the dummy observer test signature.
@@ -7924,7 +7941,10 @@ mod tests {
 
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node1".to_string());
         let record = store.get_observer_record(&did_hash).unwrap();
-        assert!(record.is_some(), "observer record should exist after registration");
+        assert!(
+            record.is_some(),
+            "observer record should exist after registration"
+        );
         let record = record.unwrap();
         assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Pending);
         assert_eq!(record.node_info.observer_node_did, "did:zhtp:node1");
@@ -7943,7 +7963,10 @@ mod tests {
         // duplicate-DID, not nonce mismatch).
         let tx2 = make_register_observer_tx_with_nonce("did:zhtp:node2", "did:zhtp:sponsor1", 1);
         let result = apply_block_with_tx(&executor, 3, block1.header.block_hash, tx2);
-        assert!(result.is_err(), "duplicate observer registration should be rejected");
+        assert!(
+            result.is_err(),
+            "duplicate observer registration should be rejected"
+        );
     }
 
     #[test]
@@ -7951,11 +7974,7 @@ mod tests {
         let (store, executor, prev_hash) = setup_observer_test();
 
         // Register observer at height 2 (nonce 0).
-        let tx_reg = make_register_observer_tx_with_nonce(
-            "did:zhtp:node3",
-            "did:zhtp:sponsor1",
-            0,
-        );
+        let tx_reg = make_register_observer_tx_with_nonce("did:zhtp:node3", "did:zhtp:sponsor1", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
@@ -7969,59 +7988,45 @@ mod tests {
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node3".to_string());
 
         // Now suspend at height 4 (signer nonce is 1 because register consumed 0).
-        let tx_sus = make_suspend_observer_tx_with_nonce(
-            "did:zhtp:node3",
-            "did:zhtp:sponsor1",
-            1,
-        );
+        let tx_sus = make_suspend_observer_tx_with_nonce("did:zhtp:node3", "did:zhtp:sponsor1", 1);
         let block4 = create_block_with_txs(4, block2.header.block_hash, vec![tx_sus]);
         executor.apply_block(&block4).unwrap();
 
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
         assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Suspended);
         assert!(record.action_meta.is_some());
-        assert_eq!(record.action_meta.as_ref().unwrap().actor_did, "did:zhtp:sponsor1");
+        assert_eq!(
+            record.action_meta.as_ref().unwrap().actor_did,
+            "did:zhtp:sponsor1"
+        );
     }
 
     #[test]
     fn test_suspend_pending_observer_rejected() {
         let (_store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx_with_nonce(
-            "did:zhtp:node4",
-            "did:zhtp:sponsor1",
-            0,
-        );
+        let tx_reg = make_register_observer_tx_with_nonce("did:zhtp:node4", "did:zhtp:sponsor1", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
         // Try to suspend a Pending observer (must fail â€” only Active can be suspended).
-        let tx_sus = make_suspend_observer_tx_with_nonce(
-            "did:zhtp:node4",
-            "did:zhtp:sponsor1",
-            1,
-        );
+        let tx_sus = make_suspend_observer_tx_with_nonce("did:zhtp:node4", "did:zhtp:sponsor1", 1);
         let result = apply_block_with_tx(&executor, 3, block2.header.block_hash, tx_sus);
-        assert!(result.is_err(), "suspending a Pending observer should be rejected");
+        assert!(
+            result.is_err(),
+            "suspending a Pending observer should be rejected"
+        );
     }
 
     #[test]
     fn test_revoke_observer() {
         let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx_with_nonce(
-            "did:zhtp:node5",
-            "did:zhtp:sponsor1",
-            0,
-        );
+        let tx_reg = make_register_observer_tx_with_nonce("did:zhtp:node5", "did:zhtp:sponsor1", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
-        let tx_rev = make_revoke_observer_tx_with_nonce(
-            "did:zhtp:node5",
-            "did:zhtp:sponsor1",
-            1,
-        );
+        let tx_rev = make_revoke_observer_tx_with_nonce("did:zhtp:node5", "did:zhtp:sponsor1", 1);
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
         executor.apply_block(&block3).unwrap();
 
@@ -8035,41 +8040,28 @@ mod tests {
     fn test_double_revoke_rejected() {
         let (_store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx_with_nonce(
-            "did:zhtp:node6",
-            "did:zhtp:sponsor1",
-            0,
-        );
+        let tx_reg = make_register_observer_tx_with_nonce("did:zhtp:node6", "did:zhtp:sponsor1", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
-        let tx_rev1 = make_revoke_observer_tx_with_nonce(
-            "did:zhtp:node6",
-            "did:zhtp:sponsor1",
-            1,
-        );
+        let tx_rev1 = make_revoke_observer_tx_with_nonce("did:zhtp:node6", "did:zhtp:sponsor1", 1);
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev1]);
         executor.apply_block(&block3).unwrap();
 
         // Second revoke must fail (status no longer Active/Pending/Suspended).
-        let tx_rev2 = make_revoke_observer_tx_with_nonce(
-            "did:zhtp:node6",
-            "did:zhtp:sponsor1",
-            2,
-        );
+        let tx_rev2 = make_revoke_observer_tx_with_nonce("did:zhtp:node6", "did:zhtp:sponsor1", 2);
         let result = apply_block_with_tx(&executor, 4, block3.header.block_hash, tx_rev2);
-        assert!(result.is_err(), "double-revoking an observer should be rejected");
+        assert!(
+            result.is_err(),
+            "double-revoking an observer should be rejected"
+        );
     }
 
     #[test]
     fn test_reauthorize_suspended_observer() {
         let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx_with_nonce(
-            "did:zhtp:node7",
-            "did:zhtp:sponsor1",
-            0,
-        );
+        let tx_reg = make_register_observer_tx_with_nonce("did:zhtp:node7", "did:zhtp:sponsor1", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
@@ -8083,28 +8075,24 @@ mod tests {
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node7".to_string());
 
         // Reauthorize as original sponsor at height 4 (nonce 1).
-        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
-            "did:zhtp:node7",
-            "did:zhtp:sponsor1",
-            1,
-        );
+        let tx_rauth =
+            make_reauthorize_observer_tx_with_nonce("did:zhtp:node7", "did:zhtp:sponsor1", 1);
         let block4 = create_block_with_txs(4, block2.header.block_hash, vec![tx_rauth]);
         executor.apply_block(&block4).unwrap();
 
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
         assert_eq!(record.status, lib_types::ObserverAdmissionStatus::Active);
-        assert!(record.action_meta.is_none(), "action_meta should be cleared on reauthorization");
+        assert!(
+            record.action_meta.is_none(),
+            "action_meta should be cleared on reauthorization"
+        );
     }
 
     #[test]
     fn test_reauthorize_wrong_sponsor_rejected() {
         let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_reg = make_register_observer_tx_with_nonce(
-            "did:zhtp:node8",
-            "did:zhtp:sponsor1",
-            0,
-        );
+        let tx_reg = make_register_observer_tx_with_nonce("did:zhtp:node8", "did:zhtp:sponsor1", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_reg]);
         executor.apply_block(&block2).unwrap();
 
@@ -8117,13 +8105,13 @@ mod tests {
         );
 
         // Wrong sponsor at height 4 (nonce 1).
-        let tx_rauth = make_reauthorize_observer_tx_with_nonce(
-            "did:zhtp:node8",
-            "did:zhtp:impostor",
-            1,
-        );
+        let tx_rauth =
+            make_reauthorize_observer_tx_with_nonce("did:zhtp:node8", "did:zhtp:impostor", 1);
         let result = apply_block_with_tx(&executor, 4, block2.header.block_hash, tx_rauth);
-        assert!(result.is_err(), "reauthorize by wrong sponsor must be rejected");
+        assert!(
+            result.is_err(),
+            "reauthorize by wrong sponsor must be rejected"
+        );
     }
 
     #[test]
@@ -8136,26 +8124,21 @@ mod tests {
         let did_hash = crate::storage::did_to_hash(&"did:zhtp:node9".to_string());
         let record = store.get_observer_record(&did_hash).unwrap().unwrap();
         assert_eq!(record.sponsor.sponsoring_user_did, "did:zhtp:sponsor_abc");
-        assert_eq!(record.sponsor.proof_level, lib_types::ObserverProofLevel::Basic);
+        assert_eq!(
+            record.sponsor.proof_level,
+            lib_types::ObserverProofLevel::Basic
+        );
     }
 
     #[test]
     fn test_iter_observer_records_returns_all_admitted() {
         let (store, executor, prev_hash) = setup_observer_test();
 
-        let tx_a = make_register_observer_tx_with_nonce(
-            "did:zhtp:nodeA",
-            "did:zhtp:sponsorX",
-            0,
-        );
+        let tx_a = make_register_observer_tx_with_nonce("did:zhtp:nodeA", "did:zhtp:sponsorX", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
         executor.apply_block(&block2).unwrap();
 
-        let tx_b = make_register_observer_tx_with_nonce(
-            "did:zhtp:nodeB",
-            "did:zhtp:sponsorY",
-            1,
-        );
+        let tx_b = make_register_observer_tx_with_nonce("did:zhtp:nodeB", "did:zhtp:sponsorY", 1);
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
         executor.apply_block(&block3).unwrap();
 
@@ -8185,24 +8168,22 @@ mod tests {
         let run = || -> Vec<lib_types::ObserverAdmissionRecord> {
             let (store, executor, prev_hash) = setup_observer_test();
 
-            let tx_a = make_register_observer_tx_with_nonce(
-                "did:zhtp:repA",
-                "did:zhtp:repSponsorA",
-                0,
-            );
+            let tx_a =
+                make_register_observer_tx_with_nonce("did:zhtp:repA", "did:zhtp:repSponsorA", 0);
             let block2 = create_block_with_txs(2, prev_hash, vec![tx_a]);
             executor.apply_block(&block2).unwrap();
 
-            let tx_b = make_register_observer_tx_with_nonce(
-                "did:zhtp:repB",
-                "did:zhtp:repSponsorB",
-                1,
-            );
+            let tx_b =
+                make_register_observer_tx_with_nonce("did:zhtp:repB", "did:zhtp:repSponsorB", 1);
             let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_b]);
             executor.apply_block(&block3).unwrap();
 
             let mut all = store.iter_observer_records().unwrap();
-            all.sort_by(|a, b| a.node_info.observer_node_did.cmp(&b.node_info.observer_node_did));
+            all.sort_by(|a, b| {
+                a.node_info
+                    .observer_node_did
+                    .cmp(&b.node_info.observer_node_did)
+            });
             all
         };
 
@@ -8222,11 +8203,8 @@ mod tests {
         // application with a nonce-mismatch error (signer nonce is now 1).
         let (_store, executor, prev_hash) = setup_observer_test();
 
-        let tx1 = make_register_observer_tx_with_nonce(
-            "did:zhtp:replay_a",
-            "did:zhtp:sponsor_replay",
-            0,
-        );
+        let tx1 =
+            make_register_observer_tx_with_nonce("did:zhtp:replay_a", "did:zhtp:sponsor_replay", 0);
         let block2 = create_block_with_txs(2, prev_hash, vec![tx1.clone()]);
         executor.apply_block(&block2).unwrap();
 
@@ -8303,11 +8281,8 @@ mod tests {
         let prev_hash = apply_genesis_and_get_hash(&executor);
         // Note: NO seed_observer_test_signer_sov() call.
 
-        let tx = make_register_observer_tx_with_nonce(
-            "did:zhtp:no_funds",
-            "did:zhtp:sponsor_nofund",
-            0,
-        );
+        let tx =
+            make_register_observer_tx_with_nonce("did:zhtp:no_funds", "did:zhtp:sponsor_nofund", 0);
         let result = apply_block_with_tx(&executor, 1, prev_hash, tx);
         assert!(
             result.is_err(),
@@ -8422,11 +8397,7 @@ mod tests {
         let block2 = create_block_with_txs(2, prev_hash, vec![tx1]);
         executor.apply_block(&block2).unwrap();
 
-        let tx_rev = make_revoke_observer_tx_with_nonce(
-            "did:zhtp:rq1",
-            "did:zhtp:sponsorRQ",
-            1,
-        );
+        let tx_rev = make_revoke_observer_tx_with_nonce("did:zhtp:rq1", "did:zhtp:sponsorRQ", 1);
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![tx_rev]);
         executor.apply_block(&block3).unwrap();
 
