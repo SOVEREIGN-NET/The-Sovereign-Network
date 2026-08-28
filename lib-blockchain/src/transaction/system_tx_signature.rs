@@ -413,4 +413,118 @@ mod tests {
         );
         assert!(allows_empty_system_signature(&good_tx));
     }
+
+    /// Regression test for #2978 sub-issue 1: wallet IDs for remote-client
+    /// registrations must derive from the client's PQC keys (NOT a server-side
+    /// HD seed) and must pass the empty-signature wallet binding check.
+    #[tokio::test]
+    async fn client_pqc_wallet_ids_derive_from_keys_and_pass_empty_sig_binding() {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::core::WalletTransactionData;
+        use crate::types::hash::blake3_hash;
+        use crate::types::Hash;
+
+        // Known client Dilithium5 + Kyber1024 keypair.
+        let keypair = lib_crypto::generate_keypair().expect("client keypair");
+        let dilithium_pk = keypair.public_key.dilithium_pk;
+        let kyber_pk = keypair.public_key.kyber_pk.to_vec();
+
+        // Real remote-client registration path (#2979).
+        let mut manager = lib_identity::IdentityManager::new();
+        let mut economic_model = lib_identity::economics::EconomicModel::new();
+        let did = format!("did:zhtp:{}", hex::encode(keypair.public_key.key_id));
+        let result = manager
+            .register_external_citizen_identity(
+                did,
+                keypair.public_key.clone(),
+                kyber_pk.clone(),
+                "test-client-device".to_string(),
+                Some("pqc-client".to_string()),
+                1_700_000_000u64,
+                &mut economic_model,
+            )
+            .await
+            .expect("external citizen registration");
+
+        // primary_wallet_id == blake3(dilithium_pk || kyber_pk)
+        let mut primary_input = dilithium_pk.to_vec();
+        primary_input.extend_from_slice(&kyber_pk);
+        let expected_primary = blake3_hash(&primary_input);
+        assert_eq!(result.primary_wallet_id.0, expected_primary.as_array());
+
+        // ubi_wallet_id == blake3(primary_wallet_id || "ubi")
+        let mut ubi_input = result.primary_wallet_id.0.to_vec();
+        ubi_input.extend_from_slice(b"ubi");
+        let expected_ubi = blake3_hash(&ubi_input);
+        assert_eq!(result.ubi_wallet_id.0, expected_ubi.as_array());
+
+        // savings_wallet_id == blake3(primary_wallet_id || "savings")
+        let mut savings_input = result.primary_wallet_id.0.to_vec();
+        savings_input.extend_from_slice(b"savings");
+        let expected_savings = blake3_hash(&savings_input);
+        assert_eq!(result.savings_wallet_id.0, expected_savings.as_array());
+
+        // Client form: wallet tx carrying kyber, wallet_id == blake3(pk || kyber_pk).
+        let client_wallet = WalletTransactionData {
+            wallet_id: expected_primary,
+            wallet_type: "Primary".to_string(),
+            wallet_name: "Primary Wallet".to_string(),
+            alias: Some("primary".to_string()),
+            public_key: dilithium_pk.to_vec(),
+            kyber_public_key: kyber_pk,
+            owner_identity_id: None,
+            seed_commitment: Hash::default(),
+            created_at: 1_700_000_000,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+        let client_tx = Transaction::new_wallet_registration(
+            client_wallet,
+            vec![],
+            Signature {
+                signature: Vec::new(),
+                public_key: PublicKey::new(dilithium_pk),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 1,
+            },
+            b"wallet-reg:client".to_vec(),
+        );
+        assert!(
+            allows_empty_system_signature(&client_tx),
+            "client wallet (pk || kyber binding) must pass empty-sig check"
+        );
+
+        // Legacy/validator form: zero kyber, wallet_id == blake3(pk).
+        let legacy_wallet_id = blake3_hash(&dilithium_pk);
+        let legacy_wallet = WalletTransactionData {
+            wallet_id: legacy_wallet_id,
+            wallet_type: "Primary".to_string(),
+            wallet_name: "Legacy Wallet".to_string(),
+            alias: None,
+            public_key: dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
+            owner_identity_id: None,
+            seed_commitment: Hash::default(),
+            created_at: 1,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+        let legacy_tx = Transaction::new_wallet_registration(
+            legacy_wallet,
+            vec![],
+            Signature {
+                signature: Vec::new(),
+                public_key: PublicKey::new(dilithium_pk),
+                algorithm: SignatureAlgorithm::DEFAULT,
+                timestamp: 1,
+            },
+            b"wallet-reg:legacy".to_vec(),
+        );
+        assert!(
+            allows_empty_system_signature(&legacy_tx),
+            "legacy wallet (blake3(pk) binding) must pass empty-sig check"
+        );
+    }
 }
