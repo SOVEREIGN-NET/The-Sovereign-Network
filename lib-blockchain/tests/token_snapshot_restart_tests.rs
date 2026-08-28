@@ -14,9 +14,16 @@ use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 mod common;
 
-fn test_pubkey(_id: u8) -> PublicKey { common::crypto_fixtures::dummy_public_key() }
+fn test_pubkey(_id: u8) -> PublicKey {
+    common::crypto_fixtures::dummy_public_key()
+}
 fn test_signature(pubkey: &PublicKey) -> Signature {
-    Signature { signature: vec![0u8; 64], public_key: pubkey.clone(), algorithm: SignatureAlgorithm::DEFAULT, timestamp: 0 }
+    Signature {
+        signature: vec![0u8; 64],
+        public_key: pubkey.clone(),
+        algorithm: SignatureAlgorithm::DEFAULT,
+        timestamp: 0,
+    }
 }
 
 fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Transaction {
@@ -27,6 +34,7 @@ fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Tran
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
             alias: None,
             public_key: owner_pubkey.dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             owner_identity_id: None,
             seed_commitment: Hash::zero(),
             created_at: 1_700_000_000,
@@ -73,8 +81,12 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
     )
 }
 
-fn create_genesis_block() -> Block { common::block_builders::genesis_block() }
-fn create_block_at_height(height: u64, prev_hash: Hash, txs: Vec<Transaction>) -> Block { common::block_builders::block_at_height_with_txs(height, prev_hash, txs) }
+fn create_genesis_block() -> Block {
+    common::block_builders::genesis_block()
+}
+fn create_block_at_height(height: u64, prev_hash: Hash, txs: Vec<Transaction>) -> Block {
+    common::block_builders::block_at_height_with_txs(height, prev_hash, txs)
+}
 
 fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
     // Match the executor's wallet_key_for_sov format:
@@ -105,7 +117,7 @@ fn test_restart_replays_committed_token_state_and_nonces() -> Result<()> {
     let genesis = create_genesis_block();
     let executor = BlockExecutor::from_config(Arc::clone(&store), ExecutorConfig::default());
     executor.apply_block(&genesis)?;
-    
+
     // Create and apply block 1 with wallet registrations and mint
     let block1 = create_block_at_height(
         1,
@@ -117,7 +129,7 @@ fn test_restart_replays_committed_token_state_and_nonces() -> Result<()> {
         ],
     );
     executor.apply_block(&block1)?;
-    
+
     // Create and apply block 2 with transfer (separate block due to read-your-writes limitation)
     let block2 = create_block_at_height(
         2,
@@ -164,7 +176,7 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
     let genesis = create_genesis_block();
     let executor = BlockExecutor::from_config(Arc::clone(&store), ExecutorConfig::default());
     executor.apply_block(&genesis)?;
-    
+
     // Create and apply block 1 with wallet registrations and mint
     let block1 = create_block_at_height(
         1,
@@ -176,7 +188,7 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
         ],
     );
     executor.apply_block(&block1)?;
-    
+
     // Create and apply block 2 with transfer (separate block due to read-your-writes limitation)
     let block2 = create_block_at_height(
         2,
@@ -209,7 +221,10 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
     assert_eq!(token_b.balance_of(&wallet_key(&recipient_wallet)), 2_500);
     assert_eq!(node_a.get_token_nonce(&sov_token_id, &sender_wallet), 1);
     assert_eq!(node_b.get_token_nonce(&sov_token_id, &sender_wallet), 1);
-    assert_eq!(node_a.token_nonces_snapshot(), node_b.token_nonces_snapshot());
+    assert_eq!(
+        node_a.token_nonces_snapshot(),
+        node_b.token_nonces_snapshot()
+    );
     assert_eq!(node_a.token_contract_count(), node_b.token_contract_count());
 
     Ok(())
@@ -230,7 +245,7 @@ fn test_restart_preserves_sov_supply_and_recipient_count() -> Result<()> {
     let genesis = create_genesis_block();
     let executor = BlockExecutor::from_config(Arc::clone(&store), ExecutorConfig::default());
     executor.apply_block(&genesis)?;
-    
+
     // Create and apply block 1 with wallet registrations and mint
     let block1 = create_block_at_height(
         1,
@@ -243,20 +258,34 @@ fn test_restart_preserves_sov_supply_and_recipient_count() -> Result<()> {
         ],
     );
     executor.apply_block(&block1)?;
-    
+
     // Create and apply block 2 with first transfer
     let block2 = create_block_at_height(
         2,
         block1.header.block_hash,
-        vec![token_transfer_tx(&signer, sov_token_id, alice_wallet, bob_wallet, 5_000, 0)],
+        vec![token_transfer_tx(
+            &signer,
+            sov_token_id,
+            alice_wallet,
+            bob_wallet,
+            5_000,
+            0,
+        )],
     );
     executor.apply_block(&block2)?;
-    
+
     // Create and apply block 3 with second transfer (separate block due to nonce increment)
     let block3 = create_block_at_height(
         3,
         block2.header.block_hash,
-        vec![token_transfer_tx(&signer, sov_token_id, alice_wallet, carol_wallet, 2_000, 1)],
+        vec![token_transfer_tx(
+            &signer,
+            sov_token_id,
+            alice_wallet,
+            carol_wallet,
+            2_000,
+            1,
+        )],
     );
     executor.apply_block(&block3)?;
 
@@ -313,12 +342,13 @@ fn test_uncommitted_block_does_not_leak_token_state_after_restart() -> Result<()
     let sov_token_id = generate_lib_token_id();
 
     let committed_store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(&db_path)?);
-    
+
     // Create and apply genesis first
     let genesis = create_genesis_block();
-    let executor = BlockExecutor::from_config(Arc::clone(&committed_store), ExecutorConfig::default());
+    let executor =
+        BlockExecutor::from_config(Arc::clone(&committed_store), ExecutorConfig::default());
     executor.apply_block(&genesis)?;
-    
+
     // Create and apply block 1 with token transactions
     let test_block = create_block_at_height(
         1,

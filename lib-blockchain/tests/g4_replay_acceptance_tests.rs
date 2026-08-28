@@ -42,12 +42,12 @@ use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::genesis::GenesisConfig;
 use lib_blockchain::storage::{Address, TokenId};
 
+use lib_blockchain::transaction::DEFAULT_TOKEN_CREATION_FEE;
 use lib_blockchain::transaction::{
     token_creation::TokenCreationPayloadV1, TokenMintData, TokenTransferData, Transaction,
     TransactionPayload, WalletTransactionData,
 };
 use lib_blockchain::types::Hash;
-use lib_blockchain::transaction::DEFAULT_TOKEN_CREATION_FEE;
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::Blockchain;
 use tempfile::TempDir;
@@ -81,6 +81,7 @@ fn create_wallet_registration_tx(wallet_id: [u8; 32]) -> Transaction {
             wallet_name: "g4-repro".to_string(),
             wallet_type: "Primary".to_string(),
             public_key: owner.dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             capabilities: 0,
             created_at: 0,
             registration_fee: 0,
@@ -146,10 +147,7 @@ fn create_sov_transfer_tx_version(
     }
 }
 
-fn create_token_creation_tx(
-    creator_key_id: [u8; 32],
-    treasury_recipient: [u8; 32],
-) -> Transaction {
+fn create_token_creation_tx(creator_key_id: [u8; 32], treasury_recipient: [u8; 32]) -> Transaction {
     let payload = TokenCreationPayloadV1 {
         name: "Bubble".to_string(),
         symbol: "BUBL".to_string(),
@@ -275,7 +273,9 @@ fn build_dao_token_activity_chain() -> (Vec<lib_blockchain::block::Block>, DaoTo
     let block3 = block_at_height_with_txs(
         3,
         block2.header.block_hash,
-        vec![create_dao_token_transfer_tx(token_id, creator, recipient, 10_000, 0)],
+        vec![create_dao_token_transfer_tx(
+            token_id, creator, recipient, 10_000, 0,
+        )],
     );
 
     let expect = DaoTokenExpectation {
@@ -305,13 +305,12 @@ fn run_wipe_replay_parity(
         checkpoint_height
     );
 
-    let reference =
-        ReplayCheckpointSnapshot::from_store_at_height(
-            &*live_store,
-            checkpoint_height,
-            sample_wallets,
-            dao_expectations,
-        );
+    let reference = ReplayCheckpointSnapshot::from_store_at_height(
+        &*live_store,
+        checkpoint_height,
+        sample_wallets,
+        dao_expectations,
+    );
 
     let exported = live_sync.export_all_blocks().expect("export");
 
@@ -392,13 +391,17 @@ fn test_g4_wallet74010_sequence_isolated_replay() {
         .get_token_balance(&sov, &Address::new(wallet))
         .expect("read balance");
     assert_eq!(
-        bal, 4100 * ATOMS,
+        bal,
+        4100 * ATOMS,
         "after 5000 mint, zero-net 50 self-transfer, 900 outbound: have {bal}"
     );
     let nonce = store
         .get_token_nonce(&sov, &Address::new(wallet))
         .expect("read nonce");
-    assert_eq!(nonce, 2, "outbound transfer must advance nonce to 2 before final leg");
+    assert_eq!(
+        nonce, 2,
+        "outbound transfer must advance nonce to 2 before final leg"
+    );
 
     let err = sync
         .import_blocks(vec![h4])
@@ -432,19 +435,37 @@ fn test_g4_wallet74010_sequence_tx_version_eight() {
     let h2 = block_at_height_with_txs(
         2,
         prev,
-        vec![create_sov_transfer_tx_version(wallet, wallet, 50 * ATOMS, 0, 8u32)],
+        vec![create_sov_transfer_tx_version(
+            wallet,
+            wallet,
+            50 * ATOMS,
+            0,
+            8u32,
+        )],
     );
     prev = h2.header.block_hash;
     let h3 = block_at_height_with_txs(
         3,
         prev,
-        vec![create_sov_transfer_tx_version(wallet, recipient, 900 * ATOMS, 1, 8u32)],
+        vec![create_sov_transfer_tx_version(
+            wallet,
+            recipient,
+            900 * ATOMS,
+            1,
+            8u32,
+        )],
     );
     prev = h3.header.block_hash;
     let h4 = block_at_height_with_txs(
         4,
         prev,
-        vec![create_sov_transfer_tx_version(wallet, wallet, 4150 * ATOMS, 2, 8u32)],
+        vec![create_sov_transfer_tx_version(
+            wallet,
+            wallet,
+            4150 * ATOMS,
+            2,
+            8u32,
+        )],
     );
 
     let dir = TempDir::new().expect("tempdir");
@@ -511,12 +532,8 @@ fn test_paginated_fresh_sync_replay_parity() {
         .import_blocks(blocks.clone())
         .expect("live single-shot import");
 
-    let reference = ReplayCheckpointSnapshot::from_store_at_height(
-        &*live_store,
-        CHECKPOINT,
-        &sample,
-        &[],
-    );
+    let reference =
+        ReplayCheckpointSnapshot::from_store_at_height(&*live_store, CHECKPOINT, &sample, &[]);
 
     let replay_dir = TempDir::new().expect("replay tempdir");
     let replay_store = open_fresh_store(&replay_dir);
@@ -524,19 +541,16 @@ fn test_paginated_fresh_sync_replay_parity() {
     import_blocks_paginated(&replay_sync, blocks);
 
     assert_eq!(
-        replay_store.latest_height().expect("paginated replay height"),
+        replay_store
+            .latest_height()
+            .expect("paginated replay height"),
         CHECKPOINT
     );
 
-    let replayed = ReplayCheckpointSnapshot::from_store_at_height(
-        &*replay_store,
-        CHECKPOINT,
-        &sample,
-        &[],
-    );
-    compare_snapshots("paginated-fresh-sync", &reference, &replayed).expect(
-        "paginated import must match single-shot live reference",
-    );
+    let replayed =
+        ReplayCheckpointSnapshot::from_store_at_height(&*replay_store, CHECKPOINT, &sample, &[]);
+    compare_snapshots("paginated-fresh-sync", &reference, &replayed)
+        .expect("paginated import must match single-shot live reference");
 }
 
 /// DAO `TokenCreation` + custom-token transfer replay parity (BUBL class — g4-adjacent).
@@ -554,12 +568,12 @@ fn test_dao_token_creation_wipe_replay_parity() {
     sync.import_blocks(blocks).unwrap();
     let token = TokenId::new(dao_expect.token_id);
     let bal = store
-        .get_token_balance(
-            &token,
-            &Address::new(dao_expect.holder_wallet_id),
-        )
+        .get_token_balance(&token, &Address::new(dao_expect.holder_wallet_id))
         .unwrap();
-    assert_eq!(bal, 10_000, "BUBL recipient balance after TokenCreation + transfer");
+    assert_eq!(
+        bal, 10_000,
+        "BUBL recipient balance after TokenCreation + transfer"
+    );
 }
 
 /// Genesis block-0 only: SOV shell (no bulk allocations), legacy CBE treasury seed.
@@ -591,7 +605,10 @@ fn test_genesis_bootstrap_checkpoint_balances() {
     let have = store
         .get_token_balance(&sov_token, &Address::new(sample[0]))
         .expect("read SOV balance");
-    assert_eq!(have, 0, "no genesis SOV rows — balances enter via block txs");
+    assert_eq!(
+        have, 0,
+        "no genesis SOV rows — balances enter via block txs"
+    );
 
     // TODO(GENESIS-6, #2734): rewrite when CBE founding tx replaces block-0 seed.
     let cbe_token = TokenId::new(Blockchain::derive_cbe_token_id_pub());

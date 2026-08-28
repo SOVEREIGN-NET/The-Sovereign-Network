@@ -550,6 +550,12 @@ pub struct WalletTransactionData {
     pub alias: Option<String>,
     /// Public key for wallet operations
     pub public_key: Vec<u8>,
+    /// Kyber1024 public key of the wallet owner (1568 bytes when present). Empty
+    /// for legacy/validator wallets registered before the field was added. For
+    /// client-aligned wallets the binding check computes wallet_id as
+    /// `blake3(public_key || kyber_public_key)`.
+    #[serde(default)]
+    pub kyber_public_key: Vec<u8>,
     /// Owner identity ID (if associated with DID)
     pub owner_identity_id: Option<Hash>,
     /// Seed phrase commitment hash (for recovery verification)
@@ -778,7 +784,7 @@ impl Transaction {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
-                    kyber_public_key: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         Transaction {

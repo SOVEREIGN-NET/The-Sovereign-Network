@@ -43,9 +43,12 @@ fn test_blockchain_storage_v4_oracle_pending_update() {
         .committee
         .set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
 
-    let result =
-        bc.oracle_state
-            .schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+    let result = bc.oracle_state.schedule_committee_update(
+        vec![[5u8; 32], [6u8; 32], [7u8; 32]],
+        10,
+        0,
+        None,
+    );
     assert!(result.is_ok());
 
     println!(
@@ -148,9 +151,12 @@ fn test_blockchain_save_load_oracle_pending_update() {
         .committee
         .set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
 
-    let result =
-        bc.oracle_state
-            .schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+    let result = bc.oracle_state.schedule_committee_update(
+        vec![[5u8; 32], [6u8; 32], [7u8; 32]],
+        10,
+        0,
+        None,
+    );
     assert!(result.is_ok());
 
     bc.last_oracle_epoch_processed = bc.last_committed_timestamp();
@@ -194,6 +200,7 @@ fn load_from_file_does_not_mint_or_repair_sov_balances() {
                 wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
                 alias: None,
                 public_key: vec![wallet_id[0]; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: None,
                 seed_commitment: Hash::zero(),
                 created_at: 1_700_000_000,

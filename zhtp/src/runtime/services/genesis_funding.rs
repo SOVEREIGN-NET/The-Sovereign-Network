@@ -99,8 +99,8 @@ impl GenesisFundingService {
                     format!("validator_stake_note_{}_{}", validator_id_hex, index).as_bytes(),
                 ),
                 recipient: PublicKey::new([0u8; 2592]),
-                            merkle_leaf: lib_blockchain::Hash::default(),
-};
+                merkle_leaf: lib_blockchain::Hash::default(),
+            };
 
             genesis_outputs.push(validator_output);
             total_validator_stake += validator.stake;
@@ -131,8 +131,8 @@ impl GenesisFundingService {
                 commitment: lib_blockchain::types::hash::blake3_hash(b"ubi_pool_commitment_500000"),
                 note: lib_blockchain::types::hash::blake3_hash(b"ubi_pool_note"),
                 recipient: PublicKey::new([0u8; 2592]),
-                            merkle_leaf: lib_blockchain::Hash::default(),
-},
+                merkle_leaf: lib_blockchain::Hash::default(),
+            },
             // Mining rewards pool
             TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
@@ -140,15 +140,15 @@ impl GenesisFundingService {
                 ),
                 note: lib_blockchain::types::hash::blake3_hash(b"mining_pool_note"),
                 recipient: PublicKey::new([0u8; 2592]),
-                            merkle_leaf: lib_blockchain::Hash::default(),
-},
+                merkle_leaf: lib_blockchain::Hash::default(),
+            },
             // Development fund
             TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(b"dev_pool_commitment_200000"),
                 note: lib_blockchain::types::hash::blake3_hash(b"dev_pool_note"),
                 recipient: PublicKey::new([0u8; 2592]),
-                            merkle_leaf: lib_blockchain::Hash::default(),
-},
+                merkle_leaf: lib_blockchain::Hash::default(),
+            },
         ]);
 
         // Add user primary wallet funding (welcome bonus: 5,000 SOV)
@@ -199,6 +199,7 @@ impl GenesisFundingService {
                 wallet_name: "Primary Wallet".to_string(),
                 alias: None,
                 public_key: identity_dilithium_pubkey.clone(), // Full 1312-byte Dilithium5 public key
+                kyber_public_key: vec![],
                 owner_identity_id: user_identity_id
                     .as_ref()
                     .map(|id| lib_blockchain::Hash::from_slice(&id.0)),
@@ -248,9 +249,7 @@ impl GenesisFundingService {
                                 SOV_WELCOME_BONUS as u128,
                             )])
                             .map_err(|e| {
-                                anyhow::anyhow!(
-                                    "failed to persist genesis wallet SOV to sled: {e}"
-                                )
+                                anyhow::anyhow!("failed to persist genesis wallet SOV to sled: {e}")
                             })?;
                     }
                 }
@@ -330,9 +329,7 @@ impl GenesisFundingService {
         // block 1 (parents the post-funding hash).
         if let Some(store) = blockchain.store.as_ref() {
             store.replace_block(genesis_block).map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to re-persist funded genesis block to store: {e}"
-                )
+                anyhow::anyhow!("failed to re-persist funded genesis block to store: {e}")
             })?;
             info!(
                 "💾 Re-persisted funded genesis (height 0) to SledStore: {}",

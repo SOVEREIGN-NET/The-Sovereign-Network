@@ -112,6 +112,7 @@ impl WalletTransactionDataLegacy {
             wallet_name: self.wallet_name,
             alias: self.alias,
             public_key: self.public_key,
+            kyber_public_key: vec![],
             owner_identity_id: self.owner_identity_id,
             seed_commitment: self.seed_commitment,
             created_at: self.created_at,
@@ -125,7 +126,10 @@ impl WalletTransactionDataLegacy {
 fn migrate_legacy_wallet_registry(
     legacy: HashMap<String, WalletTransactionDataLegacy>,
 ) -> HashMap<String, crate::transaction::WalletTransactionData> {
-    legacy.into_iter().map(|(k, v)| (k, v.to_current())).collect()
+    legacy
+        .into_iter()
+        .map(|(k, v)| (k, v.to_current()))
+        .collect()
 }
 
 /// Blockchain V1 format (Dec 2025) - for backward compatibility migration
@@ -447,21 +451,28 @@ impl BlockchainStorageV3 {
             pending_transactions: bc.pending_transactions.clone(),
             identity_registry: bc.identity_registry.clone(),
             identity_blocks: bc.identity_blocks.clone(),
-            wallet_registry: bc.wallet_registry.iter().map(|(k, v)| {
-                (k.clone(), WalletTransactionDataLegacy {
-                    wallet_id: v.wallet_id,
-                    wallet_type: v.wallet_type.clone(),
-                    wallet_name: v.wallet_name.clone(),
-                    alias: v.alias.clone(),
-                    public_key: v.public_key.clone(),
-                    owner_identity_id: v.owner_identity_id,
-                    seed_commitment: v.seed_commitment,
-                    created_at: v.created_at,
-                    registration_fee: v.registration_fee,
-                    capabilities: v.capabilities,
-                    initial_balance: v.initial_balance as u64,
+            wallet_registry: bc
+                .wallet_registry
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        WalletTransactionDataLegacy {
+                            wallet_id: v.wallet_id,
+                            wallet_type: v.wallet_type.clone(),
+                            wallet_name: v.wallet_name.clone(),
+                            alias: v.alias.clone(),
+                            public_key: v.public_key.clone(),
+                            owner_identity_id: v.owner_identity_id,
+                            seed_commitment: v.seed_commitment,
+                            created_at: v.created_at,
+                            registration_fee: v.registration_fee,
+                            capabilities: v.capabilities,
+                            initial_balance: v.initial_balance as u64,
+                        },
+                    )
                 })
-            }).collect(),
+                .collect(),
             wallet_blocks: bc.wallet_blocks.clone(),
             // economics_transactions removed from Blockchain — V3 keeps the
             // field only to read pre-existing .dat files; new saves write empty.
@@ -869,8 +880,7 @@ impl BlockchainStorageV8 {
 pub(super) struct BlockchainStorageV9 {
     pub v8: BlockchainStorageV8,
     #[serde(default)]
-    pub domain_registry:
-        HashMap<String, crate::transaction::OnChainDomainRecord>,
+    pub domain_registry: HashMap<String, crate::transaction::OnChainDomainRecord>,
 }
 
 impl BlockchainStorageV9 {
@@ -1025,49 +1035,49 @@ impl Blockchain {
                     data,
                     "v11 blockchain",
                     |storage| {
-                    info!("📂 Loaded blockchain storage v11 (treasury kernel state)");
-                    storage.to_blockchain()
-                },
+                        info!("📂 Loaded blockchain storage v11 (treasury kernel state)");
+                        storage.to_blockchain()
+                    },
                 )?,
                 10 => deserialize_or_err::<BlockchainStorageV10, _, _>(
                     data,
                     "v10 blockchain",
                     |storage| {
-                    info!("📂 Loaded blockchain storage v10 (u128 wallet initial_balance)");
-                    storage.to_blockchain()
-                },
+                        info!("📂 Loaded blockchain storage v10 (u128 wallet initial_balance)");
+                        storage.to_blockchain()
+                    },
                 )?,
                 9 => deserialize_or_err::<BlockchainStorageV9, _, _>(
                     data,
                     "v9 blockchain",
                     |storage| {
-                    info!("📂 Loaded blockchain storage v9 (on-chain domain registry)");
-                    storage.to_blockchain()
-                },
+                        info!("📂 Loaded blockchain storage v9 (on-chain domain registry)");
+                        storage.to_blockchain()
+                    },
                 )?,
                 8 => deserialize_or_err::<BlockchainStorageV8, _, _>(
                     data,
                     "v8 blockchain",
                     |storage| {
-                    info!("📂 Loaded blockchain storage v8 (employment registry + CBE DAO format)");
-                    storage.to_blockchain()
-                },
+                        info!("📂 Loaded blockchain storage v8 (employment registry + CBE DAO format)");
+                        storage.to_blockchain()
+                    },
                 )?,
                 7 => deserialize_or_err::<BlockchainStorageV7, _, _>(
                     data,
                     "v7 blockchain",
                     |storage| {
-                    info!("📂 Loaded blockchain storage v7 (cbe-token persistence format)");
-                    storage.to_blockchain()
-                },
+                        info!("📂 Loaded blockchain storage v7 (cbe-token persistence format)");
+                        storage.to_blockchain()
+                    },
                 )?,
                 6 => deserialize_or_err::<BlockchainStorageV6, _, _>(
                     data,
                     "v6 blockchain",
                     |storage| {
-                    info!("📂 Loaded legacy blockchain storage v6 (migrating to v7)");
-                    storage.to_blockchain()
-                },
+                        info!("📂 Loaded legacy blockchain storage v6 (migrating to v7)");
+                        storage.to_blockchain()
+                    },
                 )?,
                 5 => deserialize_or_err::<LegacyBlockchainStorageV5, _, _>(
                     data,
@@ -1253,16 +1263,17 @@ impl Blockchain {
 
         // Initialize Treasury Kernel if not restored from V11 persistence.
         if blockchain.treasury_kernel.is_none() {
-            let kernel_init: Option<(lib_crypto::PublicKey, String)> = blockchain
-                .council_members
-                .first()
-                .and_then(|cm| {
+            let kernel_init: Option<(lib_crypto::PublicKey, String)> =
+                blockchain.council_members.first().and_then(|cm| {
                     let did = cm.identity_id.clone();
                     blockchain.identity_registry.get(&did).and_then(|id| {
                         match id.public_key.as_slice().try_into() {
                             Ok(pk_bytes) => Some((lib_crypto::PublicKey::new(pk_bytes), did)),
                             Err(_) => {
-                                warn!("Treasury Kernel skip: council pk length {}", id.public_key.len());
+                                warn!(
+                                    "Treasury Kernel skip: council pk length {}",
+                                    id.public_key.len()
+                                );
                                 None
                             }
                         }
@@ -1379,7 +1390,10 @@ where
             .stack_size(LARGE_STACK)
             .spawn_scoped(scope, f)
             .map_err(|e| {
-                anyhow::anyhow!("failed to spawn large-stack (de)serialization thread: {}", e)
+                anyhow::anyhow!(
+                    "failed to spawn large-stack (de)serialization thread: {}",
+                    e
+                )
             })?;
         handle
             .join()

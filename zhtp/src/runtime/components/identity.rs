@@ -734,9 +734,9 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
                                 info!("⚠️  Failed to add migration block: {}", e);
                                 // Fallback: save to file (deprecated, for legacy mode only)
                                 #[allow(deprecated)]
-                                if let Err(e2) = bc.save_to_file(
-                                    &crate::node_data_path("data/testnet/blockchain.dat"),
-                                ) {
+                                if let Err(e2) = bc.save_to_file(&crate::node_data_path(
+                                    "data/testnet/blockchain.dat",
+                                )) {
                                     info!("⚠️  Fallback save also failed: {}", e2);
                                 }
                             } else {
@@ -748,9 +748,9 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
                             info!("⚠️  Failed to mine migration block: {}", e);
                             // Fallback: save to file (deprecated, for legacy mode only)
                             #[allow(deprecated)]
-                            if let Err(e2) = bc.save_to_file(
-                                &crate::node_data_path("data/testnet/blockchain.dat"),
-                            ) {
+                            if let Err(e2) = bc
+                                .save_to_file(&crate::node_data_path("data/testnet/blockchain.dat"))
+                            {
                                 info!("⚠️  Fallback save also failed: {}", e2);
                             }
                         }
@@ -1043,6 +1043,7 @@ async fn bootstrap_identities_from_dht(
                                                     wallet_name: "Primary Wallet".to_string(),
                                                     alias: Some("primary".to_string()),
                                                     public_key: pk_bytes_for_migration.clone(),
+                                                    kyber_public_key: vec![],
                                                     owner_identity_id: Some(
                                                         lib_blockchain::Hash::from_slice(
                                                             &identity_hash.0,
@@ -1080,6 +1081,7 @@ async fn bootstrap_identities_from_dht(
                                                     wallet_name: "UBI Wallet".to_string(),
                                                     alias: Some("ubi".to_string()),
                                                     public_key: pk_bytes_for_migration.clone(),
+                                                    kyber_public_key: vec![],
                                                     owner_identity_id: Some(
                                                         lib_blockchain::Hash::from_slice(
                                                             &identity_hash.0,
@@ -1112,6 +1114,7 @@ async fn bootstrap_identities_from_dht(
                                                     wallet_name: "Savings Wallet".to_string(),
                                                     alias: Some("savings".to_string()),
                                                     public_key: pk_bytes_for_migration.clone(),
+                                                    kyber_public_key: vec![],
                                                     owner_identity_id: Some(
                                                         lib_blockchain::Hash::from_slice(
                                                             &identity_hash.0,
@@ -1370,6 +1373,7 @@ mod tests {
                 wallet_name: "Primary Wallet".to_string(),
                 alias: Some("main".to_string()),
                 public_key: vec![0x41; 32],
+                kyber_public_key: vec![],
                 owner_identity_id: Some(Hash::from_slice(identity_id.as_bytes())),
                 seed_commitment: Hash::new([0x51; 32]),
                 created_at: 1_700_000_001,

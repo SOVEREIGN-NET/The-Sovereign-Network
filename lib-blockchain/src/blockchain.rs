@@ -26,24 +26,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
-mod test_utils;
-#[cfg(test)]
-mod tests;
-mod credentials;
-pub mod rewards;
-mod dao;
-pub mod replay;
 mod contracts;
+mod credentials;
+mod dao;
+mod gateways;
 mod identity;
 mod init;
 mod oracle;
 mod persistence;
 mod projections;
-mod validators;
-mod gateways;
-mod wallets;
-mod utxo;
+pub mod replay;
+pub mod rewards;
 mod system_originator;
+mod test_utils;
+#[cfg(test)]
+mod tests;
+mod utxo;
+mod validators;
+mod wallets;
 pub use system_originator::SystemOriginator;
 
 pub use persistence::PersistenceStats;
@@ -1032,9 +1032,7 @@ impl Blockchain {
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
             let fee_floor = self.tx_fee_config.domain_registration_fee_atoms;
-            let treasury_wallet = self
-                .get_dao_treasury_wallet_id()
-                .map(|id| id.as_str());
+            let treasury_wallet = self.get_dao_treasury_wallet_id().map(|id| id.as_str());
             match executor.apply_block_committing_domain_fees(
                 &block,
                 Some(fee_floor),
@@ -1428,8 +1426,8 @@ impl Blockchain {
                     // are durable. If we crash between the two commits,
                     // the meta marker is absent → next startup falls
                     // back to historical replay (which re-runs backfill).
-                    if let Err(e) = self
-                        .commit_hot_state_projection_meta_only(store.as_ref(), &block)
+                    if let Err(e) =
+                        self.commit_hot_state_projection_meta_only(store.as_ref(), &block)
                     {
                         warn!(
                             "Failed to commit projection meta for block {}: {}",
@@ -1834,11 +1832,8 @@ impl Blockchain {
         // Legacy-path fee debits write in-mem first; mirror to sled when attached so
         // sled-first reads (token_balance) observe the debit (#2712 review).
         let mirror_fee_to_sled = self.get_store().is_some();
-        let mut sled_fee_sync: Vec<(
-            crate::storage::TokenId,
-            crate::storage::Address,
-            u128,
-        )> = Vec::new();
+        let mut sled_fee_sync: Vec<(crate::storage::TokenId, crate::storage::Address, u128)> =
+            Vec::new();
 
         // Get mutable reference to SOV token contract
         let sov_token = match self.token_contracts.get_mut(&sov_token_id) {
@@ -2113,9 +2108,7 @@ impl Blockchain {
             return None;
         }
         // The window holds the last `blocks.len()` blocks: [window_start ..= tip].
-        let window_start = self
-            .block_count()
-            .saturating_sub(self.blocks.len() as u64);
+        let window_start = self.block_count().saturating_sub(self.blocks.len() as u64);
         if height >= window_start {
             return self.blocks.get((height - window_start) as usize).cloned();
         }
@@ -2319,7 +2312,10 @@ impl Blockchain {
     }
 
     /// Reject duplicate or conflicting `RewardClaim` txs already in the mempool.
-    fn pending_reward_claim_conflicts(&self, incoming: &crate::transaction::reward_claim::RewardClaimData) -> bool {
+    fn pending_reward_claim_conflicts(
+        &self,
+        incoming: &crate::transaction::reward_claim::RewardClaimData,
+    ) -> bool {
         use crate::transaction::reward_claim::RewardEventKind;
         for tx in &self.pending_transactions {
             if tx.transaction_type != TransactionType::RewardClaim {
@@ -2364,7 +2360,9 @@ impl Blockchain {
         let tx_type = transaction.transaction_type;
         self.verify_and_enqueue_transaction(transaction.clone())?;
         match tx_type {
-            TransactionType::TokenTransfer | TransactionType::TokenMint | TransactionType::TokenCreation => {
+            TransactionType::TokenTransfer
+            | TransactionType::TokenMint
+            | TransactionType::TokenCreation => {
                 info!(
                     "[token/mempool] accepted: type={:?} tx={} size={} fee={}",
                     tx_type,
@@ -2441,7 +2439,11 @@ impl Blockchain {
         }
 
         let tx_hash = transaction.hash();
-        if self.pending_transactions.iter().any(|pending| pending.hash() == tx_hash) {
+        if self
+            .pending_transactions
+            .iter()
+            .any(|pending| pending.hash() == tx_hash)
+        {
             let tx_hash_hex = hex::encode(tx_hash.as_bytes());
             return Err(anyhow::anyhow!(
                 "Transaction {} rejected: duplicate already pending",
@@ -2453,8 +2455,7 @@ impl Blockchain {
         // `verify_transaction` collapses errors to bool and hid UnregisteredSender
         // as a generic "Transaction verification failed" to clients.
         {
-            let validator =
-                crate::transaction::validation::StatefulTransactionValidator::new(self);
+            let validator = crate::transaction::validation::StatefulTransactionValidator::new(self);
             if let Err(error) = validator.validate_transaction_with_state(&transaction) {
                 tracing::warn!("Transaction validation failed: {:?}", error);
                 tracing::warn!(
@@ -2638,13 +2639,9 @@ impl Blockchain {
                         label
                     ));
                 }
-                let identity_data = tx
-                    .identity_data()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "ClientIdentityRegistration missing identity payload"
-                        )
-                    })?;
+                let identity_data = tx.identity_data().ok_or_else(|| {
+                    anyhow::anyhow!("ClientIdentityRegistration missing identity payload")
+                })?;
                 if identity_data.ownership_proof.is_empty() {
                     return Err(anyhow::anyhow!(
                         "ClientIdentityRegistration requires non-empty ownership_proof"
@@ -2729,17 +2726,17 @@ impl Blockchain {
     fn validate_welcome_bonus_mint_memo(tx: &Transaction) -> anyhow::Result<()> {
         const WELCOME_BONUS_ATOMS: u128 = lib_types::sov::atoms(5_000);
 
-        let mint_data = tx
-            .token_mint_data()
-            .ok_or_else(|| anyhow::anyhow!("TreasuryWalletBootstrap TokenMint missing mint data"))?;
+        let mint_data = tx.token_mint_data().ok_or_else(|| {
+            anyhow::anyhow!("TreasuryWalletBootstrap TokenMint missing mint data")
+        })?;
         let memo_str = std::str::from_utf8(&tx.memo).map_err(|_| {
             anyhow::anyhow!("TreasuryWalletBootstrap TokenMint memo is not valid UTF-8")
         })?;
-        let wallet_hex = memo_str
-            .strip_prefix("WELCOME_BONUS_V1:")
-            .ok_or_else(|| {
-                anyhow::anyhow!("TreasuryWalletBootstrap TokenMint memo missing WELCOME_BONUS_V1: prefix")
-            })?;
+        let wallet_hex = memo_str.strip_prefix("WELCOME_BONUS_V1:").ok_or_else(|| {
+            anyhow::anyhow!(
+                "TreasuryWalletBootstrap TokenMint memo missing WELCOME_BONUS_V1: prefix"
+            )
+        })?;
         if wallet_hex.is_empty() {
             return Err(anyhow::anyhow!(
                 "TreasuryWalletBootstrap TokenMint memo missing wallet recipient"
@@ -2790,7 +2787,11 @@ impl Blockchain {
         Self::validate_system_injection(originator, &transaction)?;
 
         let tx_hash = transaction.hash();
-        if self.pending_transactions.iter().any(|pending| pending.hash() == tx_hash) {
+        if self
+            .pending_transactions
+            .iter()
+            .any(|pending| pending.hash() == tx_hash)
+        {
             let tx_hash_hex = hex::encode(tx_hash.as_bytes());
             return Err(anyhow::anyhow!(
                 "Transaction {} rejected: duplicate already pending",
@@ -2804,10 +2805,7 @@ impl Blockchain {
             tx_hash = %hex::encode(&transaction.hash().as_bytes()[..8]),
             "system tx (bypass admission + verify)",
         );
-        *self
-            .system_tx_originators
-            .entry(label)
-            .or_insert(0) += 1;
+        *self.system_tx_originators.entry(label).or_insert(0) += 1;
 
         // Keep `mempool_state` paired with the pending pool. We bypass
         // `lib_mempool::admit()` here (no sig verify, no DoS caps for system
@@ -2830,11 +2828,7 @@ impl Blockchain {
         // verify_and_enqueue_transaction; best-effort).
         if let Some(store) = &self.store {
             if let Err(e) = store.put_pending_transaction(&transaction) {
-                tracing::warn!(
-                    originator = label,
-                    "system tx persistence failed: {}",
-                    e
-                );
+                tracing::warn!(originator = label, "system tx persistence failed: {}", e);
             }
         }
 
@@ -2856,16 +2850,20 @@ impl Blockchain {
         // Drain matching txes so we can update mempool_state from the actual
         // accepted-then-committed entries (sender + tx_bytes) rather than the
         // generic `transactions` slice that may also include never-admitted ones.
-        let (committed, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_transactions)
-            .into_iter()
-            .partition(|tx| tx_hashes.contains(&tx.hash()));
+        let (committed, remaining): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.pending_transactions)
+                .into_iter()
+                .partition(|tx| tx_hashes.contains(&tx.hash()));
         self.pending_transactions = remaining;
         for tx in &committed {
             let admit_tx = tx.to_admit_tx();
             self.mempool_state
                 .remove_tx(&admit_tx.sender, admit_tx.tx_bytes as u64);
             if let Some(store) = &self.store {
-                if let Err(e) = { let h = tx.hash().as_array(); store.delete_pending_transaction(&h) } {
+                if let Err(e) = {
+                    let h = tx.hash().as_array();
+                    store.delete_pending_transaction(&h)
+                } {
                     tracing::warn!("pending tx unpersist (commit) failed: {}", e);
                 }
             }
@@ -2883,7 +2881,10 @@ impl Blockchain {
             self.mempool_state
                 .remove_tx(&admit_tx.sender, admit_tx.tx_bytes as u64);
             if let Some(store) = &self.store {
-                if let Err(e) = { let h = tx.hash().as_array(); store.delete_pending_transaction(&h) } {
+                if let Err(e) = {
+                    let h = tx.hash().as_array();
+                    store.delete_pending_transaction(&h)
+                } {
                     tracing::warn!("pending tx unpersist (stale-nonce evict) failed: {}", e);
                 }
             }
@@ -2921,12 +2922,10 @@ impl Blockchain {
             ));
         }
         let sender_bal_post = token.balance_of(sender);
-        token
-            .set_balance(sender, sender_bal_post.saturating_sub(fee_amount as u128));
+        token.set_balance(sender, sender_bal_post.saturating_sub(fee_amount as u128));
         if let Some(ref tpk) = treasury_key {
             let tbal = token.balance_of(tpk);
-            token
-                .set_balance(tpk, tbal.saturating_add(fee_amount as u128));
+            token.set_balance(tpk, tbal.saturating_add(fee_amount as u128));
             debug!(
                 "TokenTransfer: {} SOV fee → DAO treasury (height {})",
                 fee_amount, height
@@ -2955,7 +2954,10 @@ impl Blockchain {
             self.mempool_state
                 .remove_tx(&admit_tx.sender, admit_tx.tx_bytes as u64);
             if let Some(store) = &self.store {
-                if let Err(e) = { let h = tx.hash().as_array(); store.delete_pending_transaction(&h) } {
+                if let Err(e) = {
+                    let h = tx.hash().as_array();
+                    store.delete_pending_transaction(&h)
+                } {
                     tracing::warn!("pending tx unpersist (phase2 evict) failed: {}", e);
                 }
             }
@@ -4320,9 +4322,9 @@ impl Blockchain {
 
         // Sum SOV balances across all wallets owned by this identity (#2637).
         let sov_balance: u128 = self
-            .get_wallets_for_owner(&user_local_id)
+            .wallets_for_owner(&user_local_id)
             .iter()
-            .map(|w| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
+            .map(|(_, w)| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
             .sum();
 
         // 1 SOV (1e18 atomic units) = 1 base vote unit
@@ -4339,10 +4341,12 @@ impl Blockchain {
                 let bytes = hex::decode(delegator_hex).ok()?;
                 let delegator_bytes: [u8; 32] = bytes.try_into().ok()?;
                 let delegator_local_id = crate::types::hash::Hash::new(delegator_bytes);
-                let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
+                let delegator_wallets = self.wallets_for_owner(&delegator_local_id);
                 let bal: u128 = delegator_wallets
                     .iter()
-                    .map(|w| self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array()))
+                    .map(|(_, w)| {
+                        self.sov_wallet_balance_for_voting(&sov_id, &w.wallet_id.as_array())
+                    })
                     .sum();
                 Some((bal / lib_types::sov::SCALE) as u64)
             })
@@ -4498,6 +4502,7 @@ impl Blockchain {
                     ), // Default name
                     alias: None, // Will need DHT retrieval for real alias
                     public_key: wallet_ref.public_key.clone(),
+                    kyber_public_key: vec![],
                     owner_identity_id: wallet_ref.owner_identity_id,
                     seed_commitment: crate::types::Hash::from([0u8; 32]), // Default - will need DHT for real commitment
                     created_at: wallet_ref.created_at,
@@ -4533,9 +4538,11 @@ impl Blockchain {
 
         // Verify block chain continuity
         for i in 1..self.block_count() {
-            let (Some(current), Some(previous)) = (self.get_block(i), self.get_block(i - 1))
-            else {
-                error!("Block chain continuity broken: missing block near height {}", i);
+            let (Some(current), Some(previous)) = (self.get_block(i), self.get_block(i - 1)) else {
+                error!(
+                    "Block chain continuity broken: missing block near height {}",
+                    i
+                );
                 return Ok(false);
             };
 
@@ -4909,13 +4916,15 @@ impl Blockchain {
                         block.header.height,
                     ));
                 }
-                self.apply_block_trusted_for_sync(block).await.map_err(|e| {
-                    anyhow::anyhow!(
+                self.apply_block_trusted_for_sync(block)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
                         "Imported chain rejected: block {} failed verification during adoption: {}",
                         height,
                         e
                     )
-                })?;
+                    })?;
             }
 
             info!(
@@ -4971,8 +4980,7 @@ impl Blockchain {
         );
 
         // Use consensus rules to decide which chain to adopt
-        let decision =
-            crate::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
+        let decision = crate::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
 
         match decision {
             crate::ChainDecision::KeepLocal => {
@@ -5370,6 +5378,7 @@ impl Blockchain {
                     ),
                     alias: None,
                     public_key: wallet_ref.public_key.clone(),
+                    kyber_public_key: vec![],
                     owner_identity_id: wallet_ref.owner_identity_id,
                     seed_commitment: crate::types::Hash::from([0u8; 32]),
                     created_at: wallet_ref.created_at,
@@ -5768,6 +5777,7 @@ impl Blockchain {
                     ),
                     alias: None,
                     public_key: wallet_ref.public_key.clone(),
+                    kyber_public_key: vec![],
                     owner_identity_id: wallet_ref.owner_identity_id,
                     seed_commitment: crate::types::Hash::from([0u8; 32]),
                     created_at: wallet_ref.created_at,
@@ -5891,6 +5901,7 @@ impl Blockchain {
                     ),
                     alias: None,
                     public_key: wallet_ref.public_key.clone(),
+                    kyber_public_key: vec![],
                     owner_identity_id: wallet_ref.owner_identity_id,
                     seed_commitment: crate::types::Hash::from([0u8; 32]),
                     created_at: wallet_ref.created_at,
@@ -6937,12 +6948,7 @@ impl Blockchain {
                 .as_secs(),
         };
 
-        let memo = format!(
-            "pouw:mint:{}:{}",
-            hex::encode(recipient_key_id),
-            amount
-        )
-        .into_bytes();
+        let memo = format!("pouw:mint:{}:{}", hex::encode(recipient_key_id), amount).into_bytes();
 
         let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
         let tx_hash = mint_tx.hash();

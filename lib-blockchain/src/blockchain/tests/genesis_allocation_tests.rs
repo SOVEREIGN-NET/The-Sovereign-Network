@@ -16,7 +16,9 @@ fn test_sov_wallet_registration_deficit_minting() {
     let recipient_pk = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
 
     if let Some(token) = blockchain.get_token_contract_mut(&sov_token_id) {
-        token.mint(&recipient_pk, 3000).expect("Pre-mint should succeed");
+        token
+            .mint(&recipient_pk, 3000)
+            .expect("Pre-mint should succeed");
     }
 
     let current_balance = blockchain
@@ -32,6 +34,7 @@ fn test_sov_wallet_registration_deficit_minting() {
         wallet_name: "Test Wallet".to_string(),
         alias: None,
         public_key: vec![0u8; 32],
+        kyber_public_key: vec![],
         owner_identity_id: None,
         seed_commitment: Hash::default(),
         created_at: 0,

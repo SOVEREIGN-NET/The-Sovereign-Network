@@ -92,6 +92,7 @@ mod tests {
             wallet_name: "Primary".to_string(),
             alias: None,
             public_key: dilithium_pk.to_vec(),
+            kyber_public_key: vec![],
             owner_identity_id: Some(Hash::from_slice(&owner)),
             seed_commitment: Hash::default(),
             created_at: 0,
@@ -123,11 +124,9 @@ mod tests {
             .expect("register wallet");
 
         let via_wallet = resolve_custom_token_balance_key(&bc, &wallet_hex).expect("wallet");
-        let via_did = resolve_custom_token_balance_key(
-            &bc,
-            &format!("did:zhtp:{}", hex::encode(via_wallet)),
-        )
-        .expect("did");
+        let via_did =
+            resolve_custom_token_balance_key(&bc, &format!("did:zhtp:{}", hex::encode(via_wallet)))
+                .expect("did");
 
         assert_ne!(via_wallet, wallet_id, "must not use raw wallet_id bytes");
         assert_eq!(via_wallet, via_did, "wallet_id and DID must agree");

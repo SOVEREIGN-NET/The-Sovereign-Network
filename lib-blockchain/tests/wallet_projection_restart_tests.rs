@@ -10,8 +10,12 @@ use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 mod common;
 
-fn test_pubkey(_id: u8) -> PublicKey { common::crypto_fixtures::dummy_public_key() }
-fn test_signature(pubkey: &PublicKey) -> Signature { common::crypto_fixtures::signature_for(pubkey) }
+fn test_pubkey(_id: u8) -> PublicKey {
+    common::crypto_fixtures::dummy_public_key()
+}
+fn test_signature(pubkey: &PublicKey) -> Signature {
+    common::crypto_fixtures::signature_for(pubkey)
+}
 
 fn wallet_data(wallet_id: [u8; 32], owner_pubkey: &PublicKey, name: &str) -> WalletTransactionData {
     WalletTransactionData {
@@ -20,6 +24,7 @@ fn wallet_data(wallet_id: [u8; 32], owner_pubkey: &PublicKey, name: &str) -> Wal
         wallet_name: name.to_string(),
         alias: None,
         public_key: owner_pubkey.dilithium_pk.to_vec(),
+        kyber_public_key: vec![],
         owner_identity_id: None,
         seed_commitment: Hash::zero(),
         created_at: 1_700_000_000,
@@ -105,7 +110,10 @@ fn test_wallet_projection_loaded_state_matches_replay_rebuilt_state() -> Result<
         replay_rebuilt.wallet_blocks.get(&wallet_id_hex)
     );
     assert_eq!(replay_rebuilt.wallet_blocks.get(&wallet_id_hex), Some(&0));
-    assert_eq!(store.get_wallet_projection(&wallet_id)?, Some(canonical_record));
+    assert_eq!(
+        store.get_wallet_projection(&wallet_id)?,
+        Some(canonical_record)
+    );
 
     Ok(())
 }
@@ -166,7 +174,10 @@ fn test_uncommitted_wallet_projection_update_does_not_leak_after_restart() -> Re
 
     let wallet_id_hex = hex::encode(wallet_id);
     assert_eq!(recovered.height, 0);
-    assert_eq!(recovered.wallet_transaction_data(&wallet_id_hex), Some(wallet));
+    assert_eq!(
+        recovered.wallet_transaction_data(&wallet_id_hex),
+        Some(wallet)
+    );
     assert_eq!(recovered.wallet_blocks.get(&wallet_id_hex), Some(&0));
     assert_eq!(
         recovered_store.get_wallet_projection(&wallet_id)?,
