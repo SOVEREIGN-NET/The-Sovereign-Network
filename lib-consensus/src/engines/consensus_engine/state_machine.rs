@@ -3004,6 +3004,17 @@ impl ConsensusEngine {
                 let validator_ids = self.get_active_validator_ids();
 
                 self.broadcast(msg, &validator_ids).await;
+
+                // After casting our precommit, immediately check for precommit
+                // quorum and transition to Commit step if reached. With a single
+                // validator (1/1 precommits = supermajority), this allows the
+                // engine to cast its commit vote and finalize without waiting
+                // for the precommit timeout to fire.
+                // NOTE: Gated on development_mode — multi-validator BFT relies on
+                // the precommit timeout for correct step timing.
+                if self.config.development_mode {
+                    self.enter_commit_step().await?;
+                }
             }
         }
 
