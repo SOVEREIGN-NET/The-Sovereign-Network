@@ -163,19 +163,40 @@ pub fn allows_empty_system_signature(transaction: &Transaction) -> bool {
             if transaction.signature.public_key.dilithium_pk != wallet_pk {
                 return false;
             }
-            // Legacy/validator wallets (zero kyber): wallet_id == blake3(pk).
-            let key_id = crate::types::hash::blake3_hash(wallet_pk.as_slice());
-            if w.wallet_id.as_bytes() == key_id.as_bytes() {
+            // Primary wallet ids: blake3(pk) [legacy/validator] or blake3(pk || kyber) [client].
+            let legacy_primary = crate::types::hash::blake3_hash(wallet_pk.as_slice());
+            let client_primary = if w.kyber_public_key.is_empty() {
+                None
+            } else {
+                let mut client_input = wallet_pk.to_vec();
+                client_input.extend_from_slice(&w.kyber_public_key);
+                Some(crate::types::hash::blake3_hash(&client_input))
+            };
+
+            // Derived UBI/savings wallet ids (#2979): blake3(primary || "ubi"/"savings").
+            // Accept the primary id or either derived id so system-injected zero-balance
+            // wallet registrations (register_wallet) remain bound to the payload key.
+            let matches_primary_or_derived = |primary: &crate::types::Hash| -> bool {
+                if w.wallet_id.as_bytes() == primary.as_bytes() {
+                    return true;
+                }
+                for suffix in [b"ubi".as_slice(), b"savings".as_slice()] {
+                    let mut input = primary.as_bytes().to_vec();
+                    input.extend_from_slice(suffix);
+                    if w.wallet_id.as_bytes() == crate::types::hash::blake3_hash(&input).as_bytes()
+                    {
+                        return true;
+                    }
+                }
+                false
+            };
+
+            if matches_primary_or_derived(&legacy_primary) {
                 return true;
             }
-            // Client wallets: wallet_id == blake3(pk || kyber_pk).
-            if w.kyber_public_key.is_empty() {
-                return false;
-            }
-            let mut client_input = wallet_pk.to_vec();
-            client_input.extend_from_slice(&w.kyber_public_key);
-            let client_key_id = crate::types::hash::blake3_hash(&client_input);
-            w.wallet_id.as_bytes() == client_key_id.as_bytes()
+            client_primary
+                .map(|p| matches_primary_or_derived(&p))
+                .unwrap_or(false)
         }
         _ => false,
     }
@@ -526,5 +547,61 @@ mod tests {
             allows_empty_system_signature(&legacy_tx),
             "legacy wallet (blake3(pk) binding) must pass empty-sig check"
         );
+    }
+
+    /// Regression (#2985 follow-up): UBI/savings wallet ids derive from the primary id
+    /// (#2979), so their zero-balance empty-signature system registrations must also
+    /// satisfy the pk-binding in `allows_empty_system_signature` — otherwise block
+    /// commit rejects them as `InvalidSignature`.
+    #[test]
+    fn derived_ubi_savings_wallets_pass_empty_sig_binding() {
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+        use crate::transaction::core::WalletTransactionData;
+        use crate::types::hash::blake3_hash;
+        use crate::types::Hash;
+
+        let keypair = lib_crypto::generate_keypair().expect("keypair");
+        let dilithium_pk = keypair.public_key.dilithium_pk;
+        let kyber_pk = keypair.public_key.kyber_pk.to_vec();
+
+        let mut primary_input = dilithium_pk.to_vec();
+        primary_input.extend_from_slice(&kyber_pk);
+        let primary_id = blake3_hash(&primary_input);
+
+        for (suffix, label) in [(&b"ubi"[..], "UBI"), (&b"savings"[..], "savings")] {
+            let mut derived_input = primary_id.as_bytes().to_vec();
+            derived_input.extend_from_slice(suffix);
+            let derived_id = blake3_hash(&derived_input);
+
+            let wallet = WalletTransactionData {
+                wallet_id: derived_id,
+                wallet_type: label.to_string(),
+                wallet_name: format!("{label} Wallet"),
+                alias: None,
+                public_key: dilithium_pk.to_vec(),
+                kyber_public_key: kyber_pk.clone(),
+                owner_identity_id: None,
+                seed_commitment: Hash::default(),
+                created_at: 1_700_000_000,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 0,
+            };
+            let tx = Transaction::new_wallet_registration(
+                wallet,
+                vec![],
+                Signature {
+                    signature: Vec::new(),
+                    public_key: PublicKey::new(dilithium_pk),
+                    algorithm: SignatureAlgorithm::DEFAULT,
+                    timestamp: 1,
+                },
+                format!("wallet-reg:{label}").into_bytes(),
+            );
+            assert!(
+                allows_empty_system_signature(&tx),
+                "{label} wallet (blake3(primary || {label:?}) binding) must pass empty-sig check"
+            );
+        }
     }
 }
