@@ -2584,8 +2584,11 @@ impl RuntimeOrchestrator {
                     } else {
                         info!("📂 SledStore is empty - creating genesis (validator, peers all at height 0)");
                     }
-                    let mut bc = lib_blockchain::Blockchain::new()?;
-                    bc.set_store(store.clone());
+                    // Attach the BlockExecutor on the fresh-bootstrap path (parity with
+                    // load_from_store). Without it, process_and_commit_block takes the
+                    // legacy branch whose TokenMint path casts amount to u64 and overflows
+                    // on the 5000 SOV (18-decimal) welcome mint.
+                    let mut bc = lib_blockchain::Blockchain::new_with_store(store.clone())?;
 
                     // Log the genesis block hash for verification/debugging.
                     // Note: Full hash verification against CANONICAL_GENESIS_HASH is done
@@ -2730,6 +2733,40 @@ impl RuntimeOrchestrator {
         // load_from_store on restart (mod.rs ~1249), which replaces *bc and
         // wipes council_members — bootstrap + cache seed must run AFTER that.
         ensure_council_bootstrap_and_cache(&self.config.consensus_config.council).await?;
+
+        // Dev-node treasury bootstrap (#2985 follow-up): treasury-kernel init runs
+        // inside load_from_store *before* the council is bootstrapped, so on a fresh
+        // dev chain (empty [bootstrap_council].members) the kernel is left unset and
+        // every SOV mint is rejected as Unauthorized. Re-run init now that the council
+        // is populated, then fall back to the node's own validator key when no council
+        // is configured (single-node dev chain). Production replaces the fallback with
+        // the key ceremony + [bootstrap_council].members (#1909).
+        {
+            let blockchain_arc =
+                crate::runtime::blockchain_provider::get_global_blockchain().await?;
+            let mut bc = blockchain_arc.write().await;
+            if bc.treasury_kernel.is_none() {
+                bc.init_treasury_kernel_if_missing();
+            }
+            let dev_env = matches!(
+                self.config.environment,
+                crate::config::Environment::Development
+            );
+            if bc.treasury_kernel.is_none() && dev_env {
+                match crate::runtime::token_utils::load_validator_keypair_from_keystore().await {
+                    Ok(kp) => {
+                        bc.initialize_treasury_kernel(kp.public_key);
+                        warn!(
+                            "Treasury Kernel initialized with node validator key \
+                             (dev bootstrap: no council configured)"
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Treasury Kernel dev bootstrap skipped: {e}");
+                    }
+                }
+            }
+        }
 
         // Derive deterministic NodeId from DID + device name and cache for runtime access
         let device_name = resolve_device_name(Some(&wallet_result.node_identity.primary_device))
