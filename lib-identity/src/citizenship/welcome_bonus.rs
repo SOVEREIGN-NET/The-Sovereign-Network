@@ -1,6 +1,6 @@
 //! Welcome bonus for new citizens from the original identity.rs
 
-use crate::constants::SOV_WELCOME_BONUS_SOV;
+use crate::constants::DEV_BOOTSTRAP_BONUS_SOV;
 use crate::economics::{EconomicModel, Priority, Transaction, TransactionType};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
@@ -55,7 +55,7 @@ impl WelcomeBonus {
             .as_secs();
 
         // Welcome bonus: 5,000 SOV tokens to get started (atomic units)
-        let bonus_amount = lib_types::sov::atoms(SOV_WELCOME_BONUS_SOV as u128);
+        let bonus_amount = lib_types::sov::atoms(DEV_BOOTSTRAP_BONUS_SOV as u128);
 
         // Create welcome bonus transaction
         let bonus_tx = Transaction::new(
@@ -82,7 +82,7 @@ impl WelcomeBonus {
         tracing::info!(
             "WELCOME BONUS: Citizen {} received {} SOV tokens",
             hex::encode(&identity_id.0[..8]),
-            SOV_WELCOME_BONUS_SOV
+            DEV_BOOTSTRAP_BONUS_SOV
         );
 
         Ok(Self::new(

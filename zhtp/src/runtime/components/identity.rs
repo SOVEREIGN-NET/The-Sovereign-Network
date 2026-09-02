@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
+use crate::api::handlers::constants::{DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV};
 use crate::runtime::node_runtime::NodeRole;
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 use lib_identity::IdentityManager;
@@ -200,7 +200,7 @@ impl Component for IdentityComponent {
         if !genesis_ids.is_empty() {
             info!(
                 "Funding genesis primary wallets with {} SOV welcome bonus...",
-                SOV_WELCOME_BONUS_SOV
+                DEV_BOOTSTRAP_BONUS_SOV
             );
             for genesis_identity in &genesis_ids {
                 if genesis_identity.identity_type == lib_identity::IdentityType::Human {

@@ -11,7 +11,7 @@ mod tests {
     use crate::citizenship::*;
     use crate::economics::EconomicModel;
     use crate::wallets::WalletType;
-    use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, SOV_WELCOME_BONUS_SOV};
+    use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, DEV_BOOTSTRAP_BONUS_SOV};
     use lib_crypto::Hash;
     use std::collections::HashMap;
 
@@ -97,7 +97,7 @@ mod tests {
         assert_eq!(citizenship_result.privacy_credentials.credentials.len(), 2); // Age + Reputation
         
         // Verify welcome bonus
-        assert_eq!(citizenship_result.welcome_bonus.bonus_amount, SOV_WELCOME_BONUS_SOV * SOV_ATOMIC_UNITS);
+        assert_eq!(citizenship_result.welcome_bonus.bonus_amount, DEV_BOOTSTRAP_BONUS_SOV * SOV_ATOMIC_UNITS);
         assert_eq!(citizenship_result.welcome_bonus.wallet_id, citizenship_result.primary_wallet_id);
         
         // Verify the identity was stored in manager

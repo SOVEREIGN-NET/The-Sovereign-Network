@@ -30,10 +30,10 @@ pub const TESTNET_GENESIS_HASH: [u8; 32] = [
 pub const SOV_ATOMIC_UNITS: u128 = lib_types::sov::SCALE;
 
 /// Welcome bonus amount in SOV (human units)
-pub const SOV_WELCOME_BONUS_SOV: u128 = 5_000;
+pub const DEV_BOOTSTRAP_BONUS_SOV: u128 = 5_000;
 
 /// Welcome bonus in atomic units (18-decimal)
-pub const SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
+pub const DEV_BOOTSTRAP_BONUS: u128 = lib_types::sov::atoms(5_000);
 
 /// Monthly UBI amount in SOV (human units)
 pub const SOV_UBI_MONTHLY_SOV: u128 = 1_000;

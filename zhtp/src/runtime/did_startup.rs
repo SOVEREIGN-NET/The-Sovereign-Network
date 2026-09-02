@@ -4,7 +4,7 @@
 //! Nodes run under wallet context rather than identity context. Identities are optional
 //! and can be linked to wallets later for citizen services like UBI and DAO participation.
 
-use crate::api::handlers::constants::SOV_WELCOME_BONUS;
+use crate::api::handlers::constants::DEV_BOOTSTRAP_BONUS;
 use crate::keyfile_names::{
     KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME,
     USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME,
@@ -69,7 +69,7 @@ struct PersistedWalletData {
 }
 
 fn default_genesis_balance() -> u128 {
-    SOV_WELCOME_BONUS // Default genesis wallet balance (atomic units)
+    DEV_BOOTSTRAP_BONUS // Default genesis wallet balance (atomic units)
 }
 
 /// Get the default keystore path (under node_data_dir/keystore)
@@ -406,7 +406,7 @@ fn save_to_keystore(
         .values()
         .find(|w| w.wallet_type == lib_identity::WalletType::Primary)
         .map(|w| w.balance)
-        .unwrap_or(SOV_WELCOME_BONUS); // Default to genesis balance if not found
+        .unwrap_or(DEV_BOOTSTRAP_BONUS); // Default to genesis balance if not found
 
     let wallet_data = PersistedWalletData {
         wallet_name: result.wallet_name.clone(),

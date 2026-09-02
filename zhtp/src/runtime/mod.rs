@@ -10,7 +10,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 use super::config::NodeConfig;
-use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
+use crate::api::handlers::constants::{DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV};
 use crate::runtime::node_identity::{
     derive_node_id, log_runtime_node_identity, resolve_device_name, set_runtime_node_identity,
     RuntimeNodeIdentity,
@@ -2979,7 +2979,7 @@ impl RuntimeOrchestrator {
                     // Register wallets on blockchain
                     for (wallet_id, wallet) in &identity.wallet_manager.wallets {
                         let initial_balance = if format!("{:?}", wallet.wallet_type) == "Primary" {
-                            SOV_WELCOME_BONUS
+                            DEV_BOOTSTRAP_BONUS
                         } else {
                             0
                         };
@@ -3030,7 +3030,7 @@ impl RuntimeOrchestrator {
                                 // Add welcome bonus for Primary wallets (new identity registration)
                                 if format!("{:?}", wallet.wallet_type) == "Primary" {
                                     let wallet_id_hex = hex::encode(&wallet_id.0);
-                                    let welcome_bonus = SOV_WELCOME_BONUS;
+                                    let welcome_bonus = DEV_BOOTSTRAP_BONUS;
 
                                     // Update wallet registry balance
                                     blockchain_ref.update_wallet_shadow_initial_balance(
@@ -3062,7 +3062,7 @@ impl RuntimeOrchestrator {
 
                                     info!(
                                         "🎁 Welcome bonus: {} SOV recorded for wallet {} (UTXO created; TokenMint queued by backfill)",
-                                        SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]
+                                        DEV_BOOTSTRAP_BONUS_SOV, &wallet_id_hex[..16]
                                     );
                                 }
                             }
@@ -3164,7 +3164,7 @@ impl RuntimeOrchestrator {
                                         if format!("{:?}", wallet.wallet_type) == "Primary" {
                                             let current = wallet.balance;
                                             if current == 0 {
-                                                SOV_WELCOME_BONUS
+                                                DEV_BOOTSTRAP_BONUS
                                             } else {
                                                 current
                                             }
@@ -3223,7 +3223,7 @@ impl RuntimeOrchestrator {
                                             // Create actual UTXO so funds are spendable
                                             if format!("{:?}", wallet.wallet_type) == "Primary" {
                                                 let wallet_id_hex = hex::encode(&wallet_id.0);
-                                                let welcome_bonus = SOV_WELCOME_BONUS;
+                                                let welcome_bonus = DEV_BOOTSTRAP_BONUS;
 
                                                 // Update wallet registry balance
                                                 blockchain_ref
@@ -3254,7 +3254,7 @@ impl RuntimeOrchestrator {
                                                 blockchain_ref
                                                     .utxo_set
                                                     .insert(utxo_hash, utxo_output);
-                                                info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)", SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]);
+                                                info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)", DEV_BOOTSTRAP_BONUS_SOV, &wallet_id_hex[..16]);
                                             }
                                         }
                                         Err(e) => {
@@ -3283,7 +3283,7 @@ impl RuntimeOrchestrator {
                                             &wallet_id_hex[..16]
                                         );
 
-                                        let welcome_bonus = SOV_WELCOME_BONUS;
+                                        let welcome_bonus = DEV_BOOTSTRAP_BONUS;
 
                                         // Update wallet registry
                                         blockchain_ref.update_wallet_shadow_initial_balance(
@@ -3315,7 +3315,7 @@ impl RuntimeOrchestrator {
                                         );
                                         blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
 
-                                        info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)", SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]);
+                                        info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)", DEV_BOOTSTRAP_BONUS_SOV, &wallet_id_hex[..16]);
                                     }
                                 } else {
                                     // Wallet NOT in registry - register it now
@@ -3328,7 +3328,7 @@ impl RuntimeOrchestrator {
                                         if format!("{:?}", wallet.wallet_type) == "Primary" {
                                             let current = wallet.balance;
                                             if current == 0 {
-                                                SOV_WELCOME_BONUS
+                                                DEV_BOOTSTRAP_BONUS
                                             } else {
                                                 current
                                             }
@@ -3385,7 +3385,7 @@ impl RuntimeOrchestrator {
 
                                             // Give welcome bonus to Primary wallets
                                             if format!("{:?}", wallet.wallet_type) == "Primary" {
-                                                let welcome_bonus = SOV_WELCOME_BONUS;
+                                                let welcome_bonus = DEV_BOOTSTRAP_BONUS;
 
                                                 // Update wallet registry balance
                                                 blockchain_ref
@@ -3418,7 +3418,7 @@ impl RuntimeOrchestrator {
                                                     .insert(utxo_hash, utxo_output);
 
                                                 info!("🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)",
-                                                    SOV_WELCOME_BONUS_SOV, &wallet_id_hex[..16]);
+                                                    DEV_BOOTSTRAP_BONUS_SOV, &wallet_id_hex[..16]);
                                             }
                                         }
                                         Err(e) => {
@@ -4902,7 +4902,7 @@ impl RuntimeOrchestrator {
         );
 
         for view in owned_outputs {
-            let utxo_amount = SOV_WELCOME_BONUS;
+            let utxo_amount = DEV_BOOTSTRAP_BONUS;
             wallet_utxos.push((view.legacy_hash, view.output_index, utxo_amount));
             info!(
                 "   Found UTXO: {}",

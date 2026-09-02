@@ -1,4 +1,4 @@
-use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
+use crate::api::handlers::constants::{DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV};
 use anyhow::Result;
 use lib_blockchain::{
     integration::crypto_integration::{Signature, SignatureAlgorithm},
@@ -157,7 +157,7 @@ impl GenesisFundingService {
             let wallet_id_hex = hex::encode(&wallet_id.0[..8]);
             info!(
                 " Funding genesis user primary wallet: {} with {} SOV welcome bonus",
-                wallet_id_hex, SOV_WELCOME_BONUS_SOV
+                wallet_id_hex, DEV_BOOTSTRAP_BONUS_SOV
             );
 
             // CRITICAL: Get the FULL Dilithium5 public key from the identity's private data
@@ -207,7 +207,7 @@ impl GenesisFundingService {
                 created_at: 1730419200, // Genesis timestamp
                 registration_fee: 0,
                 capabilities: 0xFFFFFFFF,           // Full capabilities
-                initial_balance: SOV_WELCOME_BONUS, // 5,000 SOV welcome bonus (atomic units)
+                initial_balance: DEV_BOOTSTRAP_BONUS, // 5,000 SOV welcome bonus (atomic units)
             };
 
             blockchain.insert_wallet_shadow(hex::encode(&wallet_id.0), wallet_data);
@@ -237,7 +237,7 @@ impl GenesisFundingService {
                             anyhow::anyhow!("SOV token contract missing for genesis mint")
                         })?;
                     token
-                        .mint(&recipient_pk, SOV_WELCOME_BONUS as u128)
+                        .mint(&recipient_pk, DEV_BOOTSTRAP_BONUS as u128)
                         .map_err(|e| anyhow::anyhow!("failed to mint genesis wallet SOV: {e}"))?;
                     if let Some(store) = blockchain.get_store() {
                         let token_id = lib_blockchain::storage::TokenId::new(sov_token_id);
@@ -246,7 +246,7 @@ impl GenesisFundingService {
                             .force_set_token_balances(&[(
                                 token_id,
                                 addr,
-                                SOV_WELCOME_BONUS as u128,
+                                DEV_BOOTSTRAP_BONUS as u128,
                             )])
                             .map_err(|e| {
                                 anyhow::anyhow!("failed to persist genesis wallet SOV to sled: {e}")
@@ -257,7 +257,7 @@ impl GenesisFundingService {
 
             info!(
                 " Genesis user wallet funded and registered: {} SOV",
-                SOV_WELCOME_BONUS_SOV
+                DEV_BOOTSTRAP_BONUS_SOV
             );
             info!("   - Wallet ID: {}", hex::encode(&wallet_id.0));
             info!(
