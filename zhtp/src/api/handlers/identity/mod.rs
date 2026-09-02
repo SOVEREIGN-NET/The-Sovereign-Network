@@ -39,6 +39,21 @@ use lib_blockchain::{
 
 // Removed unused cryptographic imports
 
+/// Welcome mint amount for a given environment. Development returns the full
+/// 5,000 SOV bootstrap; Testnet/Mainnet return 0 (SOV is earned via
+/// routing/storage and, on testnet, the faucet — no automatic mint).
+fn welcome_bonus_for(environment: &crate::config::environment::Environment) -> u128 {
+    match environment {
+        crate::config::environment::Environment::Development => SOV_WELCOME_BONUS,
+        _ => 0,
+    }
+}
+
+/// Whether the current process is running in the Development environment.
+fn welcome_bonus_is_development() -> bool {
+    welcome_bonus_for(&crate::config::environment::detect_environment()) > 0
+}
+
 /// Build a treasury-signed SOV TokenMint for the welcome bonus.
 ///
 /// Call this **before** taking the blockchain write lock — it loads the
@@ -411,7 +426,11 @@ impl IdentityHandler {
             use lib_blockchain::transaction::TransactionOutput;
 
             let identity_id_hex = citizenship_result.identity_id.to_string();
-            let welcome_bonus_amount = citizenship_result.welcome_bonus.bonus_amount;
+            let welcome_bonus_amount = if welcome_bonus_is_development() {
+                citizenship_result.welcome_bonus.bonus_amount
+            } else {
+                0
+            };
 
             tracing::info!(
                 " Creating welcome bonus UTXO: {} SOV for identity {}",
@@ -506,9 +525,9 @@ impl IdentityHandler {
                 )),
                 seed_commitment: master_seed_commitment,
                 created_at: citizenship_result.dao_registration.registered_at,
-                registration_fee: 0,  // System wallets are free
-                capabilities: 0xFFFF, // Full capabilities
-                initial_balance: citizenship_result.welcome_bonus.bonus_amount, // Welcome bonus goes to primary
+                registration_fee: 0,                   // System wallets are free
+                capabilities: 0xFFFF,                  // Full capabilities
+                initial_balance: welcome_bonus_amount, // Welcome bonus goes to primary
             };
 
             if let Err(e) = self
@@ -2271,7 +2290,11 @@ impl IdentityHandler {
         // as a trusted system transaction (same path as register_wallet), not signed
         // by a throwaway server keypair over transaction.hash().
         let did_string = did.clone();
-        let welcome_bonus_amount = SOV_WELCOME_BONUS;
+        let welcome_bonus_amount = if welcome_bonus_is_development() {
+            SOV_WELCOME_BONUS
+        } else {
+            0
+        };
         let pending_display_name = display_name.clone();
 
         let identity_transaction_data = IdentityTransactionData {
@@ -2307,17 +2330,20 @@ impl IdentityHandler {
 
         // Keystore I/O + Dilithium sign — outside blockchain write lock so a slow
         // disk read cannot stall block production (review #2920).
-        let welcome_mint_tx =
+        let welcome_mint_tx = if welcome_bonus_is_development() {
             match build_welcome_bonus_token_mint(primary_wallet_id_arr, welcome_bonus_amount).await
             {
-                Ok(tx) => tx,
+                Ok(tx) => Some(tx),
                 Err(e) => {
                     tracing::error!("{}", e);
                     let mut identity_manager = self.identity_manager.write().await;
                     identity_manager.remove_identity(&identity_id);
                     return Ok(ZhtpResponse::error(ZhtpStatus::InternalServerError, e));
                 }
-            };
+            }
+        } else {
+            None
+        };
 
         // Commit under blockchain write only. Failures return (status, msg) so we
         // can drop the blockchain lock before taking identity_manager (lock order:
@@ -2481,18 +2507,18 @@ impl IdentityHandler {
                 &wallet_id_hexes,
             )?;
 
-            if let Err(e) =
-                enqueue_welcome_bonus_token_mint(&mut blockchain, welcome_mint_tx.clone())
-            {
-                tracing::error!("{}", e);
-                abort(&mut blockchain, &queued_txs);
-                return Err((ZhtpStatus::InternalServerError, e));
+            if let Some(mint_tx) = welcome_mint_tx.as_ref() {
+                if let Err(e) = enqueue_welcome_bonus_token_mint(&mut blockchain, mint_tx.clone()) {
+                    tracing::error!("{}", e);
+                    abort(&mut blockchain, &queued_txs);
+                    return Err((ZhtpStatus::InternalServerError, e));
+                }
+                queued_txs.push(mint_tx.clone());
+                tracing::info!(
+                    "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
+                    SOV_WELCOME_BONUS_SOV
+                );
             }
-            queued_txs.push(welcome_mint_tx);
-            tracing::info!(
-                "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
-                SOV_WELCOME_BONUS_SOV
-            );
 
             register_wallet_or_abort(
                 &mut blockchain,
@@ -2657,5 +2683,29 @@ mod principal_extraction_tests {
         let principal = extract_principal_from_request(&request);
         assert_eq!(principal.role, Role::Public);
         assert_eq!(principal.did, "did:zhtp:public");
+    }
+}
+
+#[cfg(test)]
+mod welcome_bonus_gate_tests {
+    use super::*;
+    use crate::config::environment::Environment;
+
+    #[test]
+    fn development_mints_full_welcome_bonus() {
+        assert_eq!(
+            welcome_bonus_for(&Environment::Development),
+            SOV_WELCOME_BONUS
+        );
+    }
+
+    #[test]
+    fn testnet_mints_no_welcome_bonus() {
+        assert_eq!(welcome_bonus_for(&Environment::Testnet), 0);
+    }
+
+    #[test]
+    fn mainnet_mints_no_welcome_bonus() {
+        assert_eq!(welcome_bonus_for(&Environment::Mainnet), 0);
     }
 }
