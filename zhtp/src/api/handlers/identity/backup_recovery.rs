@@ -599,19 +599,16 @@ async fn auto_create_identity_from_seed(
     Ok(did)
 }
 
-/// The default SOV welcome bonus minted when a wallet has no on-chain balance (5 000 SOV).
-const RECOVERY_SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
-
 /// Number of HD derivation indices to scan during wallet recovery.
 const HD_RECOVERY_SCAN_DEPTH: u32 = 20;
 
 /// Migrate wallets belonging to `identity_id` that are registered on-chain but have
 /// no sled token balance. Submits a WalletRegistration transaction for each such
-/// wallet so the executor mints the welcome bonus into sled in the next block.
+/// wallet to restore its recorded prior balance (never mints new SOV).
 ///
 /// `dilithium_pk` is used as a fallback: if no wallets exist in the registry at all
 /// for this identity, a fresh wallet is auto-created at the server-side deterministic
-/// id (`blake3(dilithium_pk || zeros_1568)`) with `RECOVERY_SOV_WELCOME_BONUS`.
+/// id (`blake3(dilithium_pk || zeros_1568)`) with a zero balance.
 async fn migrate_wallets_for_identity(
     identity_id: lib_crypto::Hash,
     dilithium_pk: Option<Vec<u8>>,
@@ -677,15 +674,11 @@ async fn migrate_wallets_for_identity(
     }
 
     // Submit a WalletRegistration tx for each wallet with 0 sled balance.
-    // Wallets that originally had initial_balance > 0 are re-minted at their recorded
-    // amount. Only Primary wallets with initial_balance == 0 receive the welcome bonus;
-    // UBI and Savings wallets correctly start at 0 and should stay at 0.
-    for mut wallet_data in wallets_to_migrate {
-        if wallet_data.initial_balance == 0 && wallet_data.wallet_type == "Primary" {
-            wallet_data.initial_balance = RECOVERY_SOV_WELCOME_BONUS;
-        }
+    // Wallets that recorded a prior initial_balance > 0 are restored at that amount.
+    // Wallets with no recorded balance stay at 0 — recovery never prints new money.
+    for wallet_data in wallets_to_migrate {
         if wallet_data.initial_balance == 0 {
-            // Nothing to mint for this wallet; skip to avoid a no-op tx.
+            // Nothing to restore for this wallet; skip to avoid a no-op tx.
             continue;
         }
         let wallet_id_hex = hex::encode(wallet_data.wallet_id.as_bytes());
@@ -774,7 +767,7 @@ async fn create_fallback_wallet(
         created_at: now_ts,
         registration_fee: 0,
         capabilities: 0,
-        initial_balance: RECOVERY_SOV_WELCOME_BONUS,
+        initial_balance: 0,
     };
 
     let reg_tx = lib_blockchain::transaction::Transaction::new_wallet_registration(
@@ -806,9 +799,8 @@ async fn create_fallback_wallet(
         Ok(_) => {
             blockchain.insert_wallet_shadow(wallet_id_hex.clone(), wallet_data);
             tracing::info!(
-                "Recovery: created fallback wallet {} ({} SOV)",
-                &wallet_id_hex[..16.min(wallet_id_hex.len())],
-                RECOVERY_SOV_WELCOME_BONUS / lib_types::sov::SCALE,
+                "Recovery: created fallback wallet {} (0 SOV — recovery never mints)",
+                &wallet_id_hex[..16.min(wallet_id_hex.len())]
             );
         }
         Err(e) => tracing::warn!(
