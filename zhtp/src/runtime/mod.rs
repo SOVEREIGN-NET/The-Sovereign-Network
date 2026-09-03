@@ -10,12 +10,52 @@ use tokio::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 use super::config::NodeConfig;
-use crate::api::handlers::constants::{DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV};
+use crate::api::handlers::constants::{
+    DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV, SOV_ATOMIC_UNITS,
+};
 use crate::runtime::node_identity::{
     derive_node_id, log_runtime_node_identity, resolve_device_name, set_runtime_node_identity,
     RuntimeNodeIdentity,
 };
 // Removed ZK coordinator - using unified lib-proofs system directly
+
+/// Credit the Development bootstrap bonus to a wallet as a spendable UTXO.
+///
+/// No-op when `amount_atoms` is 0 (non-Development environments). Consolidates
+/// the four previously-duplicated welcome-bonus UTXO blocks into one path.
+fn credit_dev_bootstrap_utxo(
+    blockchain: &mut lib_blockchain::Blockchain,
+    wallet_id_hex: &str,
+    amount_atoms: u128,
+) {
+    if amount_atoms == 0 {
+        return;
+    }
+    blockchain.update_wallet_shadow_initial_balance(wallet_id_hex, amount_atoms);
+    let utxo_output = lib_blockchain::transaction::TransactionOutput {
+        commitment: lib_blockchain::types::hash::blake3_hash(
+            format!(
+                "welcome_bonus_commitment_{}_{}",
+                wallet_id_hex, amount_atoms
+            )
+            .as_bytes(),
+        ),
+        note: lib_blockchain::types::hash::blake3_hash(
+            format!("welcome_bonus_note_{}", wallet_id_hex).as_bytes(),
+        ),
+        recipient: lib_crypto::PublicKey::new([0u8; 2592]),
+        merkle_leaf: lib_blockchain::Hash::default(),
+    };
+    let utxo_hash = lib_blockchain::types::hash::blake3_hash(
+        format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes(),
+    );
+    blockchain.utxo_set.insert(utxo_hash, utxo_output);
+    info!(
+        "🎁 Welcome bonus: {} SOV credited to wallet {} (UTXO created)",
+        amount_atoms / SOV_ATOMIC_UNITS,
+        &wallet_id_hex[..16]
+    );
+}
 
 /// Information about an existing network discovered during startup
 #[derive(Debug, Clone)]
@@ -2931,6 +2971,14 @@ impl RuntimeOrchestrator {
         // ========================================================================
         info!("📝 Registering identity on blockchain...");
 
+        // The dev bootstrap bonus is Development-only; Testnet/Mainnet mint nothing.
+        let bootstrap_bonus = if self.config.environment == crate::config::Environment::Development
+        {
+            DEV_BOOTSTRAP_BONUS
+        } else {
+            0
+        };
+
         // Get pending identity from Phase 3
         if let Some(identity) = self.get_pending_identity_registration().await {
             // Prefer the global blockchain provider for registration.
@@ -2979,7 +3027,7 @@ impl RuntimeOrchestrator {
                     // Register wallets on blockchain
                     for (wallet_id, wallet) in &identity.wallet_manager.wallets {
                         let initial_balance = if format!("{:?}", wallet.wallet_type) == "Primary" {
-                            DEV_BOOTSTRAP_BONUS
+                            bootstrap_bonus
                         } else {
                             0
                         };
@@ -3027,42 +3075,13 @@ impl RuntimeOrchestrator {
                                     hex::encode(&tx_hash.as_bytes()[..8])
                                 );
 
-                                // Add welcome bonus for Primary wallets (new identity registration)
+                                // Add dev-bootstrap bonus for Primary wallets (Development only).
                                 if format!("{:?}", wallet.wallet_type) == "Primary" {
                                     let wallet_id_hex = hex::encode(&wallet_id.0);
-                                    let welcome_bonus = DEV_BOOTSTRAP_BONUS;
-
-                                    // Update wallet registry balance
-                                    blockchain_ref.update_wallet_shadow_initial_balance(
+                                    credit_dev_bootstrap_utxo(
+                                        blockchain_ref,
                                         &wallet_id_hex,
-                                        welcome_bonus,
-                                    );
-
-                                    // Create spendable UTXO for the welcome bonus
-                                    let utxo_output =
-                                        lib_blockchain::transaction::TransactionOutput {
-                                            commitment: lib_blockchain::types::hash::blake3_hash(
-                                                format!(
-                                                    "welcome_bonus_commitment_{}_{}",
-                                                    wallet_id_hex, welcome_bonus
-                                                )
-                                                .as_bytes(),
-                                            ),
-                                            note: lib_blockchain::types::hash::blake3_hash(
-                                                format!("welcome_bonus_note_{}", wallet_id_hex)
-                                                    .as_bytes(),
-                                            ),
-                                            recipient: lib_crypto::PublicKey::new([0u8; 2592]),
-                                            merkle_leaf: lib_blockchain::Hash::default(),
-                                        };
-                                    let utxo_hash = lib_blockchain::types::hash::blake3_hash(
-                                        format!("welcome_bonus_utxo:{}", wallet_id_hex).as_bytes(),
-                                    );
-                                    blockchain_ref.utxo_set.insert(utxo_hash, utxo_output);
-
-                                    info!(
-                                        "🎁 Welcome bonus: {} SOV recorded for wallet {} (UTXO created; TokenMint queued by backfill)",
-                                        DEV_BOOTSTRAP_BONUS_SOV, &wallet_id_hex[..16]
+                                        bootstrap_bonus,
                                     );
                                 }
                             }
@@ -3164,7 +3183,7 @@ impl RuntimeOrchestrator {
                                         if format!("{:?}", wallet.wallet_type) == "Primary" {
                                             let current = wallet.balance;
                                             if current == 0 {
-                                                DEV_BOOTSTRAP_BONUS
+                                                bootstrap_bonus
                                             } else {
                                                 current
                                             }
@@ -3221,7 +3240,9 @@ impl RuntimeOrchestrator {
 
                                             // Give welcome bonus to newly registered Primary wallets (like genesis)
                                             // Create actual UTXO so funds are spendable
-                                            if format!("{:?}", wallet.wallet_type) == "Primary" {
+                                            if format!("{:?}", wallet.wallet_type) == "Primary"
+                                                && bootstrap_bonus > 0
+                                            {
                                                 let wallet_id_hex = hex::encode(&wallet_id.0);
                                                 let welcome_bonus = DEV_BOOTSTRAP_BONUS;
 
@@ -3277,6 +3298,7 @@ impl RuntimeOrchestrator {
                                     // Wallet exists - check if it needs funding
                                     if wallet_entry.initial_balance == 0
                                         && format!("{:?}", wallet.wallet_type) == "Primary"
+                                        && bootstrap_bonus > 0
                                     {
                                         info!(
                                             "📝 Funding existing zero-balance Primary wallet: {}",
@@ -3328,7 +3350,7 @@ impl RuntimeOrchestrator {
                                         if format!("{:?}", wallet.wallet_type) == "Primary" {
                                             let current = wallet.balance;
                                             if current == 0 {
-                                                DEV_BOOTSTRAP_BONUS
+                                                bootstrap_bonus
                                             } else {
                                                 current
                                             }
@@ -3384,7 +3406,9 @@ impl RuntimeOrchestrator {
                                             );
 
                                             // Give welcome bonus to Primary wallets
-                                            if format!("{:?}", wallet.wallet_type) == "Primary" {
+                                            if format!("{:?}", wallet.wallet_type) == "Primary"
+                                                && bootstrap_bonus > 0
+                                            {
                                                 let welcome_bonus = DEV_BOOTSTRAP_BONUS;
 
                                                 // Update wallet registry balance
