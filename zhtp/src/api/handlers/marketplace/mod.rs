@@ -2,7 +2,7 @@
 //!
 //! Handles buying, selling, and transferring content ownership with blockchain integration.
 
-use crate::api::handlers::constants::SOV_WELCOME_BONUS;
+use crate::api::handlers::constants::DEV_BOOTSTRAP_BONUS;
 use anyhow::anyhow;
 use lib_blockchain::{TransactionOutput, TransactionType};
 use lib_crypto::hashing::hash_blake3;
@@ -460,7 +460,7 @@ impl MarketplaceHandler {
         );
 
         for view in owned_outputs {
-            let utxo_amount = SOV_WELCOME_BONUS;
+            let utxo_amount = DEV_BOOTSTRAP_BONUS;
             wallet_utxos.push((view.legacy_hash, view.output_index, utxo_amount));
             info!(
                 "    Found UTXO: {}",

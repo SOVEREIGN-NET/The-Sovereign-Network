@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use crate::api::handlers::constants::SOV_WELCOME_BONUS;
+use crate::api::handlers::constants::DEV_BOOTSTRAP_BONUS;
 use crate::session_manager::SessionManager;
 use lib_access_control::{Role, SecurityPrincipal};
 use lib_identity::IdentityManager;
@@ -1695,7 +1695,7 @@ fn register_wallet_on_blockchain(
                 .get("welcome_bonus")
                 .and_then(|wb| wb.get("bonus_amount"))
                 .and_then(|v| v.as_u64().map(|n| n as u128))
-                .unwrap_or(SOV_WELCOME_BONUS) // Default welcome bonus amount (atomic units)
+                .unwrap_or(DEV_BOOTSTRAP_BONUS) // Default welcome bonus amount (atomic units)
         } else {
             0 // Other wallets start with 0 balance
         };

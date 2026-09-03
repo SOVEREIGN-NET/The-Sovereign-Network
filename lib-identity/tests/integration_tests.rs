@@ -4,7 +4,7 @@
 //! including citizen onboarding, credential verification, and zero-knowledge proofs.
 
 use lib_crypto::Hash;
-use lib_identity::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, SOV_WELCOME_BONUS_SOV};
+use lib_identity::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, DEV_BOOTSTRAP_BONUS_SOV};
 use lib_identity::credentials::creation::CredentialFactory;
 use lib_identity::identity::activity_tracking::{ActivityTracker, ActivityType};
 use lib_identity::*;
@@ -74,7 +74,7 @@ async fn test_complete_citizen_onboarding_flow() {
     // Verify welcome bonus
     assert_eq!(
         citizenship_result.welcome_bonus.bonus_amount,
-        SOV_WELCOME_BONUS_SOV * SOV_ATOMIC_UNITS
+        DEV_BOOTSTRAP_BONUS_SOV * SOV_ATOMIC_UNITS
     );
 
     println!("Complete citizen onboarding test passed!");
@@ -438,7 +438,7 @@ async fn test_citizenship_system_integration() {
         );
         assert_eq!(
             result.welcome_bonus.bonus_amount,
-            SOV_WELCOME_BONUS_SOV * SOV_ATOMIC_UNITS
+            DEV_BOOTSTRAP_BONUS_SOV * SOV_ATOMIC_UNITS
         );
     }
 

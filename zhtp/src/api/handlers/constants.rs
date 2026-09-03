@@ -5,10 +5,10 @@
 pub const SOV_ATOMIC_UNITS: u128 = lib_types::sov::SCALE;
 
 /// SOV token welcome bonus amount (human units)
-pub const SOV_WELCOME_BONUS_SOV: u128 = 5_000;
+pub const DEV_BOOTSTRAP_BONUS_SOV: u128 = 5_000;
 
 /// SOV token welcome bonus amount for new users (atomic units)
-pub const SOV_WELCOME_BONUS: u128 = lib_types::sov::atoms(5_000);
+pub const DEV_BOOTSTRAP_BONUS: u128 = lib_types::sov::atoms(5_000);
 
 /// Custom ZHTP recovery phrase word count
 pub const ZHTP_RECOVERY_PHRASE_WORD_COUNT: usize = 20;

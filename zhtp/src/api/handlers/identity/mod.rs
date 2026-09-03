@@ -30,7 +30,7 @@ use lib_identity::{CitizenshipResult, IdentityManager, IdentityType, RecoveryPhr
 use lib_identity::economics::EconomicModel as IdentityEconomicModel;
 
 // Blockchain imports for transaction creation
-use crate::api::handlers::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
+use crate::api::handlers::constants::{SOV_ATOMIC_UNITS, DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV};
 use lib_blockchain::{
     integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm},
     transaction::core::IdentityTransactionData,
@@ -44,7 +44,7 @@ use lib_blockchain::{
 /// routing/storage and, on testnet, the faucet — no automatic mint).
 fn welcome_bonus_for(environment: &crate::config::environment::Environment) -> u128 {
     match environment {
-        crate::config::environment::Environment::Development => SOV_WELCOME_BONUS,
+        crate::config::environment::Environment::Development => DEV_BOOTSTRAP_BONUS,
         _ => 0,
     }
 }
@@ -2291,7 +2291,7 @@ impl IdentityHandler {
         // by a throwaway server keypair over transaction.hash().
         let did_string = did.clone();
         let welcome_bonus_amount = if welcome_bonus_is_development() {
-            SOV_WELCOME_BONUS
+            DEV_BOOTSTRAP_BONUS
         } else {
             0
         };
@@ -2516,7 +2516,7 @@ impl IdentityHandler {
                 queued_txs.push(mint_tx.clone());
                 tracing::info!(
                     "💰 Primary wallet queued; {} SOV welcome bonus mint pending block inclusion",
-                    SOV_WELCOME_BONUS_SOV
+                    DEV_BOOTSTRAP_BONUS_SOV
                 );
             }
 
@@ -2695,7 +2695,7 @@ mod welcome_bonus_gate_tests {
     fn development_mints_full_welcome_bonus() {
         assert_eq!(
             welcome_bonus_for(&Environment::Development),
-            SOV_WELCOME_BONUS
+            DEV_BOOTSTRAP_BONUS
         );
     }
 
