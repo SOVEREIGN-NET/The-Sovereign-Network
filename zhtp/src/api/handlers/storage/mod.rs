@@ -245,58 +245,63 @@ impl StorageHandler {
                         .unwrap()
                         .as_secs();
 
-                    // Create full ContentMetadata as required
-                    let metadata = lib_storage::ContentMetadata {
-                        hash: content_hash_obj.clone(),
-                        content_hash: content_hash_obj.clone(),
-                        owner: owner_identity,
-                        size: content.len() as u64,
-                        content_type: "application/octet-stream".to_string(),
+                    // --------------------------------------------------------------------
+                    // RUTHLESS UPGRADE: Use high-level lib-storage API
+                    // This ensures the content is SHARDED and PQ-ENCRYPTED
+                    // consistently across the whole network.
+                    // --------------------------------------------------------------------
+                    let upload_req = lib_storage::UploadRequest {
+                        content: content.clone(),
                         filename: format!("upload_{}.bin", hex::encode(&content_hash[..8])),
+                        mime_type: "application/octet-stream".to_string(),
                         description: "Uploaded via storage API".to_string(),
-                        checksum: content_hash_obj.clone(),
-
-                        // Storage configuration
-                        tier: lib_storage::StorageTier::Hot,
-                        encryption: lib_storage::EncryptionLevel::None,
-                        access_pattern: lib_storage::AccessPattern::Occasional,
-                        replication_factor: 3,
-                        total_chunks: ((content.len() / 65536) + 1) as u32,
-                        is_encrypted: false,
-                        is_compressed: false,
-
-                        // Access control (public by default)
-                        access_control: vec![lib_storage::AccessLevel::Public],
                         tags: vec!["upload".to_string(), "api".to_string()],
-
-                        // Economics
-                        cost_per_day: 10,
-                        created_at: current_time,
-                        last_accessed: current_time,
-                        access_count: 0,
-                        expires_at: None,
+                        encrypt: true,   // Default to secure
+                        compress: true,  // Default to efficient
+                        access_control: lib_storage::AccessControlSettings {
+                            public_read: true,
+                            read_permissions: vec![],
+                            write_permissions: vec![],
+                            expires_at: None,
+                        },
+                        storage_requirements: lib_storage::ContentStorageRequirements {
+                            duration_days: 30,
+                            quality_requirements: Default::default(),
+                            budget_constraints: Default::default(),
+                        },
                     };
 
-                    let mut mgr = manager.write().await;
-                    match mgr.register_content_ownership(
-                        content_hash_obj,
-                        wallet_id,
-                        &metadata,
-                        0, // No purchase price for uploads
-                    ) {
-                        Ok(_) => {
-                            tracing::info!(
-                                " Registered content ownership: {} → {}",
-                                hex::encode(&content_hash),
-                                wallet_id_str
-                            );
-                            true
-                        }
+                    let mut mgr = self.storage.write().await;
+                    let hash_obj: lib_crypto::Hash = match (*mgr).upload_content(upload_req, owner_identity).await {
+                        Ok(h) => h,
                         Err(e) => {
-                            tracing::warn!("Failed to register ownership: {}", e);
-                            false
+                            tracing::error!("Failed to shard and store content: {}", e);
+                            return Ok(ZhtpResponse::error(
+                                lib_protocols::ZhtpStatus::InternalServerError,
+                                format!("Sharding failed: {}", e),
+                            ));
                         }
-                    }
+                    };
+
+                    tracing::info!(
+                        " ✅ Content sharded and registered: {} → {}",
+                        hex::encode(hash_obj.as_bytes()),
+                        wallet_id_str
+                    );
+
+                    let response = StoreResponse {
+                        success: true,
+                        hash: hex::encode(hash_obj.as_bytes()),
+                        size: content.len(),
+                        message: "Content sharded and stored successfully".to_string(),
+                        ownership_registered: true,
+                        wallet_id: Some(wallet_id_str.to_string()),
+                    };
+
+                    return Ok(ZhtpResponse::success(
+                        serde_json::to_vec(&response).unwrap(),
+                        None,
+                    ));
                 }
                 Err(e) => {
                     tracing::warn!("Invalid wallet_id format: {}", e);

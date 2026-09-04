@@ -1,0 +1,5 @@
+post_quantum_enabled = true
+dilithium_level = 5
+kyber_level = 1024
+hybrid_mode = true
+memory_security = true

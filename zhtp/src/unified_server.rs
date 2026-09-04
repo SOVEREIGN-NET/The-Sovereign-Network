@@ -1220,6 +1220,7 @@ impl ZhtpUnifiedServer {
             content_publisher.clone(),
             identity_manager.clone(),
             blockchain.clone(),
+            storage.clone(),
         )
         .await?
         .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());

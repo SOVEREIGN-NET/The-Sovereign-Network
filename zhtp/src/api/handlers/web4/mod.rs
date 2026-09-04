@@ -63,6 +63,8 @@ pub struct Web4Handler {
     content_service: Arc<Web4ContentService>,
     /// Wallet-content ownership manager
     wallet_content_manager: Arc<RwLock<lib_storage::WalletContentManager>>,
+    /// Unified storage system for sharded content
+    storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
     /// Identity manager for owner DID lookups
     identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
     /// Blockchain for UTXO transaction creation
@@ -83,6 +85,7 @@ impl Web4Handler {
         content_publisher: Arc<ContentPublisher>,
         identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
         blockchain: Arc<RwLock<lib_blockchain::Blockchain>>,
+        storage: Arc<RwLock<lib_storage::PersistentStorageSystem>>,
     ) -> ZhtpResult<Self> {
         info!("Initializing Web4 API handler with existing domain registry");
 
@@ -101,6 +104,7 @@ impl Web4Handler {
             _content_publisher: content_publisher,
             content_service: Arc::new(content_service),
             wallet_content_manager: Arc::new(RwLock::new(wallet_content_manager)),
+            storage,
             identity_manager,
             blockchain,
             chunked_upload_manager: Arc::new(ChunkedUploadManager::new()),

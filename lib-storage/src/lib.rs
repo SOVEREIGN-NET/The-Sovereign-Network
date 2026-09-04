@@ -114,8 +114,8 @@ pub struct UnifiedStorageSystem<B: dht::backend::StorageBackend = dht::backend::
     dht_storage: dht::storage::DhtStorage<B>,
     /// Economic manager
     economic_manager: economic::manager::EconomicStorageManager,
-    /// Content manager (uses in-memory storage for content metadata)
-    content_manager: content::ContentManager,
+    /// Content manager
+    content_manager: content::ContentManager<B>,
     /// Erasure coding
     erasure_coding: erasure::ErasureCoding,
     /// System configuration
@@ -229,7 +229,7 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
         let economic_manager =
             economic::manager::EconomicStorageManager::new(config.economic_config.clone());
 
-        // Initialize content manager with in-memory storage
+        // Initialize content manager (uses same backend as DHT storage)
         let content_dht_storage =
             dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
         let content_manager =
@@ -283,46 +283,6 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     /// Get the node's stable identity-derived NodeId
     pub fn get_node_id(&self) -> NodeId {
         self.config.node_id
-    }
-
-    /// Upload content with full economic integration
-    pub async fn upload_content(
-        &mut self,
-        request: UploadRequest,
-        uploader: ZhtpIdentity,
-    ) -> Result<ContentHash> {
-        // Upload through content manager
-        let content_hash = self
-            .content_manager
-            .upload_content(request, uploader)
-            .await?;
-
-        // Update statistics
-        self.stats.storage_stats.total_uploads += 1;
-        self.stats.storage_stats.total_content_count += 1;
-
-        Ok(content_hash)
-    }
-
-    /// Download content with access control
-    pub async fn download_content(&mut self, request: DownloadRequest) -> Result<Vec<u8>> {
-        // Download through content manager
-        let content = self.content_manager.download_content(request).await?;
-
-        // Update statistics
-        self.stats.storage_stats.total_downloads += 1;
-
-        Ok(content)
-    }
-
-    /// Search for content across the unified storage system
-    pub async fn search_content(
-        &self,
-        query: SearchQuery,
-        requester: ZhtpIdentity,
-    ) -> Result<Vec<ContentMetadata>> {
-        // Direct return since we now have unified ContentMetadata
-        self.content_manager.search_content(query, requester).await
     }
 
     /// Get storage quote for economic planning
@@ -429,6 +389,57 @@ impl UnifiedStorageSystem<dht::backend::HashMapBackend> {
     pub fn update_config(&mut self, config: UnifiedStorageConfig) {
         self.config = config;
     }
+}
+
+/// Generic methods for ALL storage backends
+impl<B: dht::backend::StorageBackend + 'static> UnifiedStorageSystem<B> {
+    /// Upload content with full economic integration and sharding
+    pub async fn upload_content(
+        &mut self,
+        request: UploadRequest,
+        uploader: ZhtpIdentity,
+    ) -> Result<ContentHash> {
+        // Upload through content manager
+        let content_hash = self
+            .content_manager
+            .upload_content(request, uploader)
+            .await?;
+
+        // Update statistics
+        self.stats.storage_stats.total_uploads += 1;
+        self.stats.storage_stats.total_content_count += 1;
+
+        Ok(content_hash)
+    }
+
+    /// Download content with access control and reconstruction
+    pub async fn download_content(&mut self, request: DownloadRequest) -> Result<Vec<u8>> {
+        // Download through content manager
+        let content = self.content_manager.download_content(request).await?;
+
+        // Update statistics
+        self.stats.storage_stats.total_downloads += 1;
+
+        Ok(content)
+    }
+
+    /// Retrieve content metadata from DHT or local cache
+    pub async fn get_content_metadata(
+        &mut self,
+        content_hash: &ContentHash,
+    ) -> Result<ContentMetadata> {
+        self.content_manager.get_content_metadata(content_hash).await
+    }
+
+    /// Search for content across the unified storage system
+    pub async fn search_content(
+        &self,
+        query: SearchQuery,
+        requester: ZhtpIdentity,
+    ) -> Result<Vec<ContentMetadata>> {
+        // Direct return since we now have unified ContentMetadata
+        self.content_manager.search_content(query, requester).await
+    }
 
     // ========================================================================
     // Identity Storage Integration - Critical Missing Feature from Original
@@ -530,7 +541,7 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         let dht_storage = dht::storage::DhtStorage::new_persistent(
             node_id.clone(),
             config.storage_config.max_storage_size,
-            db_path,
+            db_path.as_ref(),
         )?;
 
         tracing::info!(
@@ -541,10 +552,12 @@ impl UnifiedStorageSystem<dht::backend::SledBackend> {
         let economic_manager =
             economic::manager::EconomicStorageManager::new(config.economic_config.clone());
 
-        // Initialize content manager with in-memory storage (content metadata layer)
-        // Note: Content storage is separate and can be made persistent in future phases
-        let content_dht_storage =
-            dht::storage::DhtStorage::new(node_id.clone(), config.storage_config.max_storage_size);
+        // Initialize content manager (uses same persistent backend)
+        let content_dht_storage = dht::storage::DhtStorage::new_persistent(
+            node_id.clone(),
+            config.storage_config.max_storage_size,
+            db_path.as_ref().join("content_metadata"),
+        )?;
         let content_manager =
             content::ContentManager::new(content_dht_storage, config.economic_config.clone())?;
 

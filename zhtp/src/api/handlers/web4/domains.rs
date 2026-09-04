@@ -497,7 +497,7 @@ impl Web4Handler {
         let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
         let owner_identity_hash = lib_blockchain::Hash::from_slice(&owner_identity.id.0);
 
-        let (fee_tx_hash_hex, owner_wallet_id_bytes) = if is_register {
+        let (fee_tx_hash_hex, _) = if is_register {
             // Resolve the owner's Primary wallet and run the optimistic
             // SOV balance preview. Only relevant on the register path;
             // updates skip this entire block (reviewer #2691/L455).
@@ -654,12 +654,10 @@ impl Web4Handler {
             (String::new(), [0u8; 32])
         };
 
-        // Prepare content mappings WITH RICH METADATA for storage
-        let mut initial_content = HashMap::new();
+        // Prepare content mappings for storage
         let mut content_hash_map = HashMap::new();
-        let mut content_metadata_map = HashMap::new(); // NEW: Store rich metadata per route
 
-        let current_time = chrono::Utc::now().timestamp() as u64;
+        // current_time not needed, handled by upload_content metadata
 
         for (path, mapping) in simple_request.content_mappings {
             // Decode base64 content to raw bytes for DHT storage
@@ -679,52 +677,52 @@ impl Web4Handler {
             };
             let content_hash = lib_crypto::hash_blake3(&content_bytes);
             let content_hash_hex = hex::encode(&content_hash[..8]); // Use first 8 bytes for shorter hash
-            let content_hash_full = lib_crypto::Hash::from_bytes(&content_hash[..32]);
 
             info!("   Path: {} ({} bytes)", path, content_bytes.len());
             info!("     Hash: {}", content_hash_hex);
             info!("     Type: {}", mapping.content_type);
 
-            // CREATE RICH METADATA for each content item
-            let content_metadata = lib_storage::ContentMetadata {
-                hash: content_hash_full.clone(),
-                content_hash: content_hash_full.clone(),
-                owner: owner_identity.clone(),
-                size: content_bytes.len() as u64,
-                content_type: mapping.content_type.clone(),
+            // --------------------------------------------------------------------
+            // RUTHLESS UPGRADE: Shard Web4 content across the mesh
+            // This guarantees that websites are distributed and fault-tolerant.
+            // --------------------------------------------------------------------
+            let upload_req = lib_storage::UploadRequest {
+                content: content_bytes.clone(),
                 filename: path.clone(),
-                description: format!("Content for {}{}", simple_request.domain, path),
-                checksum: content_hash_full.clone(),
-
-                // Storage config optimized for Web4 content
-                tier: lib_storage::StorageTier::Hot, // Fast access for websites
-                encryption: lib_storage::EncryptionLevel::None, // Public by default
-                access_pattern: lib_storage::AccessPattern::Frequent,
-                replication_factor: 5, // High availability for websites
-                total_chunks: (content_bytes.len() / 65536 + 1) as u32,
-                is_encrypted: false,
-                is_compressed: false,
-
-                // Public access for Web4 content
-                access_control: vec![lib_storage::AccessLevel::Public],
-                tags: vec![
-                    "web4".to_string(),
-                    simple_request.domain.clone(),
-                    path.clone(),
-                ],
-
-                // Economics: 1 year Web4 hosting
-                cost_per_day: 10, // 10 SOV per day for web content
-                created_at: current_time,
-                last_accessed: current_time,
-                access_count: 0,
-                expires_at: Some(current_time + (365 * 86400)), // 1 year expiry
+                mime_type: mapping.content_type.clone(),
+                description: format!("Web4 content for {}", simple_request.domain),
+                tags: vec!["web4".to_string(), simple_request.domain.clone()],
+                encrypt: false,  // Websites are public by default
+                compress: true,  // Use compression for faster loading
+                access_control: lib_storage::AccessControlSettings {
+                    public_read: true,
+                    read_permissions: vec![],
+                    write_permissions: vec![],
+                    expires_at: None,
+                },
+                storage_requirements: lib_storage::ContentStorageRequirements {
+                    duration_days: 365,
+                    quality_requirements: Default::default(),
+                    budget_constraints: Default::default(),
+                },
             };
 
-            initial_content.insert(path.clone(), content_bytes);
-            content_hash_map.insert(path.clone(), content_hash_hex);
-            content_metadata_map.insert(path, content_metadata); // Store metadata!
+            let mut mgr = self.storage.write().await;
+            let shard_content_hash: lib_crypto::Hash = match (*mgr).upload_content(upload_req, owner_identity.clone()).await {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("   Failed to shard Web4 content for {}: {}", path, e);
+                    return Err(anyhow!("Sharding failed for Web4 path {}", path));
+                }
+            };
+
+            // We store the sharded content hash in the map, but pass EMPTY initial_content
+            // to register_domain_with_content to prevent legacy un-sharded storage.
+            content_hash_map.insert(path.clone(), hex::encode(shard_content_hash.as_bytes()));
         }
+
+        // initial_content is intentionally left empty because we handled sharded storage above.
+        let initial_content = HashMap::new();
 
         // Create domain metadata
         let metadata = DomainMetadata {
@@ -936,46 +934,11 @@ impl Web4Handler {
             &domain_system_tx_hash[..16.min(domain_system_tx_hash.len())]
         );
 
-        // Register content ownership with wallet using ACTUAL owner identity
-        let wallet_manager_lock = self.wallet_content_manager.write().await;
-
-        // Get primary wallet from owner's identity (HashMap iteration is non-deterministic).
-        if let Some((_, primary_wallet)) = owner_identity
-            .wallet_manager
-            .wallets
-            .iter()
-            .find(|(_, wallet)| wallet.wallet_type == WalletType::Primary)
-        {
-            let wallet_id = primary_wallet.id.clone();
-            drop(wallet_manager_lock); // Release lock before async operations
-
-            let mut wallet_manager = self.wallet_content_manager.write().await;
-
-            // Register ownership for each content item in the domain
-            for (path, metadata) in &content_metadata_map {
-                if let Err(e) = wallet_manager.register_content_ownership(
-                    metadata.content_hash.clone(),
-                    wallet_id.clone(),
-                    metadata,
-                    0, // No purchase price for domain registration uploads
-                ) {
-                    error!("Failed to register content ownership for {}: {}", path, e);
-                }
-            }
-
-            info!(
-                " Registered {} content items to wallet {} for identity {}",
-                content_metadata_map.len(),
-                wallet_id,
-                owner_did
-            );
-        } else {
-            drop(wallet_manager_lock);
-            error!(
-                " No wallet found for owner identity {}, content ownership not registered",
-                owner_did
-            );
-        }
+        info!(
+            " Registered {} sharded content items for domain {}",
+            content_hash_map.len(),
+            simple_request.domain
+        );
 
         // Create response
         let mut response = serde_json::json!({

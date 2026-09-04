@@ -5,23 +5,25 @@
 //! Enhanced with encryption and key management using lib-crypto.
 
 use crate::dht::storage::DhtStorage;
+use crate::dht::backend::{StorageBackend, HashMapBackend};
 use crate::types::economic_types::{
     BudgetConstraints, DisputeResolution, EconomicManagerConfig, EconomicStorageRequest,
     EscrowPreferences, PaymentPreferences, PaymentSchedule, QualityRequirements,
 }; // Explicit import
 use crate::types::*;
+use crate::erasure::{ErasureCoding, EncodedShards};
 use anyhow::{anyhow, Result};
 use lib_crypto::{decrypt_data, derive_keys, encrypt_data, hash_blake3, Hash, KeyPair};
 use lib_identity::ZhtpIdentity;
-use log::info;
+use log::{info, debug, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// High-level content manager with encryption and key management
 #[derive(Debug)]
-pub struct ContentManager {
+pub struct ContentManager<B: StorageBackend = HashMapBackend> {
     /// DHT storage backend
-    dht_storage: DhtStorage,
+    dht_storage: DhtStorage<B>,
     /// Content metadata
     content_metadata: HashMap<ContentHash, ContentMetadata>,
     /// Access control lists
@@ -34,6 +36,8 @@ pub struct ContentManager {
     master_keypair: KeyPair,
     /// Content encryption keys (per content hash)
     content_keys: HashMap<ContentHash, [u8; 32]>,
+    /// Erasure coding
+    erasure_coding: ErasureCoding,
     /// Key derivation info for reproducible key generation
     key_derivation_salt: [u8; 32],
     /// Wallet-content ownership manager
@@ -147,9 +151,9 @@ pub struct SearchQuery {
     pub tag_filter: Option<Vec<String>>,
 }
 
-impl ContentManager {
+impl<B: StorageBackend + Send + Sync + 'static> ContentManager<B> {
     /// Create new content manager with encryption capabilities
-    pub fn new(dht_storage: DhtStorage, _economic_config: EconomicManagerConfig) -> Result<Self> {
+    pub fn new(dht_storage: DhtStorage<B>, _economic_config: EconomicManagerConfig) -> Result<Self> {
         // Generate master keypair on a dedicated thread with explicit stack size.
         // Dilithium/Kyber key generation can require a larger stack than deep async startup paths.
         let keygen_thread = std::thread::Builder::new()
@@ -167,6 +171,9 @@ impl ContentManager {
         use rand::RngCore;
         rand::rngs::OsRng.fill_bytes(&mut salt);
 
+        // Initialize erasure coding
+        let erasure_coding = ErasureCoding::new(4, 2)?;
+
         Ok(Self {
             dht_storage,
             content_metadata: HashMap::new(),
@@ -175,6 +182,7 @@ impl ContentManager {
             search_index: HashMap::new(),
             master_keypair,
             content_keys: HashMap::new(),
+            erasure_coding,
             key_derivation_salt: salt,
             wallet_content_manager: crate::wallet_content_integration::WalletContentManager::new(),
         })
@@ -182,10 +190,11 @@ impl ContentManager {
 
     /// Create new content manager with existing keypair
     pub fn new_with_keypair(
-        dht_storage: DhtStorage,
+        dht_storage: DhtStorage<B>,
         _economic_config: EconomicManagerConfig,
         master_keypair: KeyPair,
         key_derivation_salt: [u8; 32],
+        erasure_coding: ErasureCoding,
     ) -> Self {
         Self {
             dht_storage,
@@ -195,6 +204,7 @@ impl ContentManager {
             search_index: HashMap::new(),
             master_keypair,
             content_keys: HashMap::new(),
+            erasure_coding,
             key_derivation_salt,
             wallet_content_manager: crate::wallet_content_integration::WalletContentManager::new(),
         }
@@ -311,24 +321,45 @@ impl ContentManager {
             requester: uploader.clone(),
         };
 
-        // TESTING MODE: Skip provider registration and economic contracts - store directly in DHT
-        info!(" TEST MODE: Bypassing storage provider registration, storing directly in DHT");
+        // info!(" TEST MODE: Bypassing storage provider registration, storing directly in DHT");
 
         // Skip economic manager for testing
         // let quote = self.economic_manager.process_storage_request(economic_request).await?;
         // let _contract_id = self.economic_manager.create_contract(quote, content_hash.clone(), processed_content.len() as u64).await?;
 
-        // Store content directly in DHT (no provider requirements)
-        let hex_hash = hex::encode(content_hash.as_bytes());
-        info!(
-            " Storing {} bytes directly in DHT storage (test mode) with hash: {}",
-            processed_content.len(),
-            hex_hash
-        );
-        self.dht_storage
-            .store_data(content_hash.clone(), processed_content.clone())
-            .await?;
-        info!("  Content stored in DHT with hex key: {}", hex_hash);
+        // --------------------------------------------------------------------
+        // PRODUCTION SHARDING: Erasure Coding & Distributed Storage
+        // --------------------------------------------------------------------
+        info!("    Applying Reed-Solomon erasure coding (distributed sharding)...");
+        let encoded_shards = self.erasure_coding.encode(&processed_content)?;
+        let (data_shards_count, parity_shards_count) = self.erasure_coding.get_config();
+        let total_shards = data_shards_count + parity_shards_count;
+
+        let mut all_shard_data = encoded_shards.data_shards.clone();
+        all_shard_data.extend(encoded_shards.parity_shards.clone());
+
+        let mut shard_hashes = Vec::new();
+
+        for (i, shard_bytes) in all_shard_data.iter().enumerate() {
+            // Generate unique DHT key for this shard: hash("shard:{content_id}:{index}")
+            let shard_key_input = [
+                b"shard:",
+                content_hash.as_bytes(),
+                format!(":{}", i).as_bytes()
+            ].concat();
+            let shard_hash = Hash::from_bytes(&hash_blake3(&shard_key_input)[..32]);
+            shard_hashes.push(shard_hash.clone());
+
+            // Store shard in DHT
+            let shard_hash_val: Hash = shard_hash.clone();
+            self.dht_storage
+                .store_data(shard_hash_val, shard_bytes.clone())
+                .await?;
+
+            debug!("      Stored shard {}/{} (Key: {}...)", i + 1, total_shards, hex::encode(&shard_hash.as_bytes()[..8]));
+        }
+
+        info!(" ✅ Content successfully sharded and stored across {} DHT keys", total_shards);
 
         // Create metadata
         let upload_time = std::time::SystemTime::now()
@@ -361,8 +392,12 @@ impl ContentManager {
             expires_at: None,
             cost_per_day: 100,                          // Default cost
             access_control: vec![AccessLevel::Private], // Default to private
-            total_chunks: 1,                            // Single chunk for now
+            total_chunks: total_shards as u32,
             checksum: content_hash.clone(),             // Use content hash as checksum
+            erasure_data_shards: data_shards_count as u32,
+            erasure_parity_shards: parity_shards_count as u32,
+            shard_hashes,
+            processed_size: processed_content.len() as u64,
         };
 
         // Extract wallet ID for content ownership registration (before uploader is moved)
@@ -543,33 +578,66 @@ impl ContentManager {
             request.content_hash.clone()
         };
 
-        // Update metadata access tracking
-        if let Some(metadata) = self.content_metadata.get_mut(&content_hash) {
-            metadata.last_accessed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            metadata.access_count += 1;
+        // Get metadata to know shard locations
+        let metadata = self.get_content_metadata(&content_hash).await?;
 
-            // Update in DHT (don't fail download if this fails)
-            if let Err(e) = self.store_metadata_in_dht(&content_hash).await {
-                log::warn!("Failed to update metadata in DHT: {}", e);
+        // --------------------------------------------------------------------
+        // PRODUCTION RECONSTRUCTION: Distributed Shard Retrieval
+        // --------------------------------------------------------------------
+        info!("    Retrieving shards from DHT and reconstructing...");
+
+        let mut available_indices = Vec::new();
+        let mut retrieved_shards = Vec::new();
+        let total_shards_expected = metadata.erasure_data_shards + metadata.erasure_parity_shards;
+
+        for (i, shard_hash) in metadata.shard_hashes.iter().enumerate() {
+            match self.dht_storage.retrieve_data(shard_hash.clone()).await {
+                Ok(Some(data)) => {
+                    available_indices.push(i);
+                    retrieved_shards.push(data);
+                    debug!("      Retrieved shard {}/{} ✅", i + 1, total_shards_expected);
+                },
+                _ => {
+                    warn!("      Shard {}/{} MISSING! ❌", i + 1, total_shards_expected);
+                }
             }
         }
 
-        // Retrieve from DHT
-        let content = self
-            .dht_storage
-            .retrieve_data(content_hash.clone())
-            .await?
-            .ok_or_else(|| anyhow!("Content not found"))?;
+        if retrieved_shards.len() < metadata.erasure_data_shards as usize {
+            return Err(anyhow!("Insufficient shards found in DHT ({} < {})",
+                retrieved_shards.len(), metadata.erasure_data_shards));
+        }
+
+        // Prepare for erasure decoder
+        let shard_size = if !retrieved_shards.is_empty() { retrieved_shards[0].len() } else { 0 };
+        let mut recovery_data_shards = vec![vec![0u8; shard_size]; metadata.erasure_data_shards as usize];
+        let mut recovery_parity_shards = vec![vec![0u8; shard_size]; metadata.erasure_parity_shards as usize];
+
+        for (idx, &original_pos) in available_indices.iter().enumerate() {
+            if original_pos < metadata.erasure_data_shards as usize {
+                recovery_data_shards[original_pos] = retrieved_shards[idx].clone();
+            } else {
+                recovery_parity_shards[original_pos - metadata.erasure_data_shards as usize] = retrieved_shards[idx].clone();
+            }
+        }
+
+        let encoded_shards = EncodedShards {
+            data_shards: recovery_data_shards,
+            parity_shards: recovery_parity_shards,
+            shard_size,
+            original_size: metadata.processed_size as usize, // Use original PROCESSED size
+        };
+
+        // If we have some missing shards but enough for recovery, the decoder will handle it
+        let processed_content = self.erasure_coding.decode(&encoded_shards, &available_indices)?;
+        info!(" ✅ Content successfully reconstructed from {} shards", retrieved_shards.len());
 
         // Process content (decompression, decryption)
-        let processed_content = self
-            .process_content_for_download(&content_hash, content)
+        let final_content = self
+            .process_content_for_download(&content_hash, processed_content)
             .await?;
 
-        Ok(processed_content)
+        Ok(final_content)
     }
 
     /// Search for content
@@ -1228,7 +1296,7 @@ impl ContentManager {
     }
 }
 
-impl Default for ContentManager {
+impl Default for ContentManager<HashMapBackend> {
     fn default() -> Self {
         Self::new(DhtStorage::new_default(), EconomicManagerConfig::default())
             .expect("Failed to create default ContentManager")
