@@ -381,7 +381,7 @@ fn test_kernel_controlled_tokenmint_bypass_rejected() {
         1_000_000,
         test_pubkey(1),
     );
-    token.kernel_mint_authority = Some(kernel_authority.clone());
+    token.kernel_mint_authority = Some(Blockchain::deterministic_kernel_address());
     let token_id = token.token_id;
     blockchain.insert_token_contract(token_id, token);
 
@@ -412,7 +412,7 @@ fn test_kernel_controlled_tokenmint_via_kernel_authority_succeeds() {
         1_000_000,
         test_pubkey(1),
     );
-    token.kernel_mint_authority = Some(kernel_authority.clone());
+    token.kernel_mint_authority = Some(Blockchain::deterministic_kernel_address());
     let token_id = token.token_id;
     blockchain.insert_token_contract(token_id, token);
 
