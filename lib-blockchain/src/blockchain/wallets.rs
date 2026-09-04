@@ -62,7 +62,7 @@ impl Blockchain {
         };
 
         let kernel_authority = match &self.treasury_kernel {
-            Some(kernel) => kernel.governance_authority().clone(),
+            Some(kernel) => kernel.kernel_address().clone(),
             None => {
                 warn!("Cannot initialize welfare DAO tokens: Treasury Kernel not initialized");
                 return;
@@ -215,16 +215,30 @@ impl Blockchain {
         crate::contracts::utils::wallet_key_for_sov(*wallet_id)
     }
 
-    pub fn initialize_treasury_kernel(&mut self, kernel_authority: PublicKey) {
+    pub fn initialize_treasury_kernel(&mut self, governance_authority: PublicKey) {
         use crate::contracts::treasury_kernel::TreasuryKernel;
 
-        let governance_authority = kernel_authority.clone();
+        let kernel_address = Self::deterministic_kernel_address();
         self.treasury_kernel = Some(TreasuryKernel::new(
-            kernel_authority,
             governance_authority,
+            kernel_address,
             100,
         ));
         info!("Treasury Kernel initialized");
+    }
+
+    /// Derive the kernel's self-reference address deterministically (id-only).
+    ///
+    /// The kernel address is never signed externally — it is an internal
+    /// self-reference used to mint kernel-controlled tokens. Deriving it from a
+    /// fixed domain-separated label makes it identical across fresh nodes and
+    /// restarts, and non-signable (zeroed PQC key material, no private key).
+    pub fn deterministic_kernel_address() -> PublicKey {
+        PublicKey {
+            dilithium_pk: [0u8; 2592],
+            kyber_pk: [0u8; 1568],
+            key_id: crate::types::hash::blake3_hash(b"SOV_TREASURY_KERNEL_V1").as_array(),
+        }
     }
 
     fn is_kernel_controlled_token(&self, token: &crate::contracts::TokenContract) -> bool {
@@ -1108,5 +1122,41 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn treasury_kernel_splits_governance_authority_from_kernel_address() {
+        let governance = PublicKey {
+            dilithium_pk: [7u8; 2592],
+            kyber_pk: [7u8; 1568],
+            key_id: [7u8; 32],
+        };
+
+        let mut blockchain = Blockchain::default();
+        blockchain.initialize_treasury_kernel(governance.clone());
+
+        let kernel = blockchain
+            .treasury_kernel
+            .as_ref()
+            .expect("kernel initialized");
+        assert_eq!(kernel.governance_authority(), &governance);
+        assert_ne!(
+            kernel.governance_authority().key_id,
+            kernel.kernel_address().key_id,
+            "governance_authority must differ from kernel_address"
+        );
+        assert_eq!(
+            kernel.kernel_address().key_id,
+            crate::types::hash::blake3_hash(b"SOV_TREASURY_KERNEL_V1").as_array()
+        );
+        assert_eq!(
+            Blockchain::deterministic_kernel_address().key_id,
+            kernel.kernel_address().key_id
+        );
     }
 }
