@@ -441,9 +441,8 @@ async fn handle_dao_command_impl(
                 ))?;
             }
             output.print(&format_output(
-                &serde_json::to_value(&split).map_err(|e| {
-                    CliError::ConfigError(format!("serialize preview: {e}"))
-                })?,
+                &serde_json::to_value(&split)
+                    .map_err(|e| CliError::ConfigError(format!("serialize preview: {e}")))?,
                 &cli.format,
             )?)?;
             return Ok(());
@@ -884,8 +883,7 @@ async fn handle_dao_command_impl(
             if let Some(v) = domain_fee_atoms {
                 if v == 0 {
                     return Err(CliError::ConfigError(
-                        "--domain-fee-atoms must be non-zero (chain rejects zero fees)"
-                            .to_string(),
+                        "--domain-fee-atoms must be non-zero (chain rejects zero fees)".to_string(),
                     ));
                 }
             }
@@ -926,8 +924,8 @@ async fn handle_dao_command_impl(
                     reason: e.to_string(),
                 }
             })?;
-            let tip_json: Value = ZhtpClient::parse_json(&tip_response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let tip_json: Value =
+                ZhtpClient::parse_json(&tip_response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/blockchain/tip".to_string(),
                     status: 0,
                     reason: format!("Failed to parse tip response: {e}"),
@@ -936,17 +934,18 @@ async fn handle_dao_command_impl(
             // as audit metadata; a silent fallback to 0 means stale tips or
             // misshaped responses produce misleading proposals. Surface as
             // an explicit error so operators see and re-run.
-            let current_height = tip_json
-                .get("height")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| CliError::ApiCallFailed {
-                    endpoint: "/api/v1/blockchain/tip".to_string(),
-                    status: 0,
-                    reason: format!(
-                        "tip response missing numeric `height` field: {}",
-                        tip_json
-                    ),
-                })?;
+            let current_height =
+                tip_json
+                    .get("height")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| CliError::ApiCallFailed {
+                        endpoint: "/api/v1/blockchain/tip".to_string(),
+                        status: 0,
+                        reason: format!(
+                            "tip response missing numeric `height` field: {}",
+                            tip_json
+                        ),
+                    })?;
 
             let signed_tx = zhtp_client::build_governance_parameter_update_proposal_tx(
                 &identity,
@@ -968,13 +967,15 @@ async fn handle_dao_command_impl(
                 "Submitting governance update proposal '{}' at height {}...",
                 title, current_height
             ))?;
-            let response = client.post_json(endpoint, &body).await.map_err(|e| {
-                CliError::ApiCallFailed {
-                    endpoint: endpoint.to_string(),
-                    status: 0,
-                    reason: e.to_string(),
-                }
-            })?;
+            let response =
+                client
+                    .post_json(endpoint, &body)
+                    .await
+                    .map_err(|e| CliError::ApiCallFailed {
+                        endpoint: endpoint.to_string(),
+                        status: 0,
+                        reason: e.to_string(),
+                    })?;
             let result: Value =
                 ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.to_string(),
@@ -1039,9 +1040,7 @@ async fn handle_dao_command_impl(
 
             let identity = load_identity()?;
             let signed_tx = zhtp_client::build_dao_unstake_tx(
-                &identity,
-                dao_key_id,
-                0, // nonce — executor reads from sled
+                &identity, dao_key_id, 0, // nonce — executor reads from sled
                 3, // chain_id = testnet
             )
             .map_err(CliError::ConfigError)?;

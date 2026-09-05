@@ -18,7 +18,10 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
     let port = DEFAULT_UI_PORT;
     let server_addr = format!("127.0.0.1:{}", port);
 
-    output.info(&format!("Starting node setup UI on http://{}...", server_addr))?;
+    output.info(&format!(
+        "Starting node setup UI on http://{}...",
+        server_addr
+    ))?;
 
     // Try to connect to the QUIC node
     let quic_server = cli.server.clone();
@@ -60,36 +63,34 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
         Html(TOPOLOGY_HTML)
     }
 
-    async fn proxy_status(
-        State(state): State<AppState>,
-    ) -> impl IntoResponse {
+    async fn proxy_status(State(state): State<AppState>) -> impl IntoResponse {
         match try_get_status(&state.quic_server).await {
-            Ok(json) => {
-                (StatusCode::OK, Json(json))
-            }
-            Err(e) => {
-                (StatusCode::OK, Json(serde_json::json!({
+            Ok(json) => (StatusCode::OK, Json(json)),
+            Err(e) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
                     "state": "connecting",
                     "error": e,
                     "chain_height": 0,
                     "validator_count": 0,
                     "identity_count": 0,
-                })))
-            }
+                })),
+            ),
         }
     }
 
-    async fn proxy_directory(
-        State(state): State<AppState>,
-    ) -> impl IntoResponse {
+    async fn proxy_directory(State(state): State<AppState>) -> impl IntoResponse {
         match try_get_directory(&state.quic_server).await {
             Ok(json) => (StatusCode::OK, Json(json)),
-            Err(e) => (StatusCode::OK, Json(serde_json::json!({
-                "network_id": "unknown",
-                "chain_height": 0,
-                "error": e,
-                "topology": { "validators": [], "gateways": [], "total_validators": 0, "total_gateways": 0, "connected_peers": 0 },
-            }))),
+            Err(e) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "network_id": "unknown",
+                    "chain_height": 0,
+                    "error": e,
+                    "topology": { "validators": [], "gateways": [], "total_validators": 0, "total_gateways": 0, "connected_peers": 0 },
+                })),
+            ),
         }
     }
 
@@ -100,14 +101,20 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
         let action = body.get("action").and_then(|a| a.as_str()).unwrap_or("");
         match action {
             "restore_identity" => {
-                let seed = body.get("seed_phrase").and_then(|s| s.as_str()).unwrap_or("");
+                let seed = body
+                    .get("seed_phrase")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
                 match try_restore_seed(seed).await {
                     Ok(json) => (StatusCode::OK, Json(json)),
                     Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
                 }
             }
             "create_identity" => {
-                let name = body.get("node_name").and_then(|s| s.as_str()).unwrap_or("sovereign-node");
+                let name = body
+                    .get("node_name")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("sovereign-node");
                 match try_create_new(name).await {
                     Ok(json) => (StatusCode::OK, Json(json)),
                     Err(e) => (StatusCode::OK, Json(serde_json::json!({ "error": e }))),
@@ -148,7 +155,10 @@ pub async fn run_setup_ui(cli: &ZhtpCli, output: &dyn Output) -> CliResult<()> {
 
     // Open browser
     if let Err(e) = open::that(format!("http://{}", server_addr)) {
-        output.warning(&format!("Could not open browser: {}. Open http://{} manually.", e, server_addr))?;
+        output.warning(&format!(
+            "Could not open browser: {}. Open http://{} manually.",
+            e, server_addr
+        ))?;
     }
 
     output.success(&format!("Setup UI running at http://{}", server_addr))?;
@@ -204,11 +214,15 @@ async fn try_get_status(server: &str) -> Result<serde_json::Value, String> {
         allow_bootstrap: true,
         ..Default::default()
     };
-    let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
-        .await
-        .map_err(|e| format!("Client error: {}", e))?;
+    let mut client =
+        lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+            .await
+            .map_err(|e| format!("Client error: {}", e))?;
 
-    client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
+    client
+        .connect(server)
+        .await
+        .map_err(|e| format!("Connect failed: {}", e))?;
 
     let response = match client.get("/api/v1/node/status").await {
         Ok(response) => response,
@@ -258,10 +272,14 @@ async fn connect_bridge_client(server: &str) -> Result<lib_network::client::Zhtp
         allow_bootstrap: true,
         ..Default::default()
     };
-    let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+    let mut client =
+        lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+            .await
+            .map_err(|e| format!("Client error: {}", e))?;
+    client
+        .connect(server)
         .await
-        .map_err(|e| format!("Client error: {}", e))?;
-    client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
+        .map_err(|e| format!("Connect failed: {}", e))?;
     Ok(client)
 }
 
@@ -312,10 +330,14 @@ async fn try_register_identity(server: &str) -> Result<serde_json::Value, String
         allow_bootstrap: true,
         ..Default::default()
     };
-    let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+    let mut client =
+        lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+            .await
+            .map_err(|e| format!("Client error: {}", e))?;
+    client
+        .connect(server)
         .await
-        .map_err(|e| format!("Client error: {}", e))?;
-    client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
+        .map_err(|e| format!("Connect failed: {}", e))?;
 
     let response = client
         .post_json("/api/v1/identity/register", &body)
@@ -404,14 +426,17 @@ async fn try_restore_seed(seed_phrase: &str) -> Result<serde_json::Value, String
     // Save to keystore
     std::fs::create_dir_all(&keystore_path).map_err(|e| format!("Keystore dir: {}", e))?;
 
-    let identity_json = serde_json::to_string_pretty(identity)
-        .map_err(|e| format!("Serialize: {}", e))?;
+    let identity_json =
+        serde_json::to_string_pretty(identity).map_err(|e| format!("Serialize: {}", e))?;
     std::fs::write(keystore_path.join("user_identity.json"), &identity_json)
         .map_err(|e| format!("Write identity: {}", e))?;
 
     if let Some(ref pk) = identity.private_key {
-        crate::commands::web4_utils::save_private_key_to_file(pk, &keystore_path.join("user_private_key.json"))
-            .map_err(|e| format!("Write private key: {}", e))?;
+        crate::commands::web4_utils::save_private_key_to_file(
+            pk,
+            &keystore_path.join("user_private_key.json"),
+        )
+        .map_err(|e| format!("Write private key: {}", e))?;
     }
 
     Ok(serde_json::json!({
@@ -444,14 +469,17 @@ async fn try_create_new(name: &str) -> Result<serde_json::Value, String> {
     // Save to keystore
     std::fs::create_dir_all(&keystore_path).map_err(|e| format!("Keystore dir: {}", e))?;
 
-    let identity_json = serde_json::to_string_pretty(&identity)
-        .map_err(|e| format!("Serialize: {}", e))?;
+    let identity_json =
+        serde_json::to_string_pretty(&identity).map_err(|e| format!("Serialize: {}", e))?;
     std::fs::write(keystore_path.join("user_identity.json"), &identity_json)
         .map_err(|e| format!("Write identity: {}", e))?;
 
     if let Some(ref pk) = identity.private_key {
-        crate::commands::web4_utils::save_private_key_to_file(pk, &keystore_path.join("user_private_key.json"))
-            .map_err(|e| format!("Write private key: {}", e))?;
+        crate::commands::web4_utils::save_private_key_to_file(
+            pk,
+            &keystore_path.join("user_private_key.json"),
+        )
+        .map_err(|e| format!("Write private key: {}", e))?;
     }
 
     Ok(serde_json::json!({
@@ -475,15 +503,20 @@ async fn try_get_directory(server: &str) -> Result<serde_json::Value, String> {
         allow_bootstrap: true,
         ..Default::default()
     };
-    let mut client = lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+    let mut client =
+        lib_network::client::ZhtpClient::new_with_config(loaded.identity, trust_config, config)
+            .await
+            .map_err(|e| format!("Client error: {}", e))?;
+
+    client
+        .connect(server)
         .await
-        .map_err(|e| format!("Client error: {}", e))?;
+        .map_err(|e| format!("Connect failed: {}", e))?;
 
-    client.connect(server).await.map_err(|e| format!("Connect failed: {}", e))?;
-
-    let response = client.get("/api/v1/network/directory").await
+    let response = client
+        .get("/api/v1/network/directory")
+        .await
         .map_err(|e| format!("API request failed: {}", e))?;
 
-    serde_json::from_slice(&response.body)
-        .map_err(|e| format!("Invalid JSON response: {}", e))
+    serde_json::from_slice(&response.body).map_err(|e| format!("Invalid JSON response: {}", e))
 }

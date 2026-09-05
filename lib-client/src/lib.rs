@@ -42,17 +42,18 @@
 //! let encrypted = session.encrypt(&plaintext)?;
 //! ```
 
-mod bip39_wordlist;
 pub mod asset_launch_tx;
+mod bip39_wordlist;
 pub mod bonding_curve_tx;
 pub mod cbe_tx;
 pub mod crypto;
 pub mod dao_tx;
 pub mod error;
+pub mod grant_keystore;
 pub mod handshake;
-pub mod nft_tx;
 pub mod identity;
 pub mod messaging;
+pub mod nft_tx;
 pub mod observer_admission;
 // `opaque` is gated off wasm32 in v1 because the FFI surface uses raw-pointer
 // `*mut ByteBuffer` out-params that don't translate cleanly to wasm-bindgen,
@@ -86,6 +87,10 @@ pub use dao_tx::{
     build_init_entity_registry_tx, build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
 };
 pub use error::{ClientError, Result};
+pub use grant_keystore::{
+    forbid_default_keystore_path, import_ephemeral, lock_to_disk, unlock_from_disk, ColdGrant,
+    GrantKeyMaterial, GRANT_KEYSTORE_DIRNAME,
+};
 pub use handshake::{HandshakeResult, HandshakeState};
 pub use identity::{
     build_migrate_identity_request, build_migrate_identity_request_json, export_keystore_base64,
@@ -109,10 +114,6 @@ pub use token_tx::{
     build_domain_register_request,
     build_domain_register_request_with_fee_payment,
     build_domain_register_request_with_fee_payment_and_metadata,
-    fee_tx_hash_from_hex,
-    parse_optional_asset_id_hex,
-    sign_domain_registration_system_tx,
-    DOMAIN_REGISTRATION_FEE,
     // Domain-specific (deprecated, use *_request functions instead)
     build_domain_register_tx,
     build_domain_transfer_request,
@@ -123,6 +124,9 @@ pub use token_tx::{
     build_sov_wallet_transfer_tx,
     build_token_wallet_transfer_tx,
     build_transfer_tx,
+    fee_tx_hash_from_hex,
+    parse_optional_asset_id_hex,
+    sign_domain_registration_system_tx,
     BurnParams,
     ContentMapping,
     // Param types for serialization
@@ -132,6 +136,7 @@ pub use token_tx::{
     DomainUpdateParams,
     MintParams,
     TransferParams,
+    DOMAIN_REGISTRATION_FEE,
 };
 // Re-export ContractType for FFI callers
 pub use lib_blockchain::types::ContractType;
@@ -1230,7 +1235,8 @@ pub extern "C" fn zhtp_client_build_token_wallet_transfer(
     chain_id: u8,
     nonce: u64,
 ) -> *mut std::ffi::c_char {
-    if handle.is_null() || token_id.is_null() || from_wallet_id.is_null() || to_wallet_id.is_null() {
+    if handle.is_null() || token_id.is_null() || from_wallet_id.is_null() || to_wallet_id.is_null()
+    {
         return std::ptr::null_mut();
     }
 
@@ -1247,7 +1253,13 @@ pub extern "C" fn zhtp_client_build_token_wallet_transfer(
     to_arr.copy_from_slice(to_slice);
 
     match token_tx::build_token_wallet_transfer_tx(
-        identity, &token_id_arr, &from_arr, &to_arr, amount, chain_id, nonce,
+        identity,
+        &token_id_arr,
+        &from_arr,
+        &to_arr,
+        amount,
+        chain_id,
+        nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -1773,7 +1785,14 @@ pub unsafe extern "C" fn zhtp_client_build_dao_stake(
     chain_id: u8,
 ) -> *mut std::ffi::c_char {
     dao_ffi_helper(handle, sector_dao_key_id, |identity, dao_key_id| {
-        dao_tx::build_dao_stake_tx(identity, dao_key_id, amount as u128, nonce, lock_blocks, chain_id)
+        dao_tx::build_dao_stake_tx(
+            identity,
+            dao_key_id,
+            amount as u128,
+            nonce,
+            lock_blocks,
+            chain_id,
+        )
     })
 }
 
@@ -2009,12 +2028,7 @@ pub extern "C" fn zhtp_client_build_domain_fee_payment_tx(
     let amount: u128 = (amount_atoms_hi as u128) << 64 | (amount_atoms_lo as u128);
 
     match token_tx::build_sov_wallet_transfer_tx(
-        identity,
-        &sender,
-        &treasury,
-        amount,
-        chain_id,
-        nonce,
+        identity, &sender, &treasury, amount, chain_id, nonce,
     ) {
         Ok(hex_tx) => match std::ffi::CString::new(hex_tx) {
             Ok(s) => s.into_raw(),
@@ -2086,10 +2100,9 @@ pub extern "C" fn zhtp_client_build_domain_register_request_with_fee_payment(
                 Err(_) => return std::ptr::null_mut(),
             }
         };
-        match serde_json::from_str::<
-            std::collections::HashMap<String, token_tx::ContentMapping>,
-        >(raw)
-        {
+        match serde_json::from_str::<std::collections::HashMap<String, token_tx::ContentMapping>>(
+            raw,
+        ) {
             Ok(m) => Some(m),
             Err(_) => return std::ptr::null_mut(),
         }
@@ -2744,9 +2757,7 @@ pub extern "C" fn zhtp_msg_session_free(handle: *mut MessagingSessionHandle) {
 /// only sensitive piece of session state; all other fields can be
 /// derived or are public.
 #[no_mangle]
-pub extern "C" fn zhtp_msg_session_chain_key(
-    handle: *const MessagingSessionHandle,
-) -> ByteBuffer {
+pub extern "C" fn zhtp_msg_session_chain_key(handle: *const MessagingSessionHandle) -> ByteBuffer {
     if handle.is_null() {
         return empty_buffer();
     }
@@ -2755,9 +2766,7 @@ pub extern "C" fn zhtp_msg_session_chain_key(
 }
 
 #[no_mangle]
-pub extern "C" fn zhtp_msg_session_counter(
-    handle: *const MessagingSessionHandle,
-) -> u64 {
+pub extern "C" fn zhtp_msg_session_counter(handle: *const MessagingSessionHandle) -> u64 {
     if handle.is_null() {
         return 0;
     }
@@ -2765,9 +2774,7 @@ pub extern "C" fn zhtp_msg_session_counter(
 }
 
 #[no_mangle]
-pub extern "C" fn zhtp_msg_session_epoch(
-    handle: *const MessagingSessionHandle,
-) -> u32 {
+pub extern "C" fn zhtp_msg_session_epoch(handle: *const MessagingSessionHandle) -> u32 {
     if handle.is_null() {
         return 0;
     }
@@ -2800,9 +2807,7 @@ pub extern "C" fn zhtp_msg_session_remote_did(
 /// is opaque — pass back to `zhtp_msg_session_deserialize` as-is. Empty
 /// buffer on error.
 #[no_mangle]
-pub extern "C" fn zhtp_msg_session_serialize(
-    handle: *const MessagingSessionHandle,
-) -> ByteBuffer {
+pub extern "C" fn zhtp_msg_session_serialize(handle: *const MessagingSessionHandle) -> ByteBuffer {
     if handle.is_null() {
         return empty_buffer();
     }
@@ -3019,10 +3024,7 @@ pub extern "C" fn zhtp_msg_envelope_open_verified_with_session(
     };
 
     // sender_did must equal `did:zhtp:` + blake3(pk)
-    let expected_did = format!(
-        "did:zhtp:{}",
-        hex::encode(crypto::Blake3::hash(pk))
-    );
+    let expected_did = format!("did:zhtp:{}", hex::encode(crypto::Blake3::hash(pk)));
     if envelope.sender_did != expected_did {
         return empty_buffer();
     }
@@ -3106,9 +3108,7 @@ pub extern "C" fn zhtp_msg_envelope_to_hex(
 
 /// Hex-decode a wire envelope back to bincode bytes.
 #[no_mangle]
-pub extern "C" fn zhtp_msg_envelope_from_hex(
-    hex_str: *const std::ffi::c_char,
-) -> ByteBuffer {
+pub extern "C" fn zhtp_msg_envelope_from_hex(hex_str: *const std::ffi::c_char) -> ByteBuffer {
     let s = match unsafe { cstr_to_str(hex_str) } {
         Some(s) => s,
         None => return empty_buffer(),
@@ -3379,10 +3379,7 @@ pub extern "C" fn zhtp_msg_envelope_open_verified(
     };
 
     // Verify sender DID matches the provided public key
-    let expected_did = format!(
-        "did:zhtp:{}",
-        hex::encode(crypto::Blake3::hash(pk))
-    );
+    let expected_did = format!("did:zhtp:{}", hex::encode(crypto::Blake3::hash(pk)));
     if envelope.sender_did != expected_did {
         return empty_buffer(); // sender spoofing — DID doesn't match key
     }
@@ -3548,24 +3545,38 @@ pub extern "C" fn zhtp_identity_build_kyber_key_update(
 /// Returns 32-byte buffer the sponsor signs with Dilithium.
 /// Caller must free with `zhtp_client_buffer_free`.
 #[no_mangle]
-pub extern "C" fn zhtp_observer_build_payload(
-    inputs_json: *const std::ffi::c_char,
-) -> ByteBuffer {
+pub extern "C" fn zhtp_observer_build_payload(inputs_json: *const std::ffi::c_char) -> ByteBuffer {
     if inputs_json.is_null() {
-        return ByteBuffer { data: std::ptr::null_mut(), len: 0 };
+        return ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
     }
     let json_str = unsafe { std::ffi::CStr::from_ptr(inputs_json) }
         .to_str()
         .unwrap_or("");
     let inputs: observer_admission::RegisterObserverInputs = match serde_json::from_str(json_str) {
         Ok(v) => v,
-        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => {
+            return ByteBuffer {
+                data: std::ptr::null_mut(),
+                len: 0,
+            }
+        }
     };
     let mut payload = match observer_admission::build_register_observer_payload(&inputs) {
         Ok(v) => v,
-        Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => {
+            return ByteBuffer {
+                data: std::ptr::null_mut(),
+                len: 0,
+            }
+        }
     };
-    let buf = ByteBuffer { data: payload.as_mut_ptr(), len: payload.len() };
+    let buf = ByteBuffer {
+        data: payload.as_mut_ptr(),
+        len: payload.len(),
+    };
     std::mem::forget(payload);
     buf
 }
@@ -3590,7 +3601,11 @@ pub extern "C" fn zhtp_observer_build_request(
     sponsor_kpk: *const u8,
     sponsor_kpk_len: usize,
 ) -> *mut std::ffi::c_char {
-    if inputs_json.is_null() || sponsor_sig.is_null() || sponsor_dpk.is_null() || sponsor_kpk.is_null() {
+    if inputs_json.is_null()
+        || sponsor_sig.is_null()
+        || sponsor_dpk.is_null()
+        || sponsor_kpk.is_null()
+    {
         return std::ptr::null_mut();
     }
     let json_str = unsafe { std::ffi::CStr::from_ptr(inputs_json) }

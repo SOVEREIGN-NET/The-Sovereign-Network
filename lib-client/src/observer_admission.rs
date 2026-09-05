@@ -45,7 +45,9 @@ pub struct RegisterObserverInputs {
 ///
 /// Returns `Err` if `sponsor_proof_level` or `rate_limit_tier` are not valid
 /// enum variant names (e.g. `"Basic"`, `"Standard"`).
-pub fn build_register_observer_payload(inputs: &RegisterObserverInputs) -> Result<Vec<u8>, serde_json::Error> {
+pub fn build_register_observer_payload(
+    inputs: &RegisterObserverInputs,
+) -> Result<Vec<u8>, serde_json::Error> {
     let zeroed_sig = zeroed_signature();
     let data = inputs_to_data(inputs, Vec::new())?;
     let tx = Transaction::new_register_observer(inputs.chain_id, data, zeroed_sig);
@@ -95,11 +97,17 @@ pub fn build_register_observer_request(
 // Internal helpers
 // ============================================================================
 
-fn inputs_to_data(inputs: &RegisterObserverInputs, sponsor_signature: Vec<u8>) -> Result<RegisterObserverData, serde_json::Error> {
+fn inputs_to_data(
+    inputs: &RegisterObserverInputs,
+    sponsor_signature: Vec<u8>,
+) -> Result<RegisterObserverData, serde_json::Error> {
     // Parse string fields into their typed enum equivalents via serde_json.
     // Variant names must match the server's enum (e.g. "Basic", "Standard").
-    let proof_level = serde_json::from_value(serde_json::Value::String(inputs.sponsor_proof_level.clone()))?;
-    let rate_tier = serde_json::from_value(serde_json::Value::String(inputs.rate_limit_tier.clone()))?;
+    let proof_level = serde_json::from_value(serde_json::Value::String(
+        inputs.sponsor_proof_level.clone(),
+    ))?;
+    let rate_tier =
+        serde_json::from_value(serde_json::Value::String(inputs.rate_limit_tier.clone()))?;
     Ok(RegisterObserverData {
         observer_node_did: inputs.observer_node_did.clone(),
         observer_public_key: inputs.observer_dilithium_pk.clone(),
@@ -191,7 +199,8 @@ mod tests {
         let sig = vec![1u8; 64];
         let dpk = vec![2u8; 2592];
         let kpk = vec![3u8; 1568];
-        let json = build_register_observer_request(&inputs, &sig, &dpk, &kpk).expect("valid inputs");
+        let json =
+            build_register_observer_request(&inputs, &sig, &dpk, &kpk).expect("valid inputs");
         assert!(json.get("observer_node_did").is_some());
         assert!(json.get("sponsor_user_did").is_some());
         assert!(json.get("nonce").is_some());
@@ -222,31 +231,41 @@ mod tests {
         assert_eq!(payload.len(), 32);
 
         // Step 2: sign via the same path as zhtp_client_sign_message FFI
-        let signature = crate::identity::sign_message(&sponsor, &payload)
-            .expect("sign_message must succeed");
+        let signature =
+            crate::identity::sign_message(&sponsor, &payload).expect("sign_message must succeed");
         assert!(!signature.is_empty(), "signature must be non-empty");
 
         // Step 3: build the register request (what mobile calls zhtp_observer_build_request for)
         let kyber_pk = sponsor.kyber_public_key.clone();
-        let json = build_register_observer_request(
-            &inputs,
-            &signature,
-            &sponsor.public_key,
-            &kyber_pk,
-        ).expect("valid inputs");
+        let json =
+            build_register_observer_request(&inputs, &signature, &sponsor.public_key, &kyber_pk)
+                .expect("valid inputs");
 
         // Verify all fields /admission/register requires are present and non-null
         assert_eq!(json["observer_node_did"], inputs.observer_node_did);
         assert_eq!(json["sponsor_user_did"], inputs.sponsor_user_did);
         assert_eq!(json["nonce"], inputs.nonce);
         assert_eq!(json["allowed_network"], inputs.allowed_network);
-        assert!(json["sponsor_signature"].is_array(), "sponsor_signature must be array");
-        assert!(json["tx_signature"]["signature_bytes"].is_array(), "signature_bytes must be array");
-        assert!(json["tx_signature"]["signer_dilithium_pk"].is_array(), "signer pk must be array");
+        assert!(
+            json["sponsor_signature"].is_array(),
+            "sponsor_signature must be array"
+        );
+        assert!(
+            json["tx_signature"]["signature_bytes"].is_array(),
+            "signature_bytes must be array"
+        );
+        assert!(
+            json["tx_signature"]["signer_dilithium_pk"].is_array(),
+            "signer pk must be array"
+        );
 
         // Verify the signature bytes in the JSON match what sign_message produced
-        let sig_from_json: Vec<u8> = serde_json::from_value(json["tx_signature"]["signature_bytes"].clone())
-            .expect("deserialize signature");
-        assert_eq!(sig_from_json, signature, "signature in request must match sign_message output");
+        let sig_from_json: Vec<u8> =
+            serde_json::from_value(json["tx_signature"]["signature_bytes"].clone())
+                .expect("deserialize signature");
+        assert_eq!(
+            sig_from_json, signature,
+            "signature in request must match sign_message output"
+        );
     }
 }

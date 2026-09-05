@@ -172,11 +172,9 @@ pub(crate) fn validate_template(template: &DaoLaunchTemplate) -> CliResult<()> {
 }
 
 pub fn whole_tokens_to_atoms(whole_supply: u128, decimals: u8) -> CliResult<u128> {
-    let scale = 10u128
-        .checked_pow(decimals as u32)
-        .ok_or_else(|| {
-            CliError::ConfigError(format!("decimals {decimals} overflow for supply scale"))
-        })?;
+    let scale = 10u128.checked_pow(decimals as u32).ok_or_else(|| {
+        CliError::ConfigError(format!("decimals {decimals} overflow for supply scale"))
+    })?;
     whole_supply
         .checked_mul(scale)
         .ok_or_else(|| CliError::ConfigError("supply atoms overflow".to_string()))
@@ -339,8 +337,8 @@ mod tests {
     fn preview_split_matches_eighty_twenty_for_fp() {
         let template = load_template("balanced").unwrap();
         let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
-        let preview = preview_launch("Bubble", "BUBL", atoms, template.decimals, Some(&template))
-            .unwrap();
+        let preview =
+            preview_launch("Bubble", "BUBL", atoms, template.decimals, Some(&template)).unwrap();
         let supply: u128 = preview.initial_supply_atoms.parse().unwrap();
         let creator: u128 = preview.creator_allocation_atoms.parse().unwrap();
         let treasury: u128 = preview.treasury_allocation_atoms.parse().unwrap();
@@ -353,8 +351,8 @@ mod tests {
     fn preview_np_mission_is_all_treasury() {
         let template = load_template("np-mission").unwrap();
         let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
-        let preview = preview_launch("Mission", "MSN", atoms, template.decimals, Some(&template))
-            .unwrap();
+        let preview =
+            preview_launch("Mission", "MSN", atoms, template.decimals, Some(&template)).unwrap();
         assert_eq!(preview.creator_allocation_atoms, "0");
         assert_eq!(preview.treasury_allocation_atoms, atoms.to_string());
         assert_eq!(preview.dao_class, "np");
@@ -392,13 +390,21 @@ mod tests {
         let template = load_template("balanced").unwrap();
         let atoms = whole_tokens_to_atoms(template.whole_supply, template.decimals).unwrap();
         let long_symbol = "A".repeat(32);
-        assert!(preview_launch("Bubble", &long_symbol, atoms, template.decimals, Some(&template)).is_err());
+        assert!(preview_launch(
+            "Bubble",
+            &long_symbol,
+            atoms,
+            template.decimals,
+            Some(&template)
+        )
+        .is_err());
     }
 
     #[test]
     fn resolve_launch_params_uses_template_defaults() {
-        let (template, resolved) =
-            resolve_launch_params(Some("foundation"), None, None).unwrap().unwrap();
+        let (template, resolved) = resolve_launch_params(Some("foundation"), None, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(template.id, "foundation");
         assert_eq!(resolved.decimals, 18);
         assert_eq!(resolved.dao_class, DaoClass::Fp);

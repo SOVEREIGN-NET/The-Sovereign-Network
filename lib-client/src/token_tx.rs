@@ -50,10 +50,10 @@ pub fn create_public_key_with_kyber(dilithium_pk: Vec<u8>, kyber_pk: Vec<u8>) ->
     let key_id = crypto::Blake3::hash(&hasher_input);
     let mut key_id_arr = [0u8; 32];
     key_id_arr.copy_from_slice(&key_id[..32]);
-    let dilithium_pk_arr: [u8; 2592] = dilithium_pk.try_into()
+    let dilithium_pk_arr: [u8; 2592] = dilithium_pk
+        .try_into()
         .expect("dilithium_pk must be 2592 bytes");
-    let kyber_pk_arr: [u8; 1568] = kyber_pk.try_into()
-        .expect("kyber_pk must be 1568 bytes");
+    let kyber_pk_arr: [u8; 1568] = kyber_pk.try_into().expect("kyber_pk must be 1568 bytes");
     PublicKey {
         dilithium_pk: dilithium_pk_arr,
         kyber_pk: kyber_pk_arr,
@@ -269,7 +269,10 @@ pub fn build_contract_transaction(
     };
 
     // Create public key using the blockchain's canonical structure
-    let public_key = create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let public_key = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
 
     // Build memo: "ZHTP" + bincode(call, placeholder_sig)
     // Note: The memo signature uses the actual public key (this is separate from tx signature)
@@ -401,7 +404,10 @@ pub fn build_transfer_tx(
             "SOV transfers require wallet_id; use build_sov_wallet_transfer_tx".to_string(),
         );
     }
-    let sender_pk = create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
 
     let to_key_id = if to_pubkey.len() == 32 {
         // 32 bytes: already a key_id (blake3 hash)
@@ -472,7 +478,10 @@ pub fn build_sov_wallet_transfer_tx(
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
-    let sender_pk = create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let sender_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
 
     let transfer_data = TokenTransferData {
         token_id: generate_lib_token_id(),
@@ -634,7 +643,11 @@ pub fn calculate_min_fee_for_tx_hex(tx_hex: &str) -> Result<u64, String> {
         };
         tx.signature.signature = vec![0u8; expected_sig];
         // Fixed arrays already initialized to zeros, just verify length is correct
-        assert_eq!(tx.signature.public_key.dilithium_pk.len(), 2592, "dilithium_pk must be 2592 bytes");
+        assert_eq!(
+            tx.signature.public_key.dilithium_pk.len(),
+            2592,
+            "dilithium_pk must be 2592 bytes"
+        );
     }
 
     let tx_bytes = bincode::serialize(&tx).map_err(|e| format!("Failed to serialize tx: {}", e))?;
@@ -672,7 +685,10 @@ pub fn build_mint_tx(
         ));
     };
 
-    let signer_pk = create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let signer_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
     let mint_data = TokenMintData {
         token_id: *token_id,
         to: to_key_id,
@@ -721,7 +737,10 @@ pub fn build_create_token_tx(
     treasury_recipient: [u8; 32],
     chain_id: u8,
 ) -> Result<String, String> {
-    let signer_pk = create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone());
+    let signer_pk = create_public_key_with_kyber(
+        identity.public_key.clone(),
+        identity.kyber_public_key.clone(),
+    );
     if treasury_recipient == signer_pk.key_id {
         return Err("treasury_recipient must differ from creator".to_string());
     }
@@ -755,7 +774,10 @@ pub fn build_create_token_tx(
         .map_err(|e| format!("Failed to sign: {}", e))?;
     tx.signature = Signature {
         signature: signature_bytes,
-        public_key: create_public_key_with_kyber(identity.public_key.clone(), identity.kyber_public_key.clone()),
+        public_key: create_public_key_with_kyber(
+            identity.public_key.clone(),
+            identity.kyber_public_key.clone(),
+        ),
         algorithm: SignatureAlgorithm::DEFAULT,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1032,11 +1054,9 @@ pub fn build_domain_register_request_with_fee_payment_and_metadata(
             .to_string()
     })?;
     if fee_payment_tx.trim().is_empty() {
-        return Err(
-            "fee_payment_tx is required for domain registration. \
+        return Err("fee_payment_tx is required for domain registration. \
              Provide a hex-encoded signed canonical TokenTransfer paying the DAO treasury."
-                .to_string(),
-        );
+            .to_string());
     }
 
     let asset_id = parse_optional_asset_id_hex(asset_id_hex)?;
@@ -1210,7 +1230,9 @@ mod domain_system_tx_tests {
         let keypair = generate_keypair().expect("keypair");
         let did = format!(
             "did:zhtp:{}",
-            hex::encode(lib_crypto::hash_blake3(keypair.public_key.dilithium_pk.as_slice()))
+            hex::encode(lib_crypto::hash_blake3(
+                keypair.public_key.dilithium_pk.as_slice()
+            ))
         );
         let identity = Identity {
             did,
@@ -1262,7 +1284,10 @@ mod domain_system_tx_tests {
             9190,
             "Dilithium5 signatures are 9190 hex chars"
         );
-        assert!(parsed.fee_payment_tx.as_ref().is_some_and(|s| !s.is_empty()));
+        assert!(parsed
+            .fee_payment_tx
+            .as_ref()
+            .is_some_and(|s| !s.is_empty()));
         assert_eq!(parsed.fee, Some(DOMAIN_REGISTRATION_FEE));
         assert!(parsed.asset_id.is_none());
     }
@@ -1306,8 +1331,8 @@ mod domain_system_tx_tests {
         use lib_blockchain::transaction::domain::{
             DomainRegistrationPayload, DOMAIN_REGISTRATION_PREFIX_V3,
         };
-        let fee_tx_hash_hex = fee_tx_hash_from_hex(parsed.fee_payment_tx.as_ref().unwrap())
-            .expect("fee hash");
+        let fee_tx_hash_hex =
+            fee_tx_hash_from_hex(parsed.fee_payment_tx.as_ref().unwrap()).expect("fee hash");
         let (title, description, tags) =
             domain_registration_title_description_tags("dao.example.sov", None);
         let payload = DomainRegistrationPayload {

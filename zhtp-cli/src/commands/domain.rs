@@ -69,7 +69,6 @@ pub fn validate_domain_name(domain: &str) -> CliResult<()> {
     validate_domain(domain).map(|_| ())
 }
 
-
 // ============================================================================
 // IMPERATIVE SHELL - All side effects here (network I/O, output)
 // ============================================================================
@@ -331,16 +330,19 @@ async fn register_domain_impl(
         created_at: loaded.identity.created_at,
     };
 
-    let body_json = zhtp_client::token_tx::build_domain_register_request_with_fee_payment_and_metadata(
-        &identity,
-        domain,
-        None,
-        Some(fee_payment_tx_hex),
-        metadata_json,
-        chain_id,
-        asset_id_hex.as_deref(),
-    )
-    .map_err(|e| CliError::ConfigError(format!("Failed to build registration request: {}", e)))?;
+    let body_json =
+        zhtp_client::token_tx::build_domain_register_request_with_fee_payment_and_metadata(
+            &identity,
+            domain,
+            None,
+            Some(fee_payment_tx_hex),
+            metadata_json,
+            chain_id,
+            asset_id_hex.as_deref(),
+        )
+        .map_err(|e| {
+            CliError::ConfigError(format!("Failed to build registration request: {}", e))
+        })?;
 
     let body: serde_json::Value = serde_json::from_str(&body_json)
         .map_err(|e| CliError::ConfigError(format!("Invalid registration JSON: {}", e)))?;
@@ -681,7 +683,10 @@ async fn catalog_domains_impl(
         let json_str = serde_json::to_string_pretty(&catalog)
             .map_err(|e| CliError::ConfigError(format!("Failed to serialize catalog: {}", e)))?;
         std::fs::write(file_path, &json_str).map_err(|e| {
-            CliError::ConfigError(format!("Failed to write output file '{}': {}", file_path, e))
+            CliError::ConfigError(format!(
+                "Failed to write output file '{}': {}",
+                file_path, e
+            ))
         })?;
         output.success(&format!("Catalog written to {}", file_path))?;
     } else {

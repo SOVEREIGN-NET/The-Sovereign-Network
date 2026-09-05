@@ -71,9 +71,8 @@ async fn handle_configure_rewards(
 
     zhtp::set_node_data_dir(data_root);
 
-    let parsed_id = zhtp::rewards_activation::parse_asset_id_hex(asset_id).map_err(|e| {
-        CliError::ConfigError(format!("invalid --asset-id: {e}"))
-    })?;
+    let parsed_id = zhtp::rewards_activation::parse_asset_id_hex(asset_id)
+        .map_err(|e| CliError::ConfigError(format!("invalid --asset-id: {e}")))?;
 
     let keystore_path = normalize_keystore_path(delegate_keystore)
         .ok_or_else(|| CliError::ConfigError("invalid --delegate-keystore path".into()))?;
@@ -98,10 +97,7 @@ async fn handle_configure_rewards(
     output.header("Rewards activation configured")?;
     output.print(&format!("Wrote: {}", out_path.display()))?;
     output.print(&format!("asset_id: {}", hex::encode(parsed_id)))?;
-    output.print(&format!(
-        "delegate_keystore: {}",
-        keystore_path.display()
-    ))?;
+    output.print(&format!("delegate_keystore: {}", keystore_path.display()))?;
     output.print("Restart the node (or redeploy) for /api/v1/rewards/* to pick up the config.")?;
     Ok(())
 }
@@ -168,29 +164,44 @@ async fn handle_node_command_impl(
         ref data_dir,
     } = args.action
     {
-        return handle_configure_rewards(asset_id, delegate_keystore, data_dir.as_deref(), cli, output)
-            .await;
+        return handle_configure_rewards(
+            asset_id,
+            delegate_keystore,
+            data_dir.as_deref(),
+            cli,
+            output,
+        )
+        .await;
     }
 
     // Handle halt-consensus via QUIC API call
     if let NodeAction::HaltConsensus { ref reason } = args.action {
-        output.info(&format!("Requesting consensus halt (reason: {})...", reason))?;
+        output.info(&format!(
+            "Requesting consensus halt (reason: {})...",
+            reason
+        ))?;
 
         let server = &cli.server;
         let mut client = crate::commands::web4_utils::connect_default(server).await?;
         let body = serde_json::json!({ "reason": reason });
 
-        let response = client.post_json("/api/v1/node/halt-consensus", &body).await
+        let response = client
+            .post_json("/api/v1/node/halt-consensus", &body)
+            .await
             .map_err(|e| CliError::ApiCallFailed {
                 endpoint: "/api/v1/node/halt-consensus".to_string(),
                 status: 0,
                 reason: e.to_string(),
             })?;
 
-        let result: serde_json::Value = serde_json::from_slice(&response.body)
-            .unwrap_or_else(|_| serde_json::json!({"raw": String::from_utf8_lossy(&response.body).to_string()}));
+        let result: serde_json::Value = serde_json::from_slice(&response.body).unwrap_or_else(
+            |_| serde_json::json!({"raw": String::from_utf8_lossy(&response.body).to_string()}),
+        );
 
-        output.info(&format!("{}", serde_json::to_string_pretty(&result).unwrap_or_default()))?;
+        output.info(&format!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        ))?;
         return Ok(());
     }
 
@@ -275,10 +286,7 @@ async fn handle_node_command_impl(
                                                 |_| serde_json::json!({"raw": response}),
                                             );
                                     output.success("Node is running")?;
-                                    output.print(&format!(
-                                        "Health endpoint: {}",
-                                        endpoint
-                                    ))?;
+                                    output.print(&format!("Health endpoint: {}", endpoint))?;
                                     output.print(
                                         &serde_json::to_string_pretty(&status).unwrap_or_default(),
                                     )?;

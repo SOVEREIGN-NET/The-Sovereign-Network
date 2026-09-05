@@ -104,10 +104,7 @@ pub fn accept_session(
 
 /// Re-key a session with fresh Kyber encapsulation (post-compromise security).
 /// Returns kyber_ciphertext to send to the peer as a KeyRatchet message.
-pub fn rekey_session(
-    session: &mut MessagingSession,
-    remote_kyber_pk: &[u8],
-) -> Result<Vec<u8>> {
+pub fn rekey_session(session: &mut MessagingSession, remote_kyber_pk: &[u8]) -> Result<Vec<u8>> {
     let (new_secret, ciphertext) = Kyber1024::encapsulate(remote_kyber_pk)?;
 
     session.chain_key =
@@ -174,20 +171,16 @@ fn next_message_key(session: &mut MessagingSession) -> ([u8; 32], [u8; 12], u32,
     let counter = session.counter;
     let epoch = session.epoch;
 
-    let msg_key = Blake3::hash(
-        &[&session.chain_key[..], b"msg", &counter.to_le_bytes()].concat(),
-    );
+    let msg_key = Blake3::hash(&[&session.chain_key[..], b"msg", &counter.to_le_bytes()].concat());
 
-    let nonce_full = Blake3::hash(
-        &[&session.chain_key[..], b"nonce", &counter.to_le_bytes()].concat(),
-    );
+    let nonce_full =
+        Blake3::hash(&[&session.chain_key[..], b"nonce", &counter.to_le_bytes()].concat());
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&nonce_full[..12]);
 
     // Advance ratchet — old key gone (forward secrecy)
-    session.chain_key = Blake3::hash(
-        &[&session.chain_key[..], b"next", &counter.to_le_bytes()].concat(),
-    );
+    session.chain_key =
+        Blake3::hash(&[&session.chain_key[..], b"next", &counter.to_le_bytes()].concat());
     session.counter += 1;
 
     (msg_key, nonce, epoch, counter)
@@ -195,22 +188,16 @@ fn next_message_key(session: &mut MessagingSession) -> ([u8; 32], [u8; 12], u32,
 
 /// Derive a message key for decryption (stateless — doesn't advance ratchet).
 fn derive_key_at(chain_key: &[u8; 32], counter: u64) -> ([u8; 32], [u8; 12]) {
-    let msg_key = Blake3::hash(
-        &[chain_key.as_slice(), b"msg", &counter.to_le_bytes()].concat(),
-    );
-    let nonce_full = Blake3::hash(
-        &[chain_key.as_slice(), b"nonce", &counter.to_le_bytes()].concat(),
-    );
+    let msg_key = Blake3::hash(&[chain_key.as_slice(), b"msg", &counter.to_le_bytes()].concat());
+    let nonce_full =
+        Blake3::hash(&[chain_key.as_slice(), b"nonce", &counter.to_le_bytes()].concat());
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&nonce_full[..12]);
     (msg_key, nonce)
 }
 
 /// Seal a text message into an encrypted envelope. Advances the ratchet.
-pub fn seal_text_message(
-    session: &mut MessagingSession,
-    text: &str,
-) -> Result<MessageEnvelope> {
+pub fn seal_text_message(session: &mut MessagingSession, text: &str) -> Result<MessageEnvelope> {
     let content = MessageContent {
         content_type: ContentType::Text,
         body: text.as_bytes().to_vec(),
@@ -296,10 +283,7 @@ fn seal_message(
 /// KeyExchange / first-contact envelopes or for callers that manage the
 /// chain key out-of-band; otherwise prefer `open_envelope_with_session`
 /// which mirrors the sender's ratchet and handles out-of-order delivery.
-pub fn open_envelope(
-    envelope: &MessageEnvelope,
-    chain_key: &[u8; 32],
-) -> Result<Vec<u8>> {
+pub fn open_envelope(envelope: &MessageEnvelope, chain_key: &[u8; 32]) -> Result<Vec<u8>> {
     let (msg_key, nonce) = derive_key_at(chain_key, envelope.sequence);
 
     let plaintext = ChaCha20Poly1305Cipher::decrypt(
@@ -441,8 +425,7 @@ pub fn open_envelope_with_session(
 /// at this call site but the tuple shape mirrors `next_message_key`
 /// for symmetry.
 fn derive_step(chain_key: &[u8; 32], counter: u64) -> ([u8; 32], [u8; 12], u32, u64) {
-    let msg_key =
-        Blake3::hash(&[chain_key.as_slice(), b"msg", &counter.to_le_bytes()].concat());
+    let msg_key = Blake3::hash(&[chain_key.as_slice(), b"msg", &counter.to_le_bytes()].concat());
     let nonce_full =
         Blake3::hash(&[chain_key.as_slice(), b"nonce", &counter.to_le_bytes()].concat());
     let mut nonce = [0u8; 12];
@@ -479,10 +462,7 @@ pub fn sign_envelope(
 }
 
 /// Verify an envelope's Dilithium5 signature.
-pub fn verify_envelope(
-    envelope: &MessageEnvelope,
-    dilithium_pk: &[u8],
-) -> Result<bool> {
+pub fn verify_envelope(envelope: &MessageEnvelope, dilithium_pk: &[u8]) -> Result<bool> {
     let hash = envelope_signing_hash(envelope);
     Dilithium5::verify(&hash, &envelope.signature, dilithium_pk)
 }
@@ -498,8 +478,7 @@ pub fn encode_envelope(envelope: &MessageEnvelope) -> Result<String> {
 
 /// Decode an envelope from hex string (from /msg/receive API).
 pub fn decode_envelope(hex_str: &str) -> Result<MessageEnvelope> {
-    let bytes = hex::decode(hex_str)
-        .map_err(|_| ClientError::CryptoError("Invalid hex".into()))?;
+    let bytes = hex::decode(hex_str).map_err(|_| ClientError::CryptoError("Invalid hex".into()))?;
     bincode::deserialize(&bytes)
         .map_err(|e| ClientError::CryptoError(format!("Deserialize failed: {}", e)))
 }
@@ -539,10 +518,8 @@ mod tests {
 
     fn pair() -> (MessagingSession, MessagingSession) {
         let (recipient_pk, recipient_sk) = Kyber1024::generate_keypair().unwrap();
-        let (ct, send) =
-            initiate_session("did:zhtp:alice", "did:zhtp:bob", &recipient_pk).unwrap();
-        let recv =
-            accept_session("did:zhtp:bob", "did:zhtp:alice", &ct, &recipient_sk).unwrap();
+        let (ct, send) = initiate_session("did:zhtp:alice", "did:zhtp:bob", &recipient_pk).unwrap();
+        let recv = accept_session("did:zhtp:bob", "did:zhtp:alice", &ct, &recipient_sk).unwrap();
         (send, recv)
     }
 
@@ -607,8 +584,7 @@ mod tests {
         }
         // Try to open the final envelope first — would require buffering
         // MAX_SKIPPED_KEYS_PER_EPOCH+1 skipped keys.
-        let err =
-            open_envelope_with_session(&mut recv, envs.last().unwrap()).unwrap_err();
+        let err = open_envelope_with_session(&mut recv, envs.last().unwrap()).unwrap_err();
         assert!(format!("{}", err).contains("max skipped-key buffer"));
         // Session must be untouched.
         assert_eq!(recv.counter, 0);

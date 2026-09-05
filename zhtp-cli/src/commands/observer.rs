@@ -25,17 +25,20 @@ use zhtp::keyfile_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 // ---------------------------------------------------------------------------
 
 /// Handle any observer subcommand.
-pub async fn handle_observer_command(
-    args: ObserverArgs,
-    cli: &ZhtpCli,
-) -> CliResult<()> {
+pub async fn handle_observer_command(args: ObserverArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     match &args.action {
         ObserverAction::Generate => cmd_generate(&output).await,
-        ObserverAction::QrPayload { did, sponsor } => cmd_qr_payload(did, sponsor, &cli.server, &output).await,
-        ObserverAction::QrRender { did, sponsor } => cmd_qr_render(did, sponsor, &cli.server, &output).await,
+        ObserverAction::QrPayload { did, sponsor } => {
+            cmd_qr_payload(did, sponsor, &cli.server, &output).await
+        }
+        ObserverAction::QrRender { did, sponsor } => {
+            cmd_qr_render(did, sponsor, &cli.server, &output).await
+        }
         ObserverAction::Status { did } => cmd_status(did, &cli.server, &output).await,
-        ObserverAction::Wait { did, timeout } => cmd_wait(did, *timeout, &cli.server, &output).await,
+        ObserverAction::Wait { did, timeout } => {
+            cmd_wait(did, *timeout, &cli.server, &output).await
+        }
         ObserverAction::Start { did } => cmd_start(did, &cli.server, &output).await,
         ObserverAction::BySponsor { did } => cmd_by_sponsor(did, &cli.server, &output).await,
     }
@@ -83,10 +86,7 @@ fn load_observer_identity() -> CliResult<(ZhtpIdentity, KeyPair)> {
 }
 
 /// Connect to a node using an already-loaded observer identity.
-async fn connect_observer_with(
-    identity: ZhtpIdentity,
-    server: &str,
-) -> CliResult<ZhtpClient> {
+async fn connect_observer_with(identity: ZhtpIdentity, server: &str) -> CliResult<ZhtpClient> {
     let trust_config = web4_utils::build_trust_config(None, None, false, true)?;
     web4_utils::connect_client(identity, trust_config, server).await
 }
@@ -151,9 +151,8 @@ async fn cmd_generate(output: &dyn Output) -> CliResult<()> {
     // Save identity JSON
     let identity_json = serde_json::to_string_pretty(&identity)
         .map_err(|e| CliError::IdentityError(format!("Serialization failed: {}", e)))?;
-    std::fs::write(&identity_file, &identity_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to write identity file: {}", e))
-    })?;
+    std::fs::write(&identity_file, &identity_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to write identity file: {}", e)))?;
 
     #[cfg(unix)]
     {
@@ -349,18 +348,14 @@ async fn cmd_wait(
                 return Ok(());
             }
             Some(s) => {
-                let remaining = deadline
-                    .saturating_duration_since(Instant::now())
-                    .as_secs();
+                let remaining = deadline.saturating_duration_since(Instant::now()).as_secs();
                 output.info(&format!(
                     "Current status: {} — polling again in 2s ({}s remaining)...",
                     s, remaining
                 ))?;
             }
             None => {
-                let remaining = deadline
-                    .saturating_duration_since(Instant::now())
-                    .as_secs();
+                let remaining = deadline.saturating_duration_since(Instant::now()).as_secs();
                 output.info(&format!(
                     "No record yet — polling again in 2s ({}s remaining)...",
                     remaining
@@ -427,10 +422,7 @@ async fn cmd_start(did: &str, server: &str, output: &dyn Output) -> CliResult<()
 /// `observer by-sponsor` — list observers sponsored by a DID.
 async fn cmd_by_sponsor(did: &str, server: &str, output: &dyn Output) -> CliResult<()> {
     let did_encoded = urlencoding::encode(did);
-    let path = format!(
-        "/api/v1/observer/admission/by-sponsor?did={}",
-        did_encoded
-    );
+    let path = format!("/api/v1/observer/admission/by-sponsor?did={}", did_encoded);
 
     let mut client = connect_default(server).await?;
     let response = client
@@ -471,8 +463,8 @@ async fn cmd_by_sponsor(did: &str, server: &str, output: &dyn Output) -> CliResu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_protocols::types::{ZhtpHeaders, ZhtpStatus};
     use lib_identity::IdentityType;
+    use lib_protocols::types::{ZhtpHeaders, ZhtpStatus};
 
     const ZHTP_VERSION: &str = "1.0";
 
@@ -498,7 +490,8 @@ mod tests {
         let path = observer_keystore_path().unwrap();
         let path_str = path.to_string_lossy();
         assert!(
-            path_str.ends_with(".zhtp/keystore/observer") || path_str.ends_with(".zhtp\\keystore\\observer"),
+            path_str.ends_with(".zhtp/keystore/observer")
+                || path_str.ends_with(".zhtp\\keystore\\observer"),
             "keystore path must end with .zhtp/keystore/observer, got: {path_str}"
         );
     }
@@ -509,10 +502,7 @@ mod tests {
 
     #[test]
     fn test_parse_json_valid_null_record() {
-        let resp = build_response(
-            ZhtpStatus::Ok,
-            br#"{"status":"ok","record":null}"#.to_vec(),
-        );
+        let resp = build_response(ZhtpStatus::Ok, br#"{"status":"ok","record":null}"#.to_vec());
         let json = parse_json(&resp).expect("parse must succeed");
         assert_eq!(json["status"], "ok");
         assert!(json["record"].is_null());
@@ -526,7 +516,10 @@ mod tests {
         );
         let json = parse_json(&resp).expect("parse must succeed");
         assert_eq!(json["status"], "ok");
-        assert_eq!(json["record"]["node_info"]["observer_node_did"], "did:zhtp:test");
+        assert_eq!(
+            json["record"]["node_info"]["observer_node_did"],
+            "did:zhtp:test"
+        );
         assert_eq!(json["record"]["status"], "Active");
     }
 
@@ -537,16 +530,13 @@ mod tests {
     #[test]
     fn test_qr_pipeline_generate_payload_encode_render() {
         // Step 1: Generate observer identity (same path as cmd_generate)
-        let identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            "test-observer",
-            None,
-        )
-        .expect("observer keygen must succeed");
+        let identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-observer", None)
+                .expect("observer keygen must succeed");
 
-        let pk = identity.private_key.as_ref()
+        let pk = identity
+            .private_key
+            .as_ref()
             .expect("generated identity must have private key");
 
         let sponsor_did = "did:zhtp:sponsor-identity-on-chain";
@@ -571,12 +561,20 @@ mod tests {
         });
 
         // Verify payload matches epic v1 schema
-        assert_eq!(payload["sponsor_proof_level"], "Basic", "v1 payload proof level must be Basic");
-        assert_eq!(payload["allowed_network"], "testnet", "v1 payload network must be testnet");
-        assert_eq!(payload["sponsor_user_did"], sponsor_did, "sponsor must be a distinct on-chain identity");
+        assert_eq!(
+            payload["sponsor_proof_level"], "Basic",
+            "v1 payload proof level must be Basic"
+        );
+        assert_eq!(
+            payload["allowed_network"], "testnet",
+            "v1 payload network must be testnet"
+        );
+        assert_eq!(
+            payload["sponsor_user_did"], sponsor_did,
+            "sponsor must be a distinct on-chain identity"
+        );
 
-        let payload_json = serde_json::to_string(&payload)
-            .expect("payload must serialize");
+        let payload_json = serde_json::to_string(&payload).expect("payload must serialize");
         assert!(!payload_json.is_empty(), "JSON payload must not be empty");
 
         // NOTE: Full hex-encoded Dilithium PK (5184 chars) + Kyber PK (2368 chars)

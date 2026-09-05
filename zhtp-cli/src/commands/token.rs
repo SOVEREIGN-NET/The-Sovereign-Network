@@ -17,8 +17,8 @@ use lib_blockchain::contracts::sovereign_asset::{DaoClass, GovernanceVerifierSta
 use lib_blockchain::rewards_policy::validate_rewards_policy;
 use lib_blockchain::transaction::asset_tx::{
     build_dao_launch_manifest as blockchain_build_dao_launch_manifest,
-    manifest_cid_hash_from_bytes as blockchain_manifest_cid_hash_from_bytes,
-    AssetLaunchPayloadV1, GovernanceLaunchConfig, RewardsLaunchConfig,
+    manifest_cid_hash_from_bytes as blockchain_manifest_cid_hash_from_bytes, AssetLaunchPayloadV1,
+    GovernanceLaunchConfig, RewardsLaunchConfig,
 };
 use lib_blockchain::transaction::{
     TokenCreationPayloadV1, TokenMintData, TokenTransferData, DEFAULT_TOKEN_CREATION_FEE,
@@ -93,9 +93,11 @@ fn parse_public_key(address: &str) -> CliResult<lib_crypto::PublicKey> {
         });
     }
 
-    let dilithium_pk: [u8; 2592] = bytes
-        .try_into()
-        .map_err(|_| CliError::ConfigError("Address must be 32-byte key ID or 2592-byte Dilithium public key".to_string()))?;
+    let dilithium_pk: [u8; 2592] = bytes.try_into().map_err(|_| {
+        CliError::ConfigError(
+            "Address must be 32-byte key ID or 2592-byte Dilithium public key".to_string(),
+        )
+    })?;
 
     Ok(lib_crypto::PublicKey::new(dilithium_pk))
 }
@@ -300,7 +302,10 @@ pub async fn handle_create(
 ) -> CliResult<()> {
     validate_decimals(decimals)?;
     output.info(&format!("Creating token: {} ({})", name, symbol))?;
-    output.info(&format!("Initial supply: {} atoms ({} decimals)", supply, decimals))?;
+    output.info(&format!(
+        "Initial supply: {} atoms ({} decimals)",
+        supply, decimals
+    ))?;
     output.info("Signing token creation transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;
@@ -409,17 +414,15 @@ pub async fn handle_create(
 }
 
 fn read_manifest_file(path: &Path) -> CliResult<Vec<u8>> {
-    std::fs::read(path).map_err(|e| {
-        CliError::ConfigError(format!("read manifest {}: {e}", path.display()))
-    })
+    std::fs::read(path)
+        .map_err(|e| CliError::ConfigError(format!("read manifest {}: {e}", path.display())))
 }
 
 fn manifest_cid_hash_from_bytes(
     bytes: &[u8],
     launch: Option<(&str, &str, u8)>,
 ) -> CliResult<([u8; 32], [u8; 32])> {
-    blockchain_manifest_cid_hash_from_bytes(bytes, launch)
-        .map_err(CliError::ConfigError)
+    blockchain_manifest_cid_hash_from_bytes(bytes, launch).map_err(CliError::ConfigError)
 }
 
 fn build_dao_launch_manifest(name: &str, symbol: &str, decimals: u8) -> ([u8; 32], [u8; 32]) {
@@ -464,7 +467,11 @@ pub fn validate_transfer_authority_flag(
 }
 
 pub fn parse_governance_signers(raw: &str) -> CliResult<Vec<[u8; 32]>> {
-    let parts: Vec<&str> = raw.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     if parts.is_empty() {
         return Err(CliError::ConfigError(
             "governance_signers must list at least one 32-byte hex key_id".to_string(),
@@ -607,7 +614,10 @@ pub async fn handle_dao_asset_launch(
 ) -> CliResult<()> {
     validate_decimals(decimals)?;
     output.info(&format!("Launching sovereign asset: {} ({})", name, symbol))?;
-    output.info(&format!("Initial supply: {} atoms ({} decimals)", supply, decimals))?;
+    output.info(&format!(
+        "Initial supply: {} atoms ({} decimals)",
+        supply, decimals
+    ))?;
     output.info("Signing AssetLaunch transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;
@@ -680,12 +690,12 @@ pub async fn handle_dao_asset_launch(
         dao_class,
         burn_bps,
     };
-    payload.validate_dao_launch_ui_constraints().map_err(|e| {
-        CliError::ConfigError(format!("DAO launch validation failed: {e}"))
+    payload
+        .validate_dao_launch_ui_constraints()
+        .map_err(|e| CliError::ConfigError(format!("DAO launch validation failed: {e}")))?;
+    let memo = payload.encode_memo().map_err(|e| {
+        CliError::ConfigError(format!("Failed to encode asset launch payload: {e}"))
     })?;
-    let memo = payload
-        .encode_memo()
-        .map_err(|e| CliError::ConfigError(format!("Failed to encode asset launch payload: {e}")))?;
 
     let mut tx = Transaction::new_asset_launch_with_chain_id(
         options.chain_id,
@@ -1034,8 +1044,8 @@ async fn fetch_token_creation_fee(client: &ZhtpClient) -> Result<u64, String> {
     if response.status != lib_protocols::types::ZhtpStatus::Ok {
         return Err(format!("fee-config returned {:?}", response.status));
     }
-    let body: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| format!("parse fee-config response: {e}"))?;
+    let body: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| format!("parse fee-config response: {e}"))?;
     // The server serialises u128 fee values as decimal strings to avoid
     // JSON number-precision issues, so accept either string or number here.
     let fee_value = body
@@ -1051,9 +1061,9 @@ async fn fetch_token_creation_fee(client: &ZhtpClient) -> Result<u64, String> {
             .ok_or_else(|| "token_creation_fee number is not a u64".to_string())?,
         other => return Err(format!("unexpected token_creation_fee shape: {other}")),
     };
-    u64::try_from(parsed).map_err(|_| format!(
-        "token_creation_fee {parsed} exceeds u64::MAX — chain schema drifted",
-    ))
+    u64::try_from(parsed).map_err(|_| {
+        format!("token_creation_fee {parsed} exceeds u64::MAX — chain schema drifted",)
+    })
 }
 
 #[cfg(test)]
@@ -1323,11 +1333,7 @@ mod tests {
     fn test_validate_transfer_authority_requires_governance() {
         assert!(validate_transfer_authority_flag(true, &None).is_err());
         assert!(validate_transfer_authority_flag(false, &None).is_ok());
-        assert!(validate_transfer_authority_flag(
-            true,
-            &Some("aa".repeat(32))
-        )
-        .is_ok());
+        assert!(validate_transfer_authority_flag(true, &Some("aa".repeat(32))).is_ok());
     }
 
     #[test]

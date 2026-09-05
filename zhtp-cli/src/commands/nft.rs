@@ -33,8 +33,8 @@ fn load_identity(keystore: &Option<String>) -> CliResult<zhtp_client::Identity> 
 
 fn parse_hex32(value: &str, field: &str) -> CliResult<[u8; 32]> {
     let s = value.strip_prefix("0x").unwrap_or(value);
-    let bytes = hex::decode(s)
-        .map_err(|_| CliError::ConfigError(format!("{} is not valid hex", field)))?;
+    let bytes =
+        hex::decode(s).map_err(|_| CliError::ConfigError(format!("{} is not valid hex", field)))?;
     bytes
         .try_into()
         .map_err(|_| CliError::ConfigError(format!("{} must be exactly 32 bytes", field)))
@@ -54,11 +54,7 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
             eprintln!("Creating NFT collection: {} ({})", name, symbol);
 
             let tx_hex = zhtp_client::nft_tx::build_nft_create_collection_tx(
-                &identity,
-                name,
-                symbol,
-                max_supply,
-                3,
+                &identity, name, symbol, max_supply, 3,
             )
             .map_err(|e| CliError::ConfigError(e))?;
 
@@ -72,8 +68,8 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/nft/collection/create".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -118,8 +114,8 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/nft/mint".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -171,8 +167,8 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/nft/transfer".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -220,8 +216,8 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/nft/burn".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -231,17 +227,16 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
         }
 
         NftAction::List => {
-            let response = client
-                .get("/api/v1/nft/collections")
-                .await
-                .map_err(|e| CliError::ApiCallFailed {
+            let response = client.get("/api/v1/nft/collections").await.map_err(|e| {
+                CliError::ApiCallFailed {
                     endpoint: "/api/v1/nft/collections".to_string(),
                     status: 0,
                     reason: e.to_string(),
-                })?;
+                }
+            })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/nft/collections".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -261,8 +256,8 @@ pub async fn handle_nft_command(args: NftArgs, cli: &ZhtpCli) -> CliResult<()> {
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint,
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),

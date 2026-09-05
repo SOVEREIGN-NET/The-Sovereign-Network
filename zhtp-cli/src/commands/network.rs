@@ -260,19 +260,21 @@ async fn fetch_relay_candidates(
         path.push_str(&query.join("&"));
     }
 
-    let response = client.get(&path).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: path.clone(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .get(&path)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: path.clone(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
-        }
-    })?;
+        })?;
 
     if json_output {
         output.print(&serde_json::to_string_pretty(&result).unwrap_or_default())?;
@@ -305,9 +307,18 @@ async fn fetch_relay_candidates(
     output.print("")?;
 
     for (i, candidate) in candidates.iter().enumerate() {
-        let did = candidate.get("did").and_then(|v| v.as_str()).unwrap_or("N/A");
-        let peer_id = candidate.get("peer_id").and_then(|v| v.as_str()).unwrap_or("N/A");
-        let tier = candidate.get("tier").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let did = candidate
+            .get("did")
+            .and_then(|v| v.as_str())
+            .unwrap_or("N/A");
+        let peer_id = candidate
+            .get("peer_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("N/A");
+        let tier = candidate
+            .get("tier")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let health = candidate
             .get("health_state")
             .and_then(|v| v.as_str())
@@ -365,12 +376,18 @@ async fn fetch_relay_candidates(
             &did[..did.len().min(32)],
             peer_id
         ))?;
-        output.print(&format!("   Tier: {} | Health: {} | Admission: {}", tier, health, admission))?;
+        output.print(&format!(
+            "   Tier: {} | Health: {} | Admission: {}",
+            tier, health, admission
+        ))?;
         output.print(&format!(
             "   Capacity: {} routes | Bandwidth: {:.1} Mbps | Latency: {} ms",
             routing_capacity, bandwidth, latency
         ))?;
-        output.print(&format!("   Trust: {:.2} | Reliability: {:.2}", trust, reliability))?;
+        output.print(&format!(
+            "   Trust: {:.2} | Reliability: {:.2}",
+            trust, reliability
+        ))?;
         if !endpoints.is_empty() {
             output.print(&format!("   Endpoints: {}", endpoints))?;
         }

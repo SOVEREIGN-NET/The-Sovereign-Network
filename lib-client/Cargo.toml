@@ -36,6 +36,8 @@ flate2 = "1.0"
 lib-blockchain = { path = "../lib-blockchain" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity-core = { path = "../lib-identity-core" }
+# Grant client custody (issue #2958): shares the canonical grant-exercise message format with the server-side dual-auth verifier.
+lib-access-control = { path = "../lib-access-control" }
 # DAO governance enums + bincode envelope shared with the chain executor.
 # Used by build_governance_parameter_update_proposal_tx.
 lib-governance = { path = "../lib-governance" }
@@ -95,3 +97,4 @@ uniffi = { version = "0.25", features = ["build"], default-features = false }
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 wasm-bindgen-test = "0.3"
+tempfile = "3"
