@@ -46,8 +46,6 @@ impl Blockchain {
             finality_depth: 12,
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
-            contract_state_history: std::collections::BTreeMap::new(),
-            utxo_snapshots: std::collections::BTreeMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
@@ -123,7 +121,6 @@ impl Blockchain {
         let mut bc = Self::new_runtime_state();
         bc.blocks[0] = genesis_block.clone();
         bc.update_utxo_set(&genesis_block)?;
-        bc.save_utxo_snapshot(0)?;
         bc.ensure_treasury_wallet();
         Ok(bc)
     }

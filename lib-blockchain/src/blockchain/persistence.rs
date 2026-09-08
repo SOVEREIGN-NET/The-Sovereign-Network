@@ -236,8 +236,6 @@ impl BlockchainV1 {
             finality_depth: default_finality_depth(),
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
-            contract_state_history: std::collections::BTreeMap::new(),
-            utxo_snapshots: std::collections::BTreeMap::new(),
             reorg_count: 0,
             fork_recovery_config: crate::fork_recovery::ForkRecoveryConfig::default(),
             event_publisher: crate::events::BlockchainEventPublisher::new(),
@@ -366,10 +364,6 @@ pub(super) struct BlockchainStorageV3 {
     pub finalized_blocks: HashSet<u64>,
     #[serde(default)]
     pub contract_states: HashMap<[u8; 32], Vec<u8>>,
-    #[serde(default)]
-    pub contract_state_history: std::collections::BTreeMap<u64, HashMap<[u8; 32], Vec<u8>>>,
-    #[serde(default)]
-    pub utxo_snapshots: std::collections::BTreeMap<u64, HashMap<Hash, TransactionOutput>>,
     #[serde(default)]
     pub fork_points: HashMap<u64, crate::fork_recovery::ForkPoint>,
     #[serde(default)]
@@ -500,8 +494,6 @@ impl BlockchainStorageV3 {
             finality_depth: bc.finality_depth,
             finalized_blocks: bc.finalized_blocks.clone(),
             contract_states: bc.contract_states.clone(),
-            contract_state_history: bc.contract_state_history.clone(),
-            utxo_snapshots: bc.utxo_snapshots.clone(),
             // fork_points removed from Blockchain (now a direct-write store
             // tree). V3 keeps the field for old .dat reads; new saves: empty.
             fork_points: HashMap::new(),
@@ -596,8 +588,6 @@ impl BlockchainStorageV3 {
             finality_depth: self.finality_depth,
             finalized_blocks: self.finalized_blocks,
             contract_states: self.contract_states,
-            contract_state_history: self.contract_state_history,
-            utxo_snapshots: self.utxo_snapshots,
             reorg_count: self.reorg_count,
             fork_recovery_config: self.fork_recovery_config,
             ubi_registry: self.ubi_registry,
