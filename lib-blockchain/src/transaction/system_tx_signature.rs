@@ -93,7 +93,8 @@ pub fn system_tx_signature_policy(ty: TransactionType) -> SystemTxSignaturePolic
         TransactionType::Coinbase
         | TransactionType::UbiDistribution
         | TransactionType::SessionCreation
-        | TransactionType::SessionTermination => SystemTxSignaturePolicy::Bootstrap,
+        | TransactionType::SessionTermination
+        | TransactionType::SystemMint => SystemTxSignaturePolicy::Bootstrap,
     }
 }
 

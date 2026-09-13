@@ -75,6 +75,7 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
             token_id,
             to,
             amount: amount as u128,
+            approvals: Default::default(),
         },
         test_signature(signer),
         b"restart-test-mint".to_vec(),

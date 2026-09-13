@@ -42,6 +42,7 @@ impl RewardMinter {
             token_id: lib_blockchain::contracts::utils::generate_lib_token_id(),
             to: recipient_key_id,
             amount,
+            approvals: Default::default(),
         };
 
         let signature = Signature {
@@ -59,7 +60,7 @@ impl RewardMinter {
         };
 
         let memo = format!("pouw:mint:{}:{}", hex::encode(recipient_key_id), amount).into_bytes();
-        let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
+        let mint_tx = Transaction::new_system_mint(0x03, mint_data, signature, memo);
         let tx_hash = mint_tx.hash();
 
         // Write lock only for mempool insertion

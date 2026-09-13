@@ -288,6 +288,13 @@ pub struct TokenMintData {
     pub to: [u8; 32],
     /// Amount to mint (in smallest token unit)
     pub amount: u128,
+    /// Governance threshold approvals authorizing this mint (M-of-N council).
+    ///
+    /// Required for user-submitted SOV mints. Empty for node-emitted system mints,
+    /// which are authorized by consensus output rather than a signature.
+    /// Each signer signs `compute_approval_preimage(24, ApprovalDomain::BootstrapCouncil, bincode({token_id, to, amount}))`.
+    #[serde(default)]
+    pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
 }
 
 /// Governance config update data for Phase 3D
@@ -926,6 +933,30 @@ impl Transaction {
             version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::TokenMint,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::TokenMint(token_mint_data),
+        }
+    }
+
+    /// Create a node-emitted system mint transaction (welcome bonus, PoUW reward, UBI).
+    ///
+    /// Unlike `TokenMint`, `SystemMint` is not user-submittable and carries no
+    /// council approval set — it is deterministic consensus output injected by
+    /// trusted node code via `add_system_transaction`.
+    pub fn new_system_mint(
+        chain_id: u8,
+        token_mint_data: TokenMintData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::SystemMint,
             inputs: Vec::new(),
             outputs: Vec::new(),
             fee: 0,

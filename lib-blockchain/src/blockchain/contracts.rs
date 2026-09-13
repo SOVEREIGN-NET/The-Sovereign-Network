@@ -525,7 +525,7 @@ impl Blockchain {
                             }
                         }
                     }
-                    TransactionType::TokenMint => {
+                    TransactionType::TokenMint | TransactionType::SystemMint => {
                         if transaction.version < 2 {
                             return Err(anyhow::anyhow!(
                                 "TokenMint not supported in this serialization version"

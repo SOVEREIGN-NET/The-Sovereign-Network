@@ -146,6 +146,7 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
             token_id,
             to,
             amount: amount as u128,
+            approvals: Default::default(),
         }),
     }
 }
@@ -396,9 +397,9 @@ fn test_kernel_controlled_tokenmint_bypass_rejected() {
     );
 }
 
-/// Test 3c: Kernel-controlled token mint succeeds when signed by kernel authority.
+/// Test 3c: Kernel-controlled token mint rejects a single governance key (no single key mints).
 #[test]
-fn test_kernel_controlled_tokenmint_via_kernel_authority_succeeds() {
+fn test_kernel_controlled_tokenmint_via_single_key_rejected() {
     let mut blockchain = Blockchain::default();
     let kernel_authority = test_pubkey(77);
     let recipient = test_pubkey(2);
@@ -419,10 +420,14 @@ fn test_kernel_controlled_tokenmint_via_kernel_authority_succeeds() {
     let tx = token_mint_tx(&kernel_authority, token_id, recipient.key_id, 1_000);
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_token_transactions(&block).unwrap();
+    let result = blockchain.process_token_transactions(&block);
+    assert!(
+        result.is_err(),
+        "a single governance key must not mint a kernel-controlled token"
+    );
 
     let token = blockchain.get_token_contract(&token_id).unwrap();
-    assert_eq!(token.balance_of(&recipient), 1_000);
+    assert_eq!(token.balance_of(&recipient), 0);
 }
 
 /// Test 4: SOV wallet-to-wallet transfer using wallet_id addressing.

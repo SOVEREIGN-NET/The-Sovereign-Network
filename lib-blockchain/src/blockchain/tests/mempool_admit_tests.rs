@@ -131,6 +131,7 @@ fn system_injection_rejects_unsigned_token_mint_from_unknown_originator() {
         token_id: crate::contracts::utils::generate_lib_token_id(),
         to: [7u8; 32],
         amount: 100,
+        approvals: Default::default(),
     };
     let tx = Transaction::new_token_mint(
         mint_data,
@@ -165,6 +166,7 @@ fn system_injection_allows_pouw_mint_with_matching_memo() {
         token_id: crate::contracts::utils::generate_lib_token_id(),
         to: recipient,
         amount,
+        approvals: Default::default(),
     };
     let memo = format!("pouw:mint:{}:{}", hex::encode(recipient), amount).into_bytes();
     let tx = Transaction::new_token_mint(
@@ -192,6 +194,7 @@ fn system_injection_rejects_pouw_mint_with_mismatched_recipient() {
         token_id: crate::contracts::utils::generate_lib_token_id(),
         to: [8u8; 32],
         amount,
+        approvals: Default::default(),
     };
     let memo = format!("pouw:mint:{}:{}", hex::encode(recipient), amount).into_bytes();
     let tx = Transaction::new_token_mint(
@@ -218,6 +221,7 @@ fn system_injection_rejects_token_mint_from_ipc_external() {
         token_id: crate::contracts::utils::generate_lib_token_id(),
         to: [7u8; 32],
         amount: 100,
+        approvals: Default::default(),
     };
     let tx = Transaction::new_token_mint(
         mint_data,
@@ -472,6 +476,7 @@ fn system_injection_rejects_treasury_welcome_bonus_with_bad_memo() {
         token_id: crate::contracts::utils::generate_lib_token_id(),
         to: wallet_id,
         amount: lib_types::sov::atoms(5_000),
+        approvals: Default::default(),
     };
     let tx = Transaction::new_token_mint(
         mint_data,

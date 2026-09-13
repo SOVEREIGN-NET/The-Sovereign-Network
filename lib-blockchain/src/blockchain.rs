@@ -2565,10 +2565,12 @@ impl Blockchain {
         let empty_sig = tx.signature.signature.is_empty();
         let label = originator.as_str();
 
-        if tx.transaction_type == TransactionType::TokenMint {
+        if tx.transaction_type == TransactionType::TokenMint
+            || tx.transaction_type == TransactionType::SystemMint
+        {
             if tx.token_mint_data().is_none() {
                 return Err(anyhow::anyhow!(
-                    "rejecting TokenMint from originator '{:?}' with missing mint payload",
+                    "rejecting mint from originator '{:?}' with missing mint payload",
                     originator
                 ));
             }
@@ -2576,7 +2578,7 @@ impl Blockchain {
                 SystemOriginator::PouwMint | SystemOriginator::PouwReward => {
                     if !empty_sig {
                         return Err(anyhow::anyhow!(
-                            "rejecting signed PoUW TokenMint from originator '{}'",
+                            "rejecting signed PoUW mint from originator '{}'",
                             label
                         ));
                     }
@@ -2589,16 +2591,16 @@ impl Blockchain {
                 SystemOriginator::Other(unknown) => {
                     tracing::warn!(
                         originator = unknown,
-                        "rejecting TokenMint from untyped Other originator"
+                        "rejecting mint from untyped Other originator"
                     );
                     return Err(anyhow::anyhow!(
-                        "rejecting TokenMint from untrusted originator '{}'",
+                        "rejecting mint from untrusted originator '{}'",
                         unknown
                     ));
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
-                        "rejecting TokenMint from untrusted originator '{:?}'",
+                        "rejecting mint from untrusted originator '{:?}'",
                         originator
                     ));
                 }
@@ -6932,6 +6934,7 @@ impl Blockchain {
             token_id: crate::contracts::utils::generate_lib_token_id(),
             to: recipient_key_id,
             amount,
+            approvals: Default::default(),
         };
 
         let signature = Signature {
@@ -6950,7 +6953,7 @@ impl Blockchain {
 
         let memo = format!("pouw:mint:{}:{}", hex::encode(recipient_key_id), amount).into_bytes();
 
-        let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
+        let mint_tx = Transaction::new_system_mint(0x03, mint_data, signature, memo);
         let tx_hash = mint_tx.hash();
         self.add_system_transaction(mint_tx, SystemOriginator::PouwMint)?;
         Ok(tx_hash)

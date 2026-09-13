@@ -121,6 +121,44 @@ fn test_full_dao_phase_is_terminal() {
     assert_eq!(bc.governance_phase, GovernancePhase::FullDao);
 }
 
+// ── phase-aware kernel governance vote ────────────────────────────────────────
+
+#[test]
+fn test_kernel_governance_vote_bootstrap_requires_council_threshold() {
+    use lib_blockchain::transaction::threshold_approval::{ApprovalDomain, ThresholdApprovalSet};
+
+    let mut bc = Blockchain::new().expect("genesis");
+    bc.ensure_council_bootstrap(&two_member_council()); // threshold 2
+
+    let empty = ThresholdApprovalSet {
+        domain: ApprovalDomain::BootstrapCouncil,
+        approvals: vec![],
+    };
+    let preimage = [7u8; 32];
+    // No approvals → below M-of-N threshold → rejected.
+    assert!(bc
+        .validate_kernel_governance_vote(&empty, &preimage, None)
+        .is_err());
+}
+
+#[test]
+fn test_kernel_governance_vote_non_bootstrap_requires_proposal() {
+    use lib_blockchain::transaction::threshold_approval::{ApprovalDomain, ThresholdApprovalSet};
+
+    let mut bc = Blockchain::new().expect("genesis");
+    bc.governance_phase = GovernancePhase::FullDao;
+
+    let empty = ThresholdApprovalSet {
+        domain: ApprovalDomain::BootstrapCouncil,
+        approvals: vec![],
+    };
+    let preimage = [7u8; 32];
+    // FullDao must supply a passed DAO proposal, not an approval set.
+    assert!(bc
+        .validate_kernel_governance_vote(&empty, &preimage, None)
+        .is_err());
+}
+
 // ── persistence round-trip ───────────────────────────────────────────────────
 
 #[test]

@@ -1176,6 +1176,7 @@ impl BlockExecutor {
             TransactionType::TokenTransfer => {}
             TransactionType::RewardClaim => {}
             TransactionType::TokenMint => {}
+            TransactionType::SystemMint => {}
             TransactionType::TokenCreation => {}
             TransactionType::AssetLaunch => {}
             TransactionType::AssetModuleUpgrade => {}
@@ -3600,6 +3601,33 @@ impl BlockExecutor {
                     }
                     Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
                 }
+            }
+            TransactionType::SystemMint => {
+                let mint_data = tx.token_mint_data().ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "SystemMint requires token_mint_data field".to_string(),
+                    )
+                })?;
+
+                if mint_data.amount == 0 {
+                    return Err(TxApplyError::InvalidType(
+                        "SystemMint amount must be greater than 0".to_string(),
+                    ));
+                }
+
+                let token = if Self::is_canonical_sov_token(&mint_data.token_id) {
+                    Self::canonical_sov_token_id()
+                } else {
+                    TokenId::new(mint_data.token_id)
+                };
+                let to = Address::new(mint_data.to);
+                let amount = mint_data.amount;
+
+                tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
+                if token == Self::canonical_sov_token_id() {
+                    self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
+                }
+                Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
             }
             TransactionType::WalletRegistration => {
                 let wallet_data = tx.wallet_data().ok_or_else(|| {
