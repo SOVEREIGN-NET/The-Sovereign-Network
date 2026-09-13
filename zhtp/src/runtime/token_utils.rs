@@ -16,9 +16,10 @@ pub async fn build_sov_mint_tx(
         token_id: lib_blockchain::contracts::utils::generate_lib_token_id(),
         to: *recipient_wallet_id,
         amount,
+        approvals: Default::default(),
     };
 
-    let mut tx = Transaction::new_token_mint_with_chain_id(
+    let mut tx = Transaction::new_system_mint(
         chain_id,
         token_mint_data,
         Signature {

@@ -2226,9 +2226,10 @@ fn build_signed_sov_mint_tx(
         token_id: lib_blockchain::contracts::utils::generate_lib_token_id(),
         to: *recipient_wallet_id,
         amount: amount as u128,
+        approvals: Default::default(),
     };
 
-    let mut tx = lib_blockchain::Transaction::new_token_mint_with_chain_id(
+    let mut tx = lib_blockchain::Transaction::new_system_mint(
         chain_id,
         token_mint_data,
         lib_blockchain::integration::crypto_integration::Signature {

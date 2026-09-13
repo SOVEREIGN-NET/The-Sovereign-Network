@@ -186,7 +186,6 @@ pub enum TransactionType {
     // or from the observer node DID itself (depending on tx type — see validation).
     // V1 does NOT require validator-style staking.
     // =========================================================================
-
     /// Register a new observer node on-chain.
     ///
     /// Creates an `ObserverAdmissionRecord` in `Pending` status.
@@ -228,7 +227,6 @@ pub enum TransactionType {
     // =========================================================================
     // Sovereign Asset (SA-3..SA-7)
     // =========================================================================
-
     /// Launch a new Sovereign Asset (replaces TokenCreation for post-reset testnet).
     AssetLaunch = 62,
     /// Add or reconfigure an optional asset module (curve, rewards, governance).
@@ -251,6 +249,14 @@ pub enum TransactionType {
     /// Executor validates per-event caps (welcome once, daily check-in/session,
     /// weekly partner limits) before debiting the creator allocation.
     RewardClaim = 67,
+
+    /// Node-emitted system mint (welcome bonus, PoUW reward, UBI distribution).
+    ///
+    /// Deterministic consensus output, NOT user-submittable: it is produced by
+    /// trusted node code (`add_system_transaction` with a treasury/kernel
+    /// `SystemOriginator`) and carries no council approval set. Any TokenMint
+    /// that a user submits must instead carry a council `ThresholdApprovalSet`.
+    SystemMint = 71,
 }
 
 impl TransactionType {
@@ -405,18 +411,14 @@ impl TransactionType {
             TransactionType::ProcessPayroll => {
                 "Process payroll disbursement for active employment contract"
             }
-            TransactionType::DaoStake => {
-                "Stake SOV tokens to a sector DAO wallet with time-lock"
-            }
+            TransactionType::DaoStake => "Stake SOV tokens to a sector DAO wallet with time-lock",
             TransactionType::DaoUnstake => {
                 "Unstake locked SOV from a sector DAO wallet after lock expires"
             }
             TransactionType::DomainRegistration => {
                 "Register a new Web4 domain (authoritative on-chain ownership)"
             }
-            TransactionType::DomainUpdate => {
-                "Update Web4 domain manifest (new deployment)"
-            }
+            TransactionType::DomainUpdate => "Update Web4 domain manifest (new deployment)",
             TransactionType::GatewayRegistration => "Gateway node registration",
             TransactionType::GatewayUpdate => "Gateway node information update",
             TransactionType::GatewayUnregister => "Gateway node unregistration",
@@ -430,21 +432,13 @@ impl TransactionType {
             TransactionType::UpdateObserverMetadata => {
                 "Update mutable metadata on an existing observer admission record"
             }
-            TransactionType::SuspendObserver => {
-                "Suspend an Active observer (Active → Suspended)"
-            }
-            TransactionType::RevokeObserver => {
-                "Revoke observer admission permanently"
-            }
+            TransactionType::SuspendObserver => "Suspend an Active observer (Active → Suspended)",
+            TransactionType::RevokeObserver => "Revoke observer admission permanently",
             TransactionType::ReauthorizeObserver => {
                 "Reauthorize a Suspended observer (Suspended → Active)"
             }
-            TransactionType::RegisterCredential => {
-                "Register username + password credentials"
-            }
-            TransactionType::UpdateCredentialPassword => {
-                "Update password for existing credentials"
-            }
+            TransactionType::RegisterCredential => "Register username + password credentials",
+            TransactionType::UpdateCredentialPassword => "Update password for existing credentials",
             TransactionType::AssetLaunch => "Launch a new Sovereign Asset",
             TransactionType::AssetModuleUpgrade => "Upgrade Sovereign Asset module",
             TransactionType::AssetManifestUpdate => "Update Sovereign Asset manifest",
@@ -452,16 +446,15 @@ impl TransactionType {
             TransactionType::AssetRewardsDelegateRotate => {
                 "Rotate Sovereign Asset rewards spend delegate"
             }
-            TransactionType::AssetRewardsPolicyUpdate => {
-                "Update Sovereign Asset rewards policy"
-            }
-            TransactionType::AssetBurnBpsUpdate => {
-                "Update Sovereign Asset per-transfer burn rate"
-            }
+            TransactionType::AssetRewardsPolicyUpdate => "Update Sovereign Asset rewards policy",
+            TransactionType::AssetBurnBpsUpdate => "Update Sovereign Asset per-transfer burn rate",
             TransactionType::AssetAuthorityTransferCancel => {
                 "Cancel queued Sovereign Asset authority transfer"
             }
             TransactionType::RewardClaim => "BUBL reward claim (chain-enforced eligibility)",
+            TransactionType::SystemMint => {
+                "Node-emitted system mint (welcome bonus, PoUW reward, UBI distribution)"
+            }
         }
     }
 
@@ -539,6 +532,7 @@ impl TransactionType {
             TransactionType::AssetBurnBpsUpdate => "asset_burn_bps_update",
             TransactionType::AssetAuthorityTransferCancel => "asset_authority_transfer_cancel",
             TransactionType::RewardClaim => "reward_claim",
+            TransactionType::SystemMint => "system_mint",
         }
     }
 
@@ -614,8 +608,11 @@ impl TransactionType {
             "asset_rewards_delegate_rotate" => Some(TransactionType::AssetRewardsDelegateRotate),
             "asset_rewards_policy_update" => Some(TransactionType::AssetRewardsPolicyUpdate),
             "asset_burn_bps_update" => Some(TransactionType::AssetBurnBpsUpdate),
-            "asset_authority_transfer_cancel" => Some(TransactionType::AssetAuthorityTransferCancel),
+            "asset_authority_transfer_cancel" => {
+                Some(TransactionType::AssetAuthorityTransferCancel)
+            }
             "reward_claim" => Some(TransactionType::RewardClaim),
+            "system_mint" => Some(TransactionType::SystemMint),
             _ => None,
         }
     }

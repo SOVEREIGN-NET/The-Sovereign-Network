@@ -8,16 +8,24 @@ impl Blockchain {
     /// existing council is replaced so that tests and runtime reconfiguration
     /// both behave predictably even when genesis has pre-loaded members.
     pub fn ensure_council_bootstrap(&mut self, config: &crate::dao::CouncilBootstrapConfig) {
-        let effective_threshold = if config.threshold == 0 { 4 } else { config.threshold };
+        let effective_threshold = if config.threshold == 0 {
+            4
+        } else {
+            config.threshold
+        };
 
         // Check if current council already matches the desired config exactly.
         let matches = self.council_threshold == effective_threshold
             && self.council_members.len() == config.members.len()
-            && self.council_members.iter().zip(config.members.iter()).all(|(m, e)| {
-                m.identity_id == e.identity_id
-                    && m.wallet_id == e.wallet_id
-                    && m.stake_amount == e.stake_amount
-            });
+            && self
+                .council_members
+                .iter()
+                .zip(config.members.iter())
+                .all(|(m, e)| {
+                    m.identity_id == e.identity_id
+                        && m.wallet_id == e.wallet_id
+                        && m.stake_amount == e.stake_amount
+                });
 
         if matches {
             return;
@@ -347,7 +355,8 @@ impl Blockchain {
         tx: &Transaction,
         block_height: u64,
     ) -> Option<DaoRegistryIndexEntry> {
-        let payload = crate::transaction::asset_tx::AssetLaunchPayloadV1::decode_memo(&tx.memo).ok()?;
+        let payload =
+            crate::transaction::asset_tx::AssetLaunchPayloadV1::decode_memo(&tx.memo).ok()?;
         if payload.manifest_cid == [0u8; 32] || payload.manifest_hash == [0u8; 32] {
             return None;
         }
@@ -461,6 +470,56 @@ impl Blockchain {
         Ok(yes_pct >= approval_pct as u64)
     }
 
+    /// Phase-aware governance gate for kernel privileged ops (mint/lock/pause).
+    ///
+    /// - Bootstrap: `council_threshold` M-of-N via `ThresholdApprovalSet`
+    ///   (`validate_threshold_approvals` over the bootstrap council).
+    /// - Hybrid / FullDao: DAO proposal quorum (`has_proposal_passed_with_quorum`),
+    ///   keyed by `proposal_id`.
+    ///
+    /// Returns `Ok(())` when the governance vote passes for the current phase.
+    pub fn validate_kernel_governance_vote(
+        &self,
+        approvals: &crate::transaction::ThresholdApprovalSet,
+        preimage: &[u8; 32],
+        proposal_id: Option<&Hash>,
+    ) -> Result<(), anyhow::Error> {
+        use crate::transaction::threshold_approval::validate_threshold_approvals;
+
+        match self.governance_phase {
+            crate::dao::GovernancePhase::Bootstrap => {
+                let threshold = self.council_threshold as usize;
+                validate_threshold_approvals(
+                    approvals,
+                    preimage,
+                    |pk_bytes| {
+                        self.did_by_public_key(pk_bytes)
+                            .map(|did| self.is_council_member(&did))
+                            .unwrap_or(false)
+                    },
+                    threshold,
+                )
+                .map_err(|e| anyhow::anyhow!("Bootstrap council governance vote not met: {e}"))
+            }
+            _ => {
+                let proposal_id = proposal_id.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{:?} governance requires a passed DAO proposal (community vote)",
+                        self.governance_phase
+                    )
+                })?;
+                if self.has_proposal_passed_with_quorum(proposal_id, 51, 51)? {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "DAO governance proposal {:?} has not met quorum",
+                        proposal_id
+                    ))
+                }
+            }
+        }
+    }
+
     pub fn set_dao_treasury_wallet(&mut self, wallet_id: String) -> Result<()> {
         if !self.wallet_registry.contains_key(&wallet_id) {
             return Err(anyhow::anyhow!(
@@ -503,8 +562,15 @@ impl Blockchain {
             }
             _ => {
                 let treasury_wallet = self.get_dao_treasury_wallet()?;
-                let pk_bytes: [u8; 2592] = treasury_wallet.public_key.as_slice().try_into()
-                    .map_err(|_| anyhow::anyhow!("Treasury wallet public key must be 2592 bytes (Dilithium5)"))?;
+                let pk_bytes: [u8; 2592] = treasury_wallet
+                    .public_key
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "Treasury wallet public key must be 2592 bytes (Dilithium5)"
+                        )
+                    })?;
                 crate::integration::crypto_integration::PublicKey::new(pk_bytes)
             }
         };
@@ -524,8 +590,14 @@ impl Blockchain {
 
     pub fn get_dao_treasury_utxos(&self) -> Result<Vec<(Hash, TransactionOutput)>> {
         let treasury_wallet = self.get_dao_treasury_wallet()?;
-        let pk_bytes: [u8; 2592] = treasury_wallet.public_key.as_slice().try_into()
-            .map_err(|_| anyhow::anyhow!("Treasury wallet public key must be 2592 bytes (Dilithium5)"))?;
+        let pk_bytes: [u8; 2592] =
+            treasury_wallet
+                .public_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| {
+                    anyhow::anyhow!("Treasury wallet public key must be 2592 bytes (Dilithium5)")
+                })?;
         let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(pk_bytes);
 
         let mut utxos = Vec::new();
@@ -548,10 +620,14 @@ impl Blockchain {
             commitment: crate::types::hash::blake3_hash(&total_fees.to_le_bytes()),
             note: Hash::default(),
             recipient: crate::integration::crypto_integration::PublicKey::new(
-                treasury_wallet.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                treasury_wallet
+                    .public_key
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or([0u8; 2592]),
             ),
-                        merkle_leaf: Hash::default(),
-};
+            merkle_leaf: Hash::default(),
+        };
 
         Ok(Transaction::new(
             vec![],
@@ -599,7 +675,10 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Proposal already executed"));
         }
         let executions = self.get_dao_executions();
-        if executions.iter().any(|exec| exec.proposal_id == proposal_id) {
+        if executions
+            .iter()
+            .any(|exec| exec.proposal_id == proposal_id)
+        {
             return Err(anyhow::anyhow!("Proposal already executed"));
         }
         if self.pending_transactions.iter().any(|tx| {
@@ -732,9 +811,11 @@ impl Blockchain {
         let executor_pubkey = self
             .identity_registry
             .get(&executor_identity)
-            .map(|id| crate::integration::crypto_integration::PublicKey::new(
-                id.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-            ))
+            .map(|id| {
+                crate::integration::crypto_integration::PublicKey::new(
+                    id.public_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                )
+            })
             .unwrap_or_else(|| crate::integration::crypto_integration::PublicKey::new([0u8; 2592]));
         let sig_bytes = crate::types::hash::blake3_hash(
             &[
@@ -1298,7 +1379,10 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Signer is not a council member"));
         }
 
-        let vetoes = self.pending_vetoes.entry(proposal_id.as_array()).or_default();
+        let vetoes = self
+            .pending_vetoes
+            .entry(proposal_id.as_array())
+            .or_default();
 
         if vetoes.iter().any(|(did, _)| did == &signer_did) {
             return Ok(());
@@ -1322,7 +1406,10 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Signer is not a council member"));
         }
 
-        let cosigns = self.pending_cosigns.entry(proposal_id.as_array()).or_default();
+        let cosigns = self
+            .pending_cosigns
+            .entry(proposal_id.as_array())
+            .or_default();
 
         if cosigns.iter().any(|(did, _)| did == &signer_did) {
             return Ok(());

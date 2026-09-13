@@ -10,18 +10,38 @@ use super::interface::{
 use super::TreasuryKernel;
 use crate::contracts::tokens::core::TokenContract;
 use crate::integration::crypto_integration::PublicKey;
+use crate::transaction::threshold_approval::{validate_threshold_approvals, ThresholdApprovalSet};
 
 impl TreasuryKernel {
-    /// Verify that the caller is authorized (kernel address or governance authority)
+    /// Verify that the caller is the kernel itself (internal self-reference).
+    ///
+    /// Governance authorization is NOT a single key — privileged operations
+    /// (mint/lock/pause) are quorum-gated via [`Self::verify_governance_vote`].
     fn verify_caller(&self, caller: &PublicKey) -> Result<(), KernelOpError> {
         if self.paused {
             return Err(KernelOpError::Paused);
         }
-        if caller == self.kernel_address() || caller == self.governance_authority() {
+        if caller == self.kernel_address() {
             Ok(())
         } else {
             Err(KernelOpError::Unauthorized)
         }
+    }
+
+    /// Verify a governance vote (M-of-N `ThresholdApprovalSet`) over `preimage`.
+    ///
+    /// `is_member` selects the authoritative signer set for the current phase
+    /// (Bootstrap council, DAO council, …) and `threshold` is the minimum
+    /// number of valid member signatures required. No single key may authorize.
+    pub fn verify_governance_vote(
+        &self,
+        approvals: &ThresholdApprovalSet,
+        preimage: &[u8; 32],
+        is_member: impl Fn(&[u8]) -> bool,
+        threshold: usize,
+    ) -> Result<(), KernelOpError> {
+        validate_threshold_approvals(approvals, preimage, is_member, threshold)
+            .map_err(|_| KernelOpError::Unauthorized)
     }
 
     /// Credit tokens to an account
@@ -119,22 +139,34 @@ impl TreasuryKernel {
             .map_err(|_| KernelOpError::InsufficientLockedBalance)
     }
 
-    /// Pause all mutation operations (emergency governance action)
-    /// Only governance authority can pause.
-    pub fn pause(&mut self, caller: &PublicKey) -> Result<(), KernelOpError> {
-        if caller != self.governance_authority() {
-            return Err(KernelOpError::Unauthorized);
-        }
+    /// Pause all mutation operations (emergency governance action).
+    ///
+    /// Requires a quorum-gated governance vote (M-of-N `ThresholdApprovalSet`);
+    /// a single key cannot pause.
+    pub fn pause(
+        &mut self,
+        approvals: &ThresholdApprovalSet,
+        preimage: &[u8; 32],
+        is_member: impl Fn(&[u8]) -> bool,
+        threshold: usize,
+    ) -> Result<(), KernelOpError> {
+        self.verify_governance_vote(approvals, preimage, is_member, threshold)?;
         self.paused = true;
         Ok(())
     }
 
-    /// Unpause mutation operations
-    /// Only governance authority can unpause.
-    pub fn unpause(&mut self, caller: &PublicKey) -> Result<(), KernelOpError> {
-        if caller != self.governance_authority() {
-            return Err(KernelOpError::Unauthorized);
-        }
+    /// Unpause mutation operations.
+    ///
+    /// Requires a quorum-gated governance vote (M-of-N `ThresholdApprovalSet`);
+    /// a single key cannot unpause.
+    pub fn unpause(
+        &mut self,
+        approvals: &ThresholdApprovalSet,
+        preimage: &[u8; 32],
+        is_member: impl Fn(&[u8]) -> bool,
+        threshold: usize,
+    ) -> Result<(), KernelOpError> {
+        self.verify_governance_vote(approvals, preimage, is_member, threshold)?;
         self.paused = false;
         Ok(())
     }
@@ -170,10 +202,18 @@ impl TreasuryKernel {
 
     /// Register a mint authorization from a passed DAO proposal.
     /// The authorization becomes executable after the delay period elapses.
+    ///
+    /// Requires a quorum-gated governance vote over the authorization payload.
     pub fn register_mint_authorization(
         &mut self,
         auth: MintAuthorization,
+        approvals: &ThresholdApprovalSet,
+        preimage: &[u8; 32],
+        is_member: impl Fn(&[u8]) -> bool,
+        threshold: usize,
     ) -> Result<(), KernelOpError> {
+        self.verify_governance_vote(approvals, preimage, is_member, threshold)?;
+
         if self.consumed_authorizations.contains(&auth.proposal_id) {
             return Err(KernelOpError::AuthorizationConsumed);
         }
@@ -319,15 +359,16 @@ impl TreasuryKernel {
         self.mint_delay_epochs
     }
 
-    /// Set mint delay (governance authority only)
+    /// Set mint delay (governance-gated, quorum vote required).
     pub fn set_mint_delay_epochs(
         &mut self,
-        caller: &PublicKey,
+        approvals: &ThresholdApprovalSet,
+        preimage: &[u8; 32],
+        is_member: impl Fn(&[u8]) -> bool,
+        threshold: usize,
         delay: u64,
     ) -> Result<(), KernelOpError> {
-        if caller != self.governance_authority() {
-            return Err(KernelOpError::Unauthorized);
-        }
+        self.verify_governance_vote(approvals, preimage, is_member, threshold)?;
         self.mint_delay_epochs = delay;
         Ok(())
     }
@@ -469,27 +510,26 @@ mod tests {
     #[test]
     fn test_credit_when_paused_fails() {
         let (mut kernel, mut token) = setup();
-        let gov = test_governance();
         let caller = test_kernel_address();
         let recipient = test_recipient();
+        let (vote, preimage) = gov_vote();
 
-        kernel.pause(&gov).unwrap();
+        kernel.pause(&vote, &preimage, |_| true, 1).unwrap();
 
         let result = kernel.credit(&mut token, &caller, &recipient, 1000, CreditReason::Mint);
         assert_eq!(result, Err(KernelOpError::Paused));
     }
 
     #[test]
-    fn test_credit_governance_authorized() {
+    fn test_credit_single_governance_key_rejected() {
         let (mut kernel, mut token) = setup();
         let gov = test_governance();
         let recipient = test_recipient();
 
-        // Governance can also invoke kernel ops (governance IS an authority)
-        // But for Mint it uses mint_kernel_only which checks kernel_address, not governance
-        // So governance can only do non-mint credits
+        // A single governance key is no longer authorized to invoke kernel ops:
+        // governance is quorum-gated (ThresholdApprovalSet), not a lone signer.
         let result = kernel.credit(&mut token, &gov, &recipient, 500, CreditReason::Transfer);
-        assert!(result.is_ok());
+        assert_eq!(result, Err(KernelOpError::Unauthorized));
     }
 
     // ─── Debit tests ────────────────────────────────────────────────────
@@ -641,34 +681,48 @@ mod tests {
     // ─── Pause/Unpause tests ────────────────────────────────────────────
 
     #[test]
-    fn test_pause_unpause_governance_only() {
+    fn test_pause_unpause_requires_governance_vote() {
         let (mut kernel, _) = setup();
-        let gov = test_governance();
-        let non_gov = test_kernel_address();
+        let (vote, preimage) = gov_vote();
 
-        // Non-governance cannot pause
-        assert_eq!(kernel.pause(&non_gov), Err(KernelOpError::Unauthorized));
-
-        // Governance can pause
-        assert!(kernel.pause(&gov).is_ok());
+        // A valid 1-of-1 governance vote can pause.
+        assert!(kernel.pause(&vote, &preimage, |_| true, 1).is_ok());
         assert!(kernel.paused);
 
-        // Non-governance cannot unpause
-        assert_eq!(kernel.unpause(&non_gov), Err(KernelOpError::Unauthorized));
+        // Unpause with a vote signed over a *different* preimage (wrong message)
+        // is rejected: the signature does not cover the intended action.
+        let wrong_preimage = [9u8; 32];
+        let wrong_vote = gov_vote_for(&wrong_preimage);
+        assert_eq!(
+            kernel.unpause(&wrong_vote, &preimage, |_| true, 1),
+            Err(KernelOpError::Unauthorized)
+        );
+        assert!(kernel.paused);
 
-        // Governance can unpause
-        assert!(kernel.unpause(&gov).is_ok());
+        // A valid vote over the correct preimage unpauses.
+        let (vote2, preimage2) = gov_vote();
+        assert!(kernel.unpause(&vote2, &preimage2, |_| true, 1).is_ok());
         assert!(!kernel.paused);
+
+        // A vote that fails membership/threshold is rejected (empty set).
+        let empty = ThresholdApprovalSet {
+            domain: crate::transaction::threshold_approval::ApprovalDomain::BootstrapCouncil,
+            approvals: vec![],
+        };
+        assert_eq!(
+            kernel.pause(&empty, &preimage2, |_| true, 1),
+            Err(KernelOpError::Unauthorized)
+        );
     }
 
     #[test]
     fn test_operations_blocked_when_paused() {
         let (mut kernel, mut token) = setup();
-        let gov = test_governance();
         let caller = test_kernel_address();
         let user = test_user();
+        let (vote, preimage) = gov_vote();
 
-        kernel.pause(&gov).unwrap();
+        kernel.pause(&vote, &preimage, |_| true, 1).unwrap();
 
         // All ops should fail with Paused
         assert_eq!(
@@ -689,7 +743,8 @@ mod tests {
         );
 
         // Unpause and verify ops work again
-        kernel.unpause(&gov).unwrap();
+        let (vote2, preimage2) = gov_vote();
+        kernel.unpause(&vote2, &preimage2, |_| true, 1).unwrap();
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
             .unwrap();
@@ -769,11 +824,35 @@ mod tests {
         }
     }
 
+    /// Build a single-signer governance vote (1-of-1 `ThresholdApprovalSet`)
+    /// with a real Dilithium signature over `preimage`.
+    fn gov_vote_for(preimage: &[u8; 32]) -> ThresholdApprovalSet {
+        use crate::transaction::threshold_approval::{Approval, ApprovalDomain};
+        let kp = lib_crypto::KeyPair::generate().expect("keygen");
+        let sig = kp.sign(preimage).expect("sign");
+        ThresholdApprovalSet {
+            domain: ApprovalDomain::BootstrapCouncil,
+            approvals: vec![Approval {
+                public_key: kp.public_key,
+                algorithm: sig.algorithm,
+                signature: sig.signature,
+            }],
+        }
+    }
+
+    /// A governance vote over a fixed canonical preimage.
+    fn gov_vote() -> (ThresholdApprovalSet, [u8; 32]) {
+        let preimage = [7u8; 32];
+        let vote = gov_vote_for(&preimage);
+        (vote, preimage)
+    }
+
     #[test]
     fn test_register_mint_authorization_succeeds() {
         let (mut kernel, _) = setup();
         let auth = test_mint_auth(0);
-        let result = kernel.register_mint_authorization(auth);
+        let (vote, preimage) = gov_vote();
+        let result = kernel.register_mint_authorization(auth, &vote, &preimage, |_| true, 1);
         assert!(result.is_ok());
         assert_eq!(kernel.pending_mint_authorizations().len(), 1);
     }
@@ -782,14 +861,17 @@ mod tests {
     fn test_register_duplicate_authorization_rejected() {
         let (mut kernel, _) = setup();
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth.clone()).unwrap();
+        let (vote, preimage) = gov_vote();
+        kernel
+            .register_mint_authorization(auth.clone(), &vote, &preimage, |_| true, 1)
+            .unwrap();
 
         // Simulate consumed by inserting into consumed set
         kernel.consumed_authorizations.insert(auth.proposal_id);
 
         // Re-register with same proposal_id should fail
         let auth2 = test_mint_auth(0);
-        let result = kernel.register_mint_authorization(auth2);
+        let result = kernel.register_mint_authorization(auth2, &vote, &preimage, |_| true, 1);
         assert_eq!(result, Err(KernelOpError::AuthorizationConsumed));
     }
 
@@ -797,7 +879,10 @@ mod tests {
     fn test_execute_authorized_mint_after_delay_succeeds() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0); // executable_after_epoch = 1
-        kernel.register_mint_authorization(auth).unwrap();
+        let (vote, preimage) = gov_vote();
+        kernel
+            .register_mint_authorization(auth, &vote, &preimage, |_| true, 1)
+            .unwrap();
 
         // Execute at epoch 1 (delay elapsed)
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
@@ -817,7 +902,10 @@ mod tests {
     fn test_execute_authorized_mint_before_delay_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0); // executable_after_epoch = 1
-        kernel.register_mint_authorization(auth).unwrap();
+        let (vote, preimage) = gov_vote();
+        kernel
+            .register_mint_authorization(auth, &vote, &preimage, |_| true, 1)
+            .unwrap();
 
         // Execute at epoch 0 (delay NOT elapsed)
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 0);
@@ -828,10 +916,13 @@ mod tests {
     fn test_execute_authorized_mint_when_paused_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth).unwrap();
+        let (vote, preimage) = gov_vote();
+        kernel
+            .register_mint_authorization(auth, &vote, &preimage, |_| true, 1)
+            .unwrap();
 
-        let gov = test_governance();
-        kernel.pause(&gov).unwrap();
+        let (vote2, preimage2) = gov_vote();
+        kernel.pause(&vote2, &preimage2, |_| true, 1).unwrap();
 
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
         assert_eq!(result, Err(KernelOpError::Paused));
@@ -848,7 +939,10 @@ mod tests {
     fn test_execute_authorized_mint_consumed_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth).unwrap();
+        let (vote, preimage) = gov_vote();
+        kernel
+            .register_mint_authorization(auth, &vote, &preimage, |_| true, 1)
+            .unwrap();
 
         // Execute once — succeeds
         kernel
@@ -871,7 +965,10 @@ mod tests {
 
         // Now register authorization for 500 (exceeds remaining 100)
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth).unwrap();
+        let (vote, preimage) = gov_vote();
+        kernel
+            .register_mint_authorization(auth, &vote, &preimage, |_| true, 1)
+            .unwrap();
 
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
         assert_eq!(result, Err(KernelOpError::ExceedsMaxSupply));
@@ -941,18 +1038,21 @@ mod tests {
     }
 
     #[test]
-    fn test_set_mint_delay_governance_only() {
+    fn test_set_mint_delay_governance_vote_required() {
         let (mut kernel, _) = setup();
-        let gov = test_governance();
-        let user = test_user();
+        let (vote, preimage) = gov_vote();
 
-        // Governance can set delay
-        let result = kernel.set_mint_delay_epochs(&gov, 3);
+        // A valid governance vote can set the delay.
+        let result = kernel.set_mint_delay_epochs(&vote, &preimage, |_| true, 1, 3);
         assert!(result.is_ok());
         assert_eq!(kernel.mint_delay_epochs(), 3);
 
-        // Non-governance cannot
-        let result = kernel.set_mint_delay_epochs(&user, 5);
+        // An empty (non-quorum) vote is rejected.
+        let empty = ThresholdApprovalSet {
+            domain: crate::transaction::threshold_approval::ApprovalDomain::BootstrapCouncil,
+            approvals: vec![],
+        };
+        let result = kernel.set_mint_delay_epochs(&empty, &preimage, |_| true, 1, 5);
         assert_eq!(result, Err(KernelOpError::Unauthorized));
         assert_eq!(kernel.mint_delay_epochs(), 3); // unchanged
     }
@@ -966,6 +1066,7 @@ mod tests {
     #[test]
     fn test_register_mint_authorization_enforces_delay() {
         let (mut kernel, _) = setup();
+        let (vote, preimage) = gov_vote();
 
         // Default delay is 1 epoch
         assert_eq!(kernel.mint_delay_epochs(), 1);
@@ -974,7 +1075,7 @@ mod tests {
         let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 10; // Should be at least 11
 
-        let result = kernel.register_mint_authorization(auth);
+        let result = kernel.register_mint_authorization(auth, &vote, &preimage, |_| true, 1);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
 
         // Verify authorization was not registered
@@ -984,6 +1085,7 @@ mod tests {
     #[test]
     fn test_register_mint_authorization_respects_delay() {
         let (mut kernel, _) = setup();
+        let (vote, preimage) = gov_vote();
 
         // Default delay is 1 epoch
         assert_eq!(kernel.mint_delay_epochs(), 1);
@@ -992,7 +1094,7 @@ mod tests {
         let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 11; // authorized_at_epoch + delay
 
-        let result = kernel.register_mint_authorization(auth);
+        let result = kernel.register_mint_authorization(auth, &vote, &preimage, |_| true, 1);
         assert!(result.is_ok());
 
         // Verify authorization was registered
@@ -1038,37 +1140,39 @@ mod tests {
     #[test]
     fn test_mint_delay_configuration_affects_registration() {
         let (mut kernel, _) = setup();
-        let gov = test_governance();
+        let (vote, preimage) = gov_vote();
 
         // Set delay to 3 epochs
-        kernel.set_mint_delay_epochs(&gov, 3).unwrap();
+        kernel
+            .set_mint_delay_epochs(&vote, &preimage, |_| true, 1, 3)
+            .unwrap();
         assert_eq!(kernel.mint_delay_epochs(), 3);
 
         // Try to register with 1-epoch delay (should fail)
         let mut auth1 = test_mint_auth(10); // authorized_at_epoch = 10
         auth1.executable_after_epoch = 11; // Only 1 epoch delay
-        let result = kernel.register_mint_authorization(auth1);
+        let result = kernel.register_mint_authorization(auth1, &vote, &preimage, |_| true, 1);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
 
         // Try to register with 2-epoch delay (should fail)
         let mut auth2 = test_mint_auth(10);
         auth2.proposal_id = [2u8; 32]; // Different proposal ID
         auth2.executable_after_epoch = 12; // Only 2 epoch delay
-        let result = kernel.register_mint_authorization(auth2);
+        let result = kernel.register_mint_authorization(auth2, &vote, &preimage, |_| true, 1);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
 
         // Register with 3-epoch delay (should succeed)
         let mut auth3 = test_mint_auth(10);
         auth3.proposal_id = [3u8; 32]; // Different proposal ID
         auth3.executable_after_epoch = 13; // Exactly 3 epoch delay
-        let result = kernel.register_mint_authorization(auth3);
+        let result = kernel.register_mint_authorization(auth3, &vote, &preimage, |_| true, 1);
         assert!(result.is_ok());
 
         // Register with > 3-epoch delay (should succeed)
         let mut auth4 = test_mint_auth(10);
         auth4.proposal_id = [4u8; 32]; // Different proposal ID
         auth4.executable_after_epoch = 15; // 5 epoch delay (more than required)
-        let result = kernel.register_mint_authorization(auth4);
+        let result = kernel.register_mint_authorization(auth4, &vote, &preimage, |_| true, 1);
         assert!(result.is_ok());
 
         // Should have 2 authorizations registered
@@ -1078,10 +1182,12 @@ mod tests {
     #[test]
     fn test_burn_delay_configuration_affects_registration() {
         let (mut kernel, _) = setup();
-        let gov = test_governance();
+        let (vote, preimage) = gov_vote();
 
         // Set delay to 2 epochs
-        kernel.set_mint_delay_epochs(&gov, 2).unwrap();
+        kernel
+            .set_mint_delay_epochs(&vote, &preimage, |_| true, 1, 2)
+            .unwrap();
         assert_eq!(kernel.mint_delay_epochs(), 2);
 
         // Try to register with insufficient delay (should fail)
@@ -1103,33 +1209,37 @@ mod tests {
     #[test]
     fn test_zero_epoch_delay_allowed() {
         let (mut kernel, _) = setup();
-        let gov = test_governance();
+        let (vote, preimage) = gov_vote();
 
         // Set delay to 0 epochs (immediate execution allowed)
-        kernel.set_mint_delay_epochs(&gov, 0).unwrap();
+        kernel
+            .set_mint_delay_epochs(&vote, &preimage, |_| true, 1, 0)
+            .unwrap();
         assert_eq!(kernel.mint_delay_epochs(), 0);
 
         // Register authorization with same epoch for authorization and execution
         let mut auth = test_mint_auth(10); // authorized_at_epoch = 10
         auth.executable_after_epoch = 10; // Same epoch (0 delay)
 
-        let result = kernel.register_mint_authorization(auth);
+        let result = kernel.register_mint_authorization(auth, &vote, &preimage, |_| true, 1);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_delay_validation_with_large_epochs() {
         let (mut kernel, _) = setup();
-        let gov = test_governance();
+        let (vote, preimage) = gov_vote();
 
         // Set a large delay
-        kernel.set_mint_delay_epochs(&gov, 100).unwrap();
+        kernel
+            .set_mint_delay_epochs(&vote, &preimage, |_| true, 1, 100)
+            .unwrap();
 
         // Register authorization at a large epoch number
         let mut auth = test_mint_auth(1000); // authorized_at_epoch = 1000
         auth.executable_after_epoch = 1100; // authorized_at_epoch + 100
 
-        let result = kernel.register_mint_authorization(auth);
+        let result = kernel.register_mint_authorization(auth, &vote, &preimage, |_| true, 1);
         assert!(result.is_ok());
 
         // Try with insufficient delay
@@ -1137,7 +1247,7 @@ mod tests {
         auth2.proposal_id = [5u8; 32];
         auth2.executable_after_epoch = 1099; // Only 99 epochs delay
 
-        let result = kernel.register_mint_authorization(auth2);
+        let result = kernel.register_mint_authorization(auth2, &vote, &preimage, |_| true, 1);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
     }
 }
