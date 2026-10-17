@@ -33,8 +33,8 @@ mod api_integration_tests {
         config.storage_config.dht_port = 8080;
         config.protocols_config.api_port = 8082;
         config.network_config.bootstrap_peers = vec![]; // No bootstrap peers for tests
-        // RuntimeOrchestrator::new requires node_type to be set (normally done by
-        // the start_* path); derive it from the config fields here.
+                                                        // RuntimeOrchestrator::new requires node_type to be set (normally done by
+                                                        // the start_* path); derive it from the config fields here.
         config.derive_node_type();
         config
     }
@@ -269,7 +269,8 @@ mod api_integration_tests {
     #[tokio::test]
     async fn test_register_identity_rejects_future_timestamp() {
         let mut storage_config = UnifiedStorageConfig::default();
-        let db_path = std::env::temp_dir().join(format!("zhtp-test-future-{}", rand::random::<u64>()));
+        let db_path =
+            std::env::temp_dir().join(format!("zhtp-test-future-{}", rand::random::<u64>()));
         storage_config.storage_config.dht_persist_path = Some(db_path.clone());
         let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
             .expect("failed to create storage");
@@ -294,7 +295,8 @@ mod api_integration_tests {
     #[tokio::test]
     async fn test_register_identity_rejects_invalid_display_name() {
         let mut storage_config = UnifiedStorageConfig::default();
-        let db_path = std::env::temp_dir().join(format!("zhtp-test-name-{}", rand::random::<u64>()));
+        let db_path =
+            std::env::temp_dir().join(format!("zhtp-test-name-{}", rand::random::<u64>()));
         storage_config.storage_config.dht_persist_path = Some(db_path.clone());
         let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
             .expect("failed to create storage");
@@ -323,10 +325,8 @@ mod api_integration_tests {
             .unwrap_or_else(|e| e.into_inner());
 
         let mut storage_config = UnifiedStorageConfig::default();
-        let db_path = std::env::temp_dir().join(format!(
-            "zhtp-test-empty-name-{}",
-            rand::random::<u64>()
-        ));
+        let db_path =
+            std::env::temp_dir().join(format!("zhtp-test-empty-name-{}", rand::random::<u64>()));
         storage_config.storage_config.dht_persist_path = Some(db_path.clone());
         let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
             .expect("failed to create storage");
@@ -387,8 +387,7 @@ mod api_integration_tests {
             .unwrap_or_else(|e| e.into_inner());
 
         let mut storage_config = UnifiedStorageConfig::default();
-        let db_path =
-            std::env::temp_dir().join(format!("zhtp-test-dup-{}", rand::random::<u64>()));
+        let db_path = std::env::temp_dir().join(format!("zhtp-test-dup-{}", rand::random::<u64>()));
         storage_config.storage_config.dht_persist_path = Some(db_path.clone());
         let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
             .expect("failed to create storage");
@@ -438,8 +437,7 @@ mod api_integration_tests {
     #[tokio::test]
     async fn test_register_identity_rate_limits_per_ip() {
         let mut storage_config = UnifiedStorageConfig::default();
-        let db_path =
-            std::env::temp_dir().join(format!("zhtp-test-rl-{}", rand::random::<u64>()));
+        let db_path = std::env::temp_dir().join(format!("zhtp-test-rl-{}", rand::random::<u64>()));
         storage_config.storage_config.dht_persist_path = Some(db_path.clone());
         let storage = UnifiedStorageSystem::new_persistent(storage_config, db_path.clone())
             .expect("failed to create storage");
@@ -471,8 +469,7 @@ mod api_integration_tests {
         }
 
         let keypair = lib_crypto::KeyPair::generate().expect("keypair");
-        let mut request =
-            build_register_request(&keypair, "device-rl-blocked", now + 120, None);
+        let mut request = build_register_request(&keypair, "device-rl-blocked", now + 120, None);
         request.headers.set("peer_addr", "203.0.113.50".into());
         let response = handler
             .handle_request(request)
@@ -482,8 +479,7 @@ mod api_integration_tests {
 
         // Different peer is unaffected
         let keypair = lib_crypto::KeyPair::generate().expect("keypair");
-        let mut request =
-            build_register_request(&keypair, "device-rl-other", now + 120, None);
+        let mut request = build_register_request(&keypair, "device-rl-other", now + 120, None);
         request.headers.set("peer_addr", "203.0.113.99".into());
         let response = handler
             .handle_request(request)

@@ -83,7 +83,10 @@ impl NetworkComponent {
     pub async fn subtract_routing_rewards(&self, amount: u64) -> Result<()> {
         if let Some(ref server) = *self.mesh_server.read().await {
             server.subtract_reward_counter(amount).await;
-            info!(" Routing rewards partially reset: {} SOV subtracted", amount);
+            info!(
+                " Routing rewards partially reset: {} SOV subtracted",
+                amount
+            );
             Ok(())
         } else {
             Err(anyhow::anyhow!(
@@ -138,7 +141,10 @@ impl NetworkComponent {
     pub async fn subtract_storage_rewards(&self, amount: u64) -> Result<()> {
         if let Some(ref server) = *self.mesh_server.read().await {
             server.subtract_storage_reward_counter(amount).await;
-            info!(" Storage rewards partially reset: {} SOV subtracted", amount);
+            info!(
+                " Storage rewards partially reset: {} SOV subtracted",
+                amount
+            );
             Ok(())
         } else {
             Err(anyhow::anyhow!(

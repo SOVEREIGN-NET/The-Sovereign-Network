@@ -32,10 +32,7 @@ impl Blockchain {
             .pending_transactions
             .iter()
             .filter(|tx| {
-                if tx
-                    .identity_data()
-                    .is_some_and(|data| data.did == did)
-                {
+                if tx.identity_data().is_some_and(|data| data.did == did) {
                     return true;
                 }
                 if let Some(wallet) = tx.wallet_data() {
@@ -138,7 +135,11 @@ impl Blockchain {
             Signature {
                 signature: identity_data.ownership_proof.clone(),
                 public_key: PublicKey::new(
-                    identity_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                    identity_data
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
                 ),
                 algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: identity_data.created_at,
@@ -227,10 +228,7 @@ impl Blockchain {
         let store = self
             .get_store()
             .ok_or_else(|| "blockchain store unavailable".to_string())?;
-        crate::transaction::reward_claim::owner_identity_registered_on_store(
-            store.as_ref(),
-            did,
-        )
+        crate::transaction::reward_claim::owner_identity_registered_on_store(store.as_ref(), did)
     }
 
     pub fn identity_exists(&self, did: &str) -> bool {
@@ -254,10 +252,7 @@ impl Blockchain {
         // Pending IdentityRegistration occupies the DID until commit or abort (#1990).
         self.pending_transactions.iter().any(|tx| {
             tx.transaction_type == TransactionType::IdentityRegistration
-                && tx
-                    .identity_data()
-                    .map(|d| d.did == did)
-                    .unwrap_or(false)
+                && tx.identity_data().map(|d| d.did == did).unwrap_or(false)
         })
     }
 
@@ -341,9 +336,7 @@ impl Blockchain {
         if let Some(store) = self.get_store() {
             match store.iter_identity_metadata() {
                 Ok(iter) => {
-                    if let Some(meta) =
-                        iter.into_iter().find(|m| m.public_key == public_key)
-                    {
+                    if let Some(meta) = iter.into_iter().find(|m| m.public_key == public_key) {
                         // Consensus-pin the metadata match.
                         let did_hash = crate::storage::did_to_hash(&meta.did);
                         match store.get_identity(&did_hash) {
@@ -510,7 +503,9 @@ impl Blockchain {
             // Not committed to sled yet — fall through to the in-memory shadow,
             // which still holds pending / same-block registrations.
         }
-        self.identity_registry.get(did).map(|id| id.public_key.clone())
+        self.identity_registry
+            .get(did)
+            .map(|id| id.public_key.clone())
     }
 
     /// Display name for a DID, sled-first (#2639).
@@ -526,7 +521,9 @@ impl Blockchain {
             }
             // Not in sled yet — fall through to the in-memory pending shadow.
         }
-        self.identity_registry.get(did).map(|id| id.display_name.clone())
+        self.identity_registry
+            .get(did)
+            .map(|id| id.display_name.clone())
     }
 
     /// Kyber (KEM) public key for a DID, sled-first (#2639).
@@ -743,9 +740,10 @@ impl Blockchain {
         if let Some(store) = self.get_store() {
             match store.iter_identity_metadata() {
                 Ok(iter) => {
-                    if iter.into_iter().any(|m| {
-                        m.display_name.to_lowercase() == display_name_lower
-                    }) {
+                    if iter
+                        .into_iter()
+                        .any(|m| m.display_name.to_lowercase() == display_name_lower)
+                    {
                         return true;
                     }
                 }
@@ -758,9 +756,11 @@ impl Blockchain {
                 }
             }
         }
-        if self.identity_registry.values().any(|id| {
-            id.display_name.to_lowercase() == display_name_lower
-        }) {
+        if self
+            .identity_registry
+            .values()
+            .any(|id| id.display_name.to_lowercase() == display_name_lower)
+        {
             return true;
         }
         // Pending registrations reserve the display name until commit/abort (#1990).
@@ -816,7 +816,11 @@ impl Blockchain {
             Signature {
                 signature: updated_data.ownership_proof.clone(),
                 public_key: PublicKey::new(
-                    updated_data.public_key.as_slice().try_into().unwrap_or([0u8; 2592])
+                    updated_data
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
                 ),
                 algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: updated_data.created_at,
@@ -839,7 +843,10 @@ impl Blockchain {
 
         if let Some(storage_manager_arc) = &self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
-            if let Err(e) = storage_manager.store_identity_data(did, &updated_data).await {
+            if let Err(e) = storage_manager
+                .store_identity_data(did, &updated_data)
+                .await
+            {
                 eprintln!(
                     "Warning: Failed to persist updated identity data to storage: {}",
                     e
@@ -889,7 +896,6 @@ impl Blockchain {
 
         Ok(revocation_tx.hash())
     }
-
 
     pub fn get_all_identities(&self) -> &HashMap<String, IdentityTransactionData> {
         &self.identity_registry
@@ -1216,7 +1222,6 @@ impl Blockchain {
         self.did_by_public_key(public_key).is_some()
     }
 
-
     pub fn auto_register_wallet_identity(
         &mut self,
         wallet_id: &str,
@@ -1253,9 +1258,7 @@ impl Blockchain {
             vec![],
             Signature {
                 signature: vec![0xAA; 64],
-                public_key: PublicKey::new(
-                    public_key.as_slice().try_into().unwrap_or([0u8; 2592])
-                ),
+                public_key: PublicKey::new(public_key.as_slice().try_into().unwrap_or([0u8; 2592])),
                 algorithm: SignatureAlgorithm::DEFAULT,
                 timestamp: identity_data.created_at,
             },

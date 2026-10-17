@@ -47,11 +47,7 @@ impl Component for StorageComponent {
                     .storage_config
                     .dht_persist_path
                     .clone()
-                    .unwrap_or_else(|| {
-                        crate::node_data_dir()
-                            .join("storage")
-                            .join("dht_db")
-                    });
+                    .unwrap_or_else(|| crate::node_data_dir().join("storage").join("dht_db"));
 
                 // Ensure the storage directory exists
                 if let Some(parent) = db_path.parent() {

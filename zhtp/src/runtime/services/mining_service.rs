@@ -124,7 +124,8 @@ impl MiningService {
                 remaining,
                 lib_blockchain::MAX_BLOCK_SIZE,
                 |tx| {
-                    if tx.transaction_type == lib_blockchain::types::TransactionType::TokenCreation {
+                    if tx.transaction_type == lib_blockchain::types::TransactionType::TokenCreation
+                    {
                         return lib_blockchain::contracts::sovereign_asset::token_creation_allowed_in_block_at_height(
                             next_height,
                         );

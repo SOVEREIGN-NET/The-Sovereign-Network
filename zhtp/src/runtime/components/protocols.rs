@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 // Removed: create_default_storage_config - now using global storage provider
 use crate::server::https_gateway::{GatewayTlsConfig, HttpsGateway};
-use lib_network::zdns::{ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer, ZdnsConfig};
+use lib_network::zdns::{ZdnsConfig, ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
 
 /// Protocols component - thin wrapper for unified server
@@ -94,7 +94,8 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node: false,
-            enable_zdns_transport: false, zdns_bootstrap_ips: vec![], // Disabled by default (requires root for port 53)
+            enable_zdns_transport: false,
+            zdns_bootstrap_ips: vec![], // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -132,7 +133,8 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node,
-            enable_zdns_transport: false, zdns_bootstrap_ips: vec![], // Disabled by default
+            enable_zdns_transport: false,
+            zdns_bootstrap_ips: vec![], // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -162,7 +164,8 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: true, zdns_bootstrap_ips: vec![],
+            enable_zdns_transport: true,
+            zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -193,7 +196,8 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: false, zdns_bootstrap_ips: vec![],
+            enable_zdns_transport: false,
+            zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -223,7 +227,8 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: true, zdns_bootstrap_ips: vec![],
+            enable_zdns_transport: true,
+            zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -436,16 +441,23 @@ impl Component for ProtocolsComponent {
         // Initialize ZDNS resolver with caching, using the canonical domain registry
         info!(" Initializing ZDNS resolver with canonical domain registry...");
         let domain_registry = unified_server.get_domain_registry();
-        let name_resolver = Arc::new(lib_network::web4::NameResolver::new(domain_registry.clone()));
+        let name_resolver = Arc::new(lib_network::web4::NameResolver::new(
+            domain_registry.clone(),
+        ));
         let zdns_resolver = Arc::new(ZdnsResolver::new(name_resolver, ZdnsConfig::default()));
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
         // Start ZDNS transport server if enabled
-        info!("ZDNS transport check: enable_zdns_transport={} gateway_ip={} bind={} port={}",
-            self.enable_zdns_transport, self.zdns_gateway_ip, self.zdns_bind_addr, self.zdns_port);
+        info!(
+            "ZDNS transport check: enable_zdns_transport={} gateway_ip={} bind={} port={}",
+            self.enable_zdns_transport, self.zdns_gateway_ip, self.zdns_bind_addr, self.zdns_port
+        );
         if self.enable_zdns_transport {
-            info!(" Starting ZDNS transport server (DNS on port {})...", self.zdns_port);
+            info!(
+                " Starting ZDNS transport server (DNS on port {})...",
+                self.zdns_port
+            );
             let mut transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
                 .with_bind_addr(self.zdns_bind_addr);
             transport_config.port = self.zdns_port;
@@ -458,7 +470,9 @@ impl Component for ProtocolsComponent {
             // by the time this closure runs. The bootstrap_peers fallback is kept for the
             // brief window between ZDNS starting and the first STUN/DNS resolution completing.
             let bootstrap_ips = self.zdns_bootstrap_ips.clone();
-            if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            if let Ok(blockchain_arc) =
+                crate::runtime::blockchain_provider::get_global_blockchain().await
+            {
                 let bc_ref = blockchain_arc.clone();
                 let fallback_ips = bootstrap_ips.clone();
                 transport_config.network_endpoint_provider = Some(std::sync::Arc::new(move || {
@@ -466,7 +480,8 @@ impl Component for ProtocolsComponent {
                         Ok(bc) => bc,
                         Err(_) => return fallback_ips.clone(),
                     };
-                    let ips: Vec<std::net::Ipv4Addr> = bc.active_validator_infos()
+                    let ips: Vec<std::net::Ipv4Addr> = bc
+                        .active_validator_infos()
                         .into_iter()
                         .filter_map(|v| {
                             let host = v.network_address.split(':').next()?;

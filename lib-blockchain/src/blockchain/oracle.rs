@@ -302,7 +302,11 @@ impl Blockchain {
             match &proposal.execution_params {
                 Some(params) => bincode::deserialize(params)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize cancel data: {}", e))?,
-                None => return Err(anyhow::anyhow!("Missing execution_params in cancel proposal")),
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "Missing execution_params in cancel proposal"
+                    ))
+                }
             };
 
         cancel_data
@@ -369,9 +373,11 @@ impl Blockchain {
         let usd_value_scaled = reserve_sov.checked_mul(sov_usd_price).ok_or_else(|| {
             anyhow::anyhow!("CBE graduation blocked: arithmetic overflow in USD value calculation")
         })?;
-        let usd_value_micro = usd_value_scaled.checked_div(ORACLE_PRICE_SCALE).ok_or_else(|| {
-            anyhow::anyhow!("CBE graduation blocked: division by zero in USD value calculation")
-        })?;
+        let usd_value_micro = usd_value_scaled
+            .checked_div(ORACLE_PRICE_SCALE)
+            .ok_or_else(|| {
+                anyhow::anyhow!("CBE graduation blocked: division by zero in USD value calculation")
+            })?;
         let threshold_micro_usd = GRADUATION_THRESHOLD_USD * MICRO_USD_PER_USD;
 
         if usd_value_micro < threshold_micro_usd {
@@ -671,17 +677,19 @@ impl Blockchain {
             })
             .collect();
 
-        let result = self.oracle_state.process_attestation(attestation, current_epoch, |key_id| {
-            if let Some(pk) = oracle_pubkeys.get(&key_id) {
-                if !pk.is_empty() {
-                    return Some(pk.clone());
+        let result = self
+            .oracle_state
+            .process_attestation(attestation, current_epoch, |key_id| {
+                if let Some(pk) = oracle_pubkeys.get(&key_id) {
+                    if !pk.is_empty() {
+                        return Some(pk.clone());
+                    }
                 }
-            }
-            key_map
-                .iter()
-                .find(|(kid, _)| *kid == key_id)
-                .map(|(_, pk)| pk.to_vec())
-        });
+                key_map
+                    .iter()
+                    .find(|(kid, _)| *kid == key_id)
+                    .map(|(_, pk)| pk.to_vec())
+            });
 
         match result {
             Ok(admission) => {

@@ -205,9 +205,7 @@ fn resolve_reserve_prefers_curve_module_after_activation_when_dual_state() {
         manifest_cid: None,
         manifest_hash: None,
         schema_version: 1,
-        authority: AssetAuthority::Creator {
-            key_id: [0x01; 32],
-        },
+        authority: AssetAuthority::Creator { key_id: [0x01; 32] },
         module_flags: AssetModuleFlags(AssetModuleFlags::CURVE),
         curve: None,
         rewards: None,
@@ -255,7 +253,9 @@ fn resolve_reserve_prefers_curve_module_after_activation_when_dual_state() {
     store2
         .put_bonding_curve_token(&TokenId::new(token_id), &legacy)
         .expect("seed legacy");
-    store2.put_sovereign_asset(&asset).expect("seed asset without curve state");
+    store2
+        .put_sovereign_asset(&asset)
+        .expect("seed asset without curve state");
     store2.commit_block().expect("commit");
     let bc2 = Blockchain::new_with_store(store2).expect("bc2");
     let fallback = bc2

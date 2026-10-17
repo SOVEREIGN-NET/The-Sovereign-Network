@@ -197,7 +197,9 @@ fn asset_launch_tx(signer: &PublicKey, symbol: &str, treasury_seed: u8) -> Trans
         outputs: vec![],
         fee: 0,
         signature: test_signature(signer),
-        memo: payload.encode_memo().expect("asset launch payload should encode"),
+        memo: payload
+            .encode_memo()
+            .expect("asset launch payload should encode"),
         payload: crate::transaction::TransactionPayload::None,
     }
 }

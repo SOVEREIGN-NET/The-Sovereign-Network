@@ -21,7 +21,10 @@ impl Blockchain {
     /// - Gateway key must be a full Dilithium5 public key (2592 bytes).
     /// - Stake must meet minimum.
     pub fn register_gateway(&mut self, gateway_info: GatewayInfo) -> Result<Hash> {
-        if self.gateway_registry.contains_key(&gateway_info.identity_id) {
+        if self
+            .gateway_registry
+            .contains_key(&gateway_info.identity_id)
+        {
             return Err(anyhow::anyhow!(
                 "Gateway {} already exists on blockchain",
                 gateway_info.identity_id
@@ -72,7 +75,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
-                    kyber_public_key: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         let registration_tx = Transaction::new_identity_registration(
@@ -128,11 +131,7 @@ impl Blockchain {
         &self.gateway_registry
     }
 
-    pub fn update_gateway(
-        &mut self,
-        identity_id: &str,
-        updated_info: GatewayInfo,
-    ) -> Result<Hash> {
+    pub fn update_gateway(&mut self, identity_id: &str, updated_info: GatewayInfo) -> Result<Hash> {
         if !self.gateway_registry.contains_key(identity_id) {
             return Err(anyhow::anyhow!(
                 "Gateway {} not found on blockchain",
@@ -158,7 +157,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
-                    kyber_public_key: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         let update_tx = Transaction::new_identity_update(
@@ -287,7 +286,11 @@ impl Blockchain {
                 let gateway_info = GatewayInfo {
                     identity_id: gateway_data.identity_id.clone(),
                     stake: gateway_data.stake,
-                    gateway_key: gateway_data.gateway_key.as_slice().try_into().unwrap_or([0u8; 2592]),
+                    gateway_key: gateway_data
+                        .gateway_key
+                        .as_slice()
+                        .try_into()
+                        .unwrap_or([0u8; 2592]),
                     endpoints: gateway_data.endpoints.clone(),
                     commission_rate: gateway_data.commission_rate,
                     status: status.to_string(),

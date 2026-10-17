@@ -143,7 +143,8 @@ impl crate::blockchain::Blockchain {
     pub fn reward_lifetime_stats(&self, token_id: &[u8; 32], did: &str) -> RewardLifetimeStats {
         let welcome_claimed = self.reward_welcome_claimed(token_id, did);
         let streak = self.reward_streak(token_id, did);
-        let checkin_count = self.count_reward_daily_events(token_id, did, RewardEventKind::DailyCheckin);
+        let checkin_count =
+            self.count_reward_daily_events(token_id, did, RewardEventKind::DailyCheckin);
         let session_count =
             self.count_reward_daily_events(token_id, did, RewardEventKind::ActiveSession);
         let partner_count = self.count_reward_partner_slots(token_id, did);
@@ -212,7 +213,9 @@ impl crate::blockchain::Blockchain {
                 if data.token_id != *token_id || data.owner_did != did {
                     continue;
                 }
-                let seq = height.saturating_mul(10_000).saturating_add(tx_index as u64);
+                let seq = height
+                    .saturating_mul(10_000)
+                    .saturating_add(tx_index as u64);
                 if seq >= max_seq {
                     continue;
                 }
@@ -252,14 +255,8 @@ impl crate::blockchain::Blockchain {
         rows.into_iter()
             .filter(|(key, _)| {
                 key.starts_with(&prefix)
-                    && key
-                        .split('|')
-                        .nth(2)
-                        .is_some_and(|owner| owner == did)
-                    && key
-                        .split('|')
-                        .nth(3)
-                        .is_some_and(|ev| ev == event_label)
+                    && key.split('|').nth(2).is_some_and(|owner| owner == did)
+                    && key.split('|').nth(3).is_some_and(|ev| ev == event_label)
             })
             .count() as u64
     }
@@ -274,11 +271,7 @@ impl crate::blockchain::Blockchain {
         let prefix = format!("{}|", hex::encode(token_id));
         rows.into_iter()
             .filter(|(key, _)| {
-                key.starts_with(&prefix)
-                    && key
-                        .split('|')
-                        .nth(2)
-                        .is_some_and(|owner| owner == did)
+                key.starts_with(&prefix) && key.split('|').nth(2).is_some_and(|owner| owner == did)
             })
             .count() as u64
     }
@@ -302,4 +295,3 @@ impl crate::blockchain::Blockchain {
         false
     }
 }
-

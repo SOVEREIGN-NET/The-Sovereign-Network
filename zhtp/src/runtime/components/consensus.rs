@@ -12,8 +12,6 @@ use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, 
 use crate::server::mesh::core::MeshRouter;
 use lib_blockchain::Blockchain;
 use lib_consensus::types::{MessageBroadcaster as ConsensusMessageBroadcaster, ValidatorMessage};
-use lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD;
-use lib_consensus_core::ports::TransportInfo;
 use lib_consensus::validators::{
     ValidatorAnnouncement, ValidatorDiscoveryProtocol, ValidatorEndpoint,
     ValidatorNetworkTransport, ValidatorProtocol, ValidatorStatus,
@@ -21,6 +19,8 @@ use lib_consensus::validators::{
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusEvent, NoOpBroadcaster, ValidatorManager,
 };
+use lib_consensus_core::budget::WRONG_CHAIN_HALT_THRESHOLD;
+use lib_consensus_core::ports::TransportInfo;
 use lib_identity::IdentityId;
 
 /// Adapter that implements lib-consensus MessageBroadcaster using zhtp's MeshRouter
@@ -180,9 +180,9 @@ impl ConsensusMessageBroadcaster for ConsensusMeshBroadcaster {
         loop {
             match tokio::time::timeout_at(global_deadline, tasks.next()).await {
                 Ok(Some(Ok(Ok(_)))) => delivered += 1, // send returned Ok within per-peer budget
-                Ok(Some(Ok(Err(_)))) => failed += 1,    // send returned Err
+                Ok(Some(Ok(Err(_)))) => failed += 1,   // send returned Err
                 Ok(Some(Err(_))) => timed_out += 1,    // per-peer timeout
-                Ok(None) => break,                      // all tasks drained
+                Ok(None) => break,                     // all tasks drained
                 Err(_) => {
                     // Global deadline hit — abandon remaining tasks
                     timed_out += tasks.len();
@@ -1341,7 +1341,9 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
 /// retires the legacy path; until then both shapes share the same
 /// underlying logic.
 pub struct ConsensusBlockFinalizationSink {
-    writer_tx: tokio::sync::mpsc::UnboundedSender<lib_consensus::engines::consensus_engine::CommitEnvelope>,
+    writer_tx: tokio::sync::mpsc::UnboundedSender<
+        lib_consensus::engines::consensus_engine::CommitEnvelope,
+    >,
     recent_failure: Arc<tokio::sync::RwLock<Option<lib_consensus_core::ports::FinalizationError>>>,
 }
 
@@ -1597,7 +1599,8 @@ pub struct ConsensusComponent {
     oracle_mock_sov_usd_price: Option<u64>,
     /// Sender for injecting FSM events into the consensus loop (e.g., HaltScheduled).
     /// Set when the ConsensusRuntime is created; None for legacy engine path.
-    halt_event_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<lib_consensus_core::fsm::Event>>>>,
+    halt_event_tx:
+        Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<lib_consensus_core::fsm::Event>>>>,
 }
 
 // Manual Debug implementation because ConsensusEngine doesn't derive Debug
@@ -1735,7 +1738,10 @@ impl ConsensusComponent {
             resume_condition: lib_consensus_core::fsm::events::ResumeConditionEvent::ManualRestart,
         })
         .map_err(|e| anyhow::anyhow!("Failed to send halt event: {}", e))?;
-        info!("🛑 HaltScheduled event sent to LOCAL consensus engine at height {}", height);
+        info!(
+            "🛑 HaltScheduled event sent to LOCAL consensus engine at height {}",
+            height
+        );
 
         // Broadcast halt to all validators via mesh so the entire network halts
         let halt_msg = lib_consensus_core::types::ValidatorMessage::Halt(
@@ -1750,17 +1756,32 @@ impl ConsensusComponent {
             },
         );
 
-        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+        if let Ok(mesh_router) =
+            crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
             let quic_guard = mesh_router.quic_protocol.read().await;
             if let Some(quic) = quic_guard.as_ref() {
                 let peer_ids = quic.connected_peer_ids();
                 let mut sent = 0;
                 for peer_id in &peer_ids {
-                    if quic.send_to_peer(peer_id, lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(halt_msg.clone())).await.is_ok() {
+                    if quic
+                        .send_to_peer(
+                            peer_id,
+                            lib_network::types::mesh_message::ZhtpMeshMessage::ValidatorMessage(
+                                halt_msg.clone(),
+                            ),
+                        )
+                        .await
+                        .is_ok()
+                    {
                         sent += 1;
                     }
                 }
-                info!("🛑 Halt broadcast to {}/{} mesh peers", sent, peer_ids.len());
+                info!(
+                    "🛑 Halt broadcast to {}/{} mesh peers",
+                    sent,
+                    peer_ids.len()
+                );
             }
         }
 
@@ -2288,8 +2309,9 @@ impl Component for ConsensusComponent {
                         lib_crypto::Hash(h)
                     };
 
-                    let resolved_addr = crate::runtime::validator_ip::get_resolved_address(&v.identity_id)
-                        .unwrap_or_else(|| v.network_address.clone());
+                    let resolved_addr =
+                        crate::runtime::validator_ip::get_resolved_address(&v.identity_id)
+                            .unwrap_or_else(|| v.network_address.clone());
                     let endpoints = if resolved_addr.is_empty() {
                         vec![]
                     } else {
@@ -2472,17 +2494,15 @@ impl Component for ConsensusComponent {
 
         // Wire block commit callback for BFT-finalized blocks
         // This is the critical bridge that commits blocks when BFT achieves 2/3+1 votes
-        let block_committer =
-            ConsensusBlockCommitter::new(self.blockchain.clone());
+        let block_committer = ConsensusBlockCommitter::new(self.blockchain.clone());
         consensus_engine.set_block_commit_callback(Arc::new(block_committer));
         info!("🔗 Block commit callback wired to consensus engine");
 
         // Wire reward distribution callback (CONS-103 / AD-005). The adapter
         // owns the calculator + Mutex; failures are logged inside the adapter,
         // never reach the engine.
-        consensus_engine.set_reward_callback(Arc::new(
-            lib_economy::rewards::ConsensusRewardAdapter::new(),
-        ));
+        consensus_engine
+            .set_reward_callback(Arc::new(lib_economy::rewards::ConsensusRewardAdapter::new()));
         info!("Reward distribution callback wired to consensus engine");
 
         // Wire governance round-finalize hook (CONS-106 / AD-005). The adapter
@@ -2520,9 +2540,11 @@ impl Component for ConsensusComponent {
                     "🚀 Starting BFT consensus via ConsensusRuntime (transport={})",
                     transport_info.name()
                 );
-                let runtime =
-                    lib_consensus_runtime::ConsensusRuntime::from_arc(consensus_engine, transport_info)
-                        .expect("transport already validated by check_transport");
+                let runtime = lib_consensus_runtime::ConsensusRuntime::from_arc(
+                    consensus_engine,
+                    transport_info,
+                )
+                .expect("transport already validated by check_transport");
                 // Capture halt event sender before run() consumes the runtime
                 *self.halt_event_tx.write().await = Some(runtime.event_sender());
                 tokio::spawn(async move {
@@ -2554,7 +2576,9 @@ impl Component for ConsensusComponent {
         // the initial mesh connections may fail when validators restart
         // simultaneously and the reconnect-on-broadcast path only fires
         // when there are zero peers.
-        if let Ok(mesh_router) = crate::runtime::mesh_router_provider::get_global_mesh_router().await {
+        if let Ok(mesh_router) =
+            crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        {
             let quic_guard = mesh_router.quic_protocol.read().await;
             if let Some(quic) = quic_guard.as_ref().cloned() {
                 drop(quic_guard);
@@ -2568,7 +2592,8 @@ impl Component for ConsensusComponent {
                         if connected < bootstrap_count {
                             tracing::debug!(
                                 "Mesh reconnect: {}/{} peers connected, attempting reconnect",
-                                connected, bootstrap_count
+                                connected,
+                                bootstrap_count
                             );
                             quic.try_reconnect_to_bootstrap().await;
                         }

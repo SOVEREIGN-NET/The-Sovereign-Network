@@ -95,7 +95,11 @@ fn put_identity_direct(store: &dyn BlockchainStore, did: &str, pubkey: &PublicKe
 fn register_actor_identities_shadow(blockchain: &mut Blockchain, actors: &RewardClaimActors) {
     let treasury_did = did_from_key_id(&actors.treasury.public_key.key_id);
     register_identity_shadow(blockchain, &treasury_did, &actors.treasury.public_key);
-    register_identity_shadow(blockchain, &actors.owner_did, &actors.beneficiary.public_key);
+    register_identity_shadow(
+        blockchain,
+        &actors.owner_did,
+        &actors.beneficiary.public_key,
+    );
 }
 
 fn register_actor_identities_store(store: &dyn BlockchainStore, actors: &RewardClaimActors) {
@@ -107,9 +111,8 @@ fn register_actor_identities_store(store: &dyn BlockchainStore, actors: &RewardC
 fn attach_ephemeral_store(blockchain: &mut Blockchain) -> Arc<dyn BlockchainStore> {
     // Leak tempdir for test lifetime — store path must remain valid.
     let dir = Box::leak(Box::new(tempdir().expect("tempdir for mempool sled")));
-    let store: Arc<dyn BlockchainStore> = Arc::new(
-        SledStore::open(dir.path().join("mempool_store")).expect("ephemeral sled store"),
-    );
+    let store: Arc<dyn BlockchainStore> =
+        Arc::new(SledStore::open(dir.path().join("mempool_store")).expect("ephemeral sled store"));
     blockchain.set_store(store.clone());
     store
 }
@@ -117,11 +120,7 @@ fn attach_ephemeral_store(blockchain: &mut Blockchain) -> Arc<dyn BlockchainStor
 fn install_bubl_mempool_fixtures(blockchain: &mut Blockchain, actors: &RewardClaimActors) {
     let bubl = bubl_token_contract(&actors.treasury.public_key);
     blockchain.insert_token_contract(actors.token_id, bubl);
-    blockchain.insert_token_nonce_shadow(
-        actors.token_id,
-        actors.treasury.public_key.key_id,
-        0,
-    );
+    blockchain.insert_token_nonce_shadow(actors.token_id, actors.treasury.public_key.key_id, 0);
 }
 
 /// Seed rewards module + policy document (legacy BUBL policy) with no token contract.
@@ -131,7 +130,9 @@ fn put_rewards_module_with_legacy_policy(
     block_height: u64,
 ) {
     use lib_blockchain::contracts::sovereign_asset::RewardsModuleState;
-    use lib_blockchain::rewards_policy::{legacy_bubl_policy, policy_hash, validate_rewards_policy_value};
+    use lib_blockchain::rewards_policy::{
+        legacy_bubl_policy, policy_hash, validate_rewards_policy_value,
+    };
 
     let policy = legacy_bubl_policy();
     validate_rewards_policy_value(&policy).expect("legacy policy valid");
@@ -173,11 +174,7 @@ pub fn mempool_blockchain_rewards_module_without_token_contract(
     register_actor_identities_shadow(&mut blockchain, actors);
     // Empty store expects height 0 (genesis slot) for the first begin_block.
     put_rewards_module_with_legacy_policy(store.as_ref(), actors, 0);
-    blockchain.insert_token_nonce_shadow(
-        actors.token_id,
-        actors.treasury.public_key.key_id,
-        0,
-    );
+    blockchain.insert_token_nonce_shadow(actors.token_id, actors.treasury.public_key.key_id, 0);
     blockchain
 }
 
@@ -234,7 +231,9 @@ pub fn seed_executor_store_rewards_module_without_token_contract(
             .expect("seed policy document");
     }
     let setup_block = block_builders::block_at_height(1, genesis.header.block_hash);
-    store.append_block(&setup_block).expect("append setup block");
+    store
+        .append_block(&setup_block)
+        .expect("append setup block");
     store.commit_block().expect("commit setup block");
     setup_block
 }
@@ -283,7 +282,11 @@ pub fn mempool_blockchain(actors: &RewardClaimActors) -> Blockchain {
 pub fn mempool_blockchain_unregistered_treasury(actors: &RewardClaimActors) -> Blockchain {
     let mut blockchain = Blockchain::new().expect("blockchain construct");
     let store = attach_ephemeral_store(&mut blockchain);
-    put_identity_direct(store.as_ref(), &actors.owner_did, &actors.beneficiary.public_key);
+    put_identity_direct(
+        store.as_ref(),
+        &actors.owner_did,
+        &actors.beneficiary.public_key,
+    );
     register_identity_shadow(
         &mut blockchain,
         &actors.owner_did,
@@ -306,7 +309,9 @@ pub fn seed_executor_store(
     let welcome_amount = expected_amount_for_event(RewardEventKind::Welcome, 1);
 
     store.begin_block(1).expect("begin setup block");
-    store.put_token_contract(&bubl).expect("install BUBL contract");
+    store
+        .put_token_contract(&bubl)
+        .expect("install BUBL contract");
     store
         .set_token_balance(
             &TokenId::new(actors.token_id),
@@ -315,7 +320,9 @@ pub fn seed_executor_store(
         )
         .expect("fund treasury");
     let setup_block = block_builders::block_at_height(1, genesis.header.block_hash);
-    store.append_block(&setup_block).expect("append setup block");
+    store
+        .append_block(&setup_block)
+        .expect("append setup block");
     store.commit_block().expect("commit setup block");
     setup_block
 }

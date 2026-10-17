@@ -1,6 +1,9 @@
 use super::*;
 use crate::block::Block;
-use crate::storage::{did_to_hash, BlockchainStore, StoredValidatorRecord, ValidatorConsensusRecord, ValidatorMetadata};
+use crate::storage::{
+    did_to_hash, BlockchainStore, StoredValidatorRecord, ValidatorConsensusRecord,
+    ValidatorMetadata,
+};
 use crate::transaction::ValidatorTransactionData;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as StdHash, Hasher};
@@ -182,10 +185,7 @@ impl Blockchain {
             match store.iter_validator_records() {
                 Ok(iter) => {
                     for rec in iter {
-                        out.insert(
-                            rec.consensus.identity_id.clone(),
-                            ValidatorInfo::from(&rec),
-                        );
+                        out.insert(rec.consensus.identity_id.clone(), ValidatorInfo::from(&rec));
                     }
                 }
                 Err(e) => {
@@ -312,16 +312,13 @@ impl Blockchain {
 
     /// Whether `signer_pk` matches an active validator's consensus key (#56).
     pub fn is_active_validator_consensus_signer(&self, signer_pk: &[u8]) -> bool {
-        self.active_validator_infos().iter().any(|v| {
-            v.status == "active" && v.consensus_key.as_slice() == signer_pk
-        })
+        self.active_validator_infos()
+            .iter()
+            .any(|v| v.status == "active" && v.consensus_key.as_slice() == signer_pk)
     }
 
     /// Resolve a validator by blake3(consensus_key) for oracle attestation checks (#56).
-    pub fn validator_by_consensus_key_hash(
-        &self,
-        key_hash: [u8; 32],
-    ) -> Option<ValidatorInfo> {
+    pub fn validator_by_consensus_key_hash(&self, key_hash: [u8; 32]) -> Option<ValidatorInfo> {
         use crate::types::hash::blake3_hash;
         self.active_validator_infos()
             .into_iter()
@@ -399,7 +396,13 @@ impl Blockchain {
         let record = StoredValidatorRecord::from(info);
         store
             .put_validator_record(&did_hash, &record)
-            .map_err(|e| anyhow::anyhow!("Failed to store validator {} in sled: {}", info.identity_id, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to store validator {} in sled: {}",
+                    info.identity_id,
+                    e
+                )
+            })?;
         self.invalidate_active_validator_cache();
         debug!("Persisted validator {} to sled storage", info.identity_id);
         Ok(())
@@ -431,7 +434,13 @@ impl Blockchain {
         let record = StoredValidatorRecord::from(info);
         store
             .put_validator_record_direct(&did_hash, &record)
-            .map_err(|e| anyhow::anyhow!("Failed to direct-persist validator {}: {}", info.identity_id, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to direct-persist validator {}: {}",
+                    info.identity_id,
+                    e
+                )
+            })?;
         self.invalidate_active_validator_cache();
         Ok(())
     }
@@ -469,7 +478,12 @@ impl Blockchain {
         }
         let records: Vec<([u8; 32], StoredValidatorRecord)> = infos
             .iter()
-            .map(|info| (did_to_hash(&info.identity_id), StoredValidatorRecord::from(info)))
+            .map(|info| {
+                (
+                    did_to_hash(&info.identity_id),
+                    StoredValidatorRecord::from(info),
+                )
+            })
             .collect();
         let expected = records.len();
         let written = store
@@ -577,7 +591,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
-                    kyber_public_key: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         let registration_tx = Transaction::new_identity_registration(
@@ -661,7 +675,7 @@ impl Blockchain {
             dao_fee: 0,
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
-                    kyber_public_key: Vec::new(),
+            kyber_public_key: Vec::new(),
         };
 
         let update_tx = Transaction::new_identity_update(
@@ -787,10 +801,7 @@ impl Blockchain {
             }
             info!(
                 "Validator {} {:?} at height {} ({} SOV stake)",
-                validator_data.identity_id,
-                validator_data.operation,
-                height,
-                validator_data.stake
+                validator_data.identity_id, validator_data.operation, height, validator_data.stake
             );
         }
         Ok(())
@@ -885,9 +896,7 @@ mod validator_boundary_tests {
     #[test]
     fn validator_update_tx_preserves_slash_count_and_provenance_fields() {
         use crate::block::{Block, BlockHeader};
-        use crate::integration::crypto_integration::{
-            PublicKey, Signature, SignatureAlgorithm,
-        };
+        use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
         use crate::transaction::{ValidatorOperation, ValidatorTransactionData};
         use crate::types::hash::Hash;
 
@@ -959,7 +968,11 @@ mod validator_boundary_tests {
         assert_eq!(got.stake, 2_000_000, "tx stake applied");
         assert_eq!(got.slash_count, 4, "slash_count must not reset on update");
         assert_eq!(got.blocks_validated, 99, "blocks_validated preserved");
-        assert_eq!(got.oracle_key_id, Some([0xAB; 32]), "oracle_key_id preserved");
+        assert_eq!(
+            got.oracle_key_id,
+            Some([0xAB; 32]),
+            "oracle_key_id preserved"
+        );
         assert_eq!(
             got.governance_proposal_id.as_deref(),
             Some("prop-keep"),

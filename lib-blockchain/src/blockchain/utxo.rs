@@ -107,15 +107,14 @@ impl Blockchain {
                     let mut out = Vec::new();
                     for row in iter {
                         let Ok((op, utxo)) = row else {
-                            tracing::warn!("collect_spendable_outputs: sled row error; using in-memory shadow");
+                            tracing::warn!(
+                                "collect_spendable_outputs: sled row error; using in-memory shadow"
+                            );
                             return self.collect_spendable_outputs_in_mem();
                         };
                         let tx_hash = Hash::from_slice(op.tx.as_bytes());
                         out.push(SpendableOutputView {
-                            legacy_hash: Self::legacy_utxo_hash(
-                                &tx_hash,
-                                op.index as usize,
-                            ),
+                            legacy_hash: Self::legacy_utxo_hash(&tx_hash, op.index as usize),
                             output_index: op.index,
                             owner_key_id: utxo.owner.0,
                         });
@@ -134,10 +133,7 @@ impl Blockchain {
     ///
     /// Filters while iterating the sled store — does not materialize the full
     /// UTXO set when a store is attached.
-    pub fn spendable_outputs_for_owner(
-        &self,
-        owner_key_id: &[u8; 32],
-    ) -> Vec<SpendableOutputView> {
+    pub fn spendable_outputs_for_owner(&self, owner_key_id: &[u8; 32]) -> Vec<SpendableOutputView> {
         if let Some(store) = self.get_store() {
             match store.iter_utxos() {
                 Ok(iter) => {
@@ -154,10 +150,7 @@ impl Blockchain {
                         }
                         let tx_hash = Hash::from_slice(op.tx.as_bytes());
                         out.push(SpendableOutputView {
-                            legacy_hash: Self::legacy_utxo_hash(
-                                &tx_hash,
-                                op.index as usize,
-                            ),
+                            legacy_hash: Self::legacy_utxo_hash(&tx_hash, op.index as usize),
                             output_index: op.index,
                             owner_key_id: utxo.owner.0,
                         });
