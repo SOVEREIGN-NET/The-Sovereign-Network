@@ -374,6 +374,40 @@ async fn import_identity_impl(
     Ok(())
 }
 
+/// Persist private key + public identity JSON to the keystore with restrictive
+/// permissions. Shared by all local identity creation paths.
+async fn persist_identity_files(
+    identity: &ZhtpIdentity,
+    identity_file: &std::path::Path,
+    private_key_file: &std::path::Path,
+) -> CliResult<()> {
+    let private_key = identity
+        .private_key
+        .as_ref()
+        .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
+    save_private_key_to_file(private_key, private_key_file)?;
+
+    let identity_json = serde_json::to_string_pretty(identity)
+        .map_err(|e| CliError::IdentityError(format!("Failed to serialize identity: {}", e)))?;
+    tokio::fs::write(identity_file, identity_json)
+        .await
+        .map_err(|e| {
+            CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
+        })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(identity_file, std::fs::Permissions::from_mode(0o600))
+            .await
+            .map_err(|e| {
+                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
+            })?;
+    }
+
+    Ok(())
+}
+
 /// Create a new identity locally and save to keystore
 async fn create_identity_impl(
     name: &str,
@@ -410,32 +444,7 @@ async fn create_identity_impl(
     output.success(&format!("DID: {}", identity.did))?;
     output.print(&format!("Identity ID: {}", identity.id))?;
 
-    // Extract and save private key
-    let private_key = identity
-        .private_key
-        .as_ref()
-        .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
-    save_private_key_to_file(private_key, &private_key_file)?;
-
-    // Save identity to file (public data)
-    let identity_json = serde_json::to_string_pretty(&identity)
-        .map_err(|e| CliError::IdentityError(format!("Failed to serialize identity: {}", e)))?;
-    tokio::fs::write(&identity_file, identity_json)
-        .await
-        .map_err(|e| {
-            CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
-        })?;
-
-    // Set restrictive permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600))
-            .await
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
-            })?;
-    }
+    persist_identity_files(&identity, &identity_file, &private_key_file).await?;
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
     output.success(&format!("Private key saved to: {:?}", private_key_file))?;
@@ -506,29 +515,7 @@ async fn register_identity_on_chain(
         )
         .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
 
-        // Save private key
-        let pk = id
-            .private_key
-            .as_ref()
-            .ok_or_else(|| CliError::IdentityError("Missing private key".to_string()))?;
-        save_private_key_to_file(pk, &private_key_file)?;
-
-        // Save identity
-        let json = serde_json::to_string_pretty(&id)
-            .map_err(|e| CliError::IdentityError(format!("Failed to serialize: {}", e)))?;
-        tokio::fs::write(&identity_file, &json)
-            .await
-            .map_err(|e| CliError::IdentityError(format!("Failed to write identity: {}", e)))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::fs::set_permissions(
-                &private_key_file,
-                std::fs::Permissions::from_mode(0o600),
-            )
-            .await;
-        }
+        persist_identity_files(&id, &identity_file, &private_key_file).await?;
 
         output.success(&format!("DID: {}", id.did))?;
         output.success(&format!("Keys saved to: {:?}", keystore))?;
@@ -650,31 +637,7 @@ async fn create_identity_with_type_impl(
     output.success(&format!("DID: {}", identity.did))?;
     output.print(&format!("Identity Type: {}", identity_type))?;
 
-    // Extract and save private key
-    let private_key = identity
-        .private_key
-        .as_ref()
-        .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
-    save_private_key_to_file(private_key, &private_key_file)?;
-
-    // Save identity (public data)
-    let identity_json = serde_json::to_string_pretty(&identity)
-        .map_err(|e| CliError::IdentityError(format!("Failed to serialize identity: {}", e)))?;
-    tokio::fs::write(&identity_file, identity_json)
-        .await
-        .map_err(|e| {
-            CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
-        })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600))
-            .await
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
-            })?;
-    }
+    persist_identity_files(&identity, &identity_file, &private_key_file).await?;
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
     output.success(&format!("Private key saved to: {:?}", private_key_file))?;

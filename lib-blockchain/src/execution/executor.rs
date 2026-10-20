@@ -408,6 +408,23 @@ impl BlockExecutor {
         Ok(())
     }
 
+    /// Shared non-asset mint tail: apply the mint, sync the canonical SOV
+    /// contract, and emit the standard `TokenMint` outcome. Used by both the
+    /// `TokenMint` fallback path and the `SystemMint` arm.
+    fn mint_plain(
+        &self,
+        mutator: &StateMutator<'_>,
+        token: TokenId,
+        to: Address,
+        amount: u128,
+    ) -> Result<TxOutcome, TxApplyError> {
+        tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
+        if token == Self::canonical_sov_token_id() {
+            self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
+        }
+        Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
+    }
+
     /// Create a new block executor with explicit token creation fee.
     pub fn new_with_token_creation_fee(
         store: Arc<dyn BlockchainStore>,
@@ -3595,11 +3612,7 @@ impl BlockExecutor {
                     }
                     Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
                 } else {
-                    tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
-                    if token == Self::canonical_sov_token_id() {
-                        self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
-                    }
-                    Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
+                    self.mint_plain(mutator, token, to, amount)
                 }
             }
             TransactionType::SystemMint => {
@@ -3620,14 +3633,8 @@ impl BlockExecutor {
                 } else {
                     TokenId::new(mint_data.token_id)
                 };
-                let to = Address::new(mint_data.to);
-                let amount = mint_data.amount;
 
-                tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
-                if token == Self::canonical_sov_token_id() {
-                    self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
-                }
-                Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
+                self.mint_plain(mutator, token, Address::new(mint_data.to), mint_data.amount)
             }
             TransactionType::WalletRegistration => {
                 let wallet_data = tx.wallet_data().ok_or_else(|| {

@@ -14,6 +14,25 @@ use crate::server::https_gateway::{GatewayTlsConfig, HttpsGateway};
 use lib_network::zdns::{ZdnsConfig, ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
 
+/// Poll a global-provider getter at 500ms intervals until it succeeds.
+async fn wait_for_global<T, E, Fut, F>(label: &str, max_attempts: u32, mut getter: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    let mut attempts = 0u32;
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        attempts += 1;
+        if let Ok(value) = getter().await {
+            return Ok(value);
+        }
+        if attempts >= max_attempts {
+            return Err(anyhow::anyhow!("Timeout waiting for {label}"));
+        }
+    }
+}
+
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
     status: Arc<RwLock<ComponentStatus>>,
@@ -277,20 +296,10 @@ impl Component for ProtocolsComponent {
             }
             Err(_) => {
                 info!("⏳ Waiting for BlockchainComponent...");
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    attempts += 1;
-                    if let Ok(shared_blockchain) =
-                        crate::runtime::blockchain_provider::get_global_blockchain().await
-                    {
-                        info!(" ✓ Global blockchain initialized");
-                        break shared_blockchain;
-                    }
-                    if attempts >= 60 {
-                        return Err(anyhow::anyhow!("Timeout waiting for BlockchainComponent"));
-                    }
-                }
+                wait_for_global("BlockchainComponent", 60, || {
+                    crate::runtime::blockchain_provider::get_global_blockchain()
+                })
+                .await?
             }
         };
 
@@ -317,17 +326,10 @@ impl Component for ProtocolsComponent {
             Ok(shared) => shared,
             Err(_) => {
                 info!("⏳ Waiting for IdentityComponent...");
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    attempts += 1;
-                    if let Ok(shared) = crate::runtime::get_global_identity_manager().await {
-                        break shared;
-                    }
-                    if attempts >= 60 {
-                        return Err(anyhow::anyhow!("Timeout waiting for IdentityComponent"));
-                    }
-                }
+                wait_for_global("IdentityComponent", 60, || {
+                    crate::runtime::get_global_identity_manager()
+                })
+                .await?
             }
         };
 
@@ -345,22 +347,10 @@ impl Component for ProtocolsComponent {
             Err(_) => {
                 // Fallback: wait for StorageComponent to initialize
                 info!("⏳ Waiting for StorageComponent to initialize storage...");
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    attempts += 1;
-                    if let Ok(storage) =
-                        crate::runtime::storage_provider::get_global_storage().await
-                    {
-                        info!(" ✓ Storage became available after {} attempts", attempts);
-                        break storage;
-                    }
-                    if attempts >= 30 {
-                        return Err(anyhow::anyhow!(
-                            "Timeout waiting for StorageComponent to initialize storage"
-                        ));
-                    }
-                }
+                wait_for_global("StorageComponent", 30, || {
+                    crate::runtime::storage_provider::get_global_storage()
+                })
+                .await?
             }
         };
 

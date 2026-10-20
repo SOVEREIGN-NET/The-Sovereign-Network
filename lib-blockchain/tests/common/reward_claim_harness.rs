@@ -123,12 +123,8 @@ fn install_bubl_mempool_fixtures(blockchain: &mut Blockchain, actors: &RewardCla
     blockchain.insert_token_nonce_shadow(actors.token_id, actors.treasury.public_key.key_id, 0);
 }
 
-/// Seed rewards module + policy document (legacy BUBL policy) with no token contract.
-fn put_rewards_module_with_legacy_policy(
-    store: &dyn BlockchainStore,
-    actors: &RewardClaimActors,
-    block_height: u64,
-) {
+/// Install the legacy BUBL rewards module + policy document for `actors.token_id`.
+fn install_rewards_module_legacy(store: &dyn BlockchainStore, actors: &RewardClaimActors) {
     use lib_blockchain::contracts::sovereign_asset::RewardsModuleState;
     use lib_blockchain::rewards_policy::{
         legacy_bubl_policy, policy_hash, validate_rewards_policy_value,
@@ -143,9 +139,6 @@ fn put_rewards_module_with_legacy_policy(
     let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
 
     store
-        .begin_block(block_height)
-        .expect("begin rewards fixture block");
-    store
         .put_rewards_module_state(
             &actors.token_id,
             &RewardsModuleState {
@@ -156,10 +149,22 @@ fn put_rewards_module_with_legacy_policy(
                 pending_policy: None,
             },
         )
-        .expect("seed rewards module without token contract");
+        .expect("seed rewards module");
     store
         .put_rewards_policy_document(&policy_hash_arr, &policy_document)
         .expect("seed rewards policy document");
+}
+
+/// Seed rewards module + policy document (legacy BUBL policy) with no token contract.
+fn put_rewards_module_with_legacy_policy(
+    store: &dyn BlockchainStore,
+    actors: &RewardClaimActors,
+    block_height: u64,
+) {
+    store
+        .begin_block(block_height)
+        .expect("begin rewards fixture block");
+    install_rewards_module_legacy(store, actors);
     store.commit_block().expect("commit rewards fixture block");
 }
 
@@ -200,36 +205,7 @@ pub fn seed_executor_store_rewards_module_without_token_contract(
         )
         .expect("fund treasury");
     // Install rewards module + policy inside same block window.
-    {
-        use lib_blockchain::contracts::sovereign_asset::RewardsModuleState;
-        use lib_blockchain::rewards_policy::{
-            legacy_bubl_policy, policy_hash, validate_rewards_policy_value,
-        };
-
-        let policy = legacy_bubl_policy();
-        validate_rewards_policy_value(&policy).expect("legacy policy valid");
-        let policy_hash_arr = policy_hash(&policy).expect("policy hash").as_array();
-        let policy_document = serde_json::to_vec(&policy).expect("policy json");
-        let mut policy_cid_input = b"zhtp/rewards-policy/cid/v1\0".to_vec();
-        policy_cid_input.extend_from_slice(&policy_document);
-        let policy_cid = lib_crypto::hash_blake3(&policy_cid_input);
-
-        store
-            .put_rewards_module_state(
-                &actors.token_id,
-                &RewardsModuleState {
-                    spend_delegate_key_id: actors.treasury.public_key.key_id,
-                    policy_cid,
-                    policy_hash: policy_hash_arr,
-                    nonce: 0,
-                    pending_policy: None,
-                },
-            )
-            .expect("seed rewards module");
-        store
-            .put_rewards_policy_document(&policy_hash_arr, &policy_document)
-            .expect("seed policy document");
-    }
+    install_rewards_module_legacy(store.as_ref(), actors);
     let setup_block = block_builders::block_at_height(1, genesis.header.block_hash);
     store
         .append_block(&setup_block)

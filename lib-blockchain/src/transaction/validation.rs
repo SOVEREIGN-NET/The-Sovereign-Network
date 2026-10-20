@@ -196,6 +196,62 @@ pub struct StatefulTransactionValidator<'a> {
 // StatefulTransactionValidator impl blocks.
 // =========================================================================
 
+/// Whether a transaction type must be treated as non-system for signature +
+/// identity validation regardless of its empty-input (coinbase) shape.
+fn forces_non_system_type(transaction_type: TransactionType) -> bool {
+    matches!(
+        transaction_type,
+        TransactionType::TokenTransfer
+            | TransactionType::RewardClaim
+            | TransactionType::TokenCreation
+            | TransactionType::AssetLaunch
+            | TransactionType::AssetModuleUpgrade
+            | TransactionType::AssetManifestUpdate
+            | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetAuthorityTransferCancel
+            | TransactionType::AssetRewardsDelegateRotate
+            | TransactionType::AssetRewardsPolicyUpdate
+            | TransactionType::AssetBurnBpsUpdate
+            | TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver
+    )
+}
+
+/// Map a threshold-approval error to its `ValidationError` counterpart.
+fn to_threshold_validation_error(
+    e: crate::transaction::threshold_approval::ThresholdError,
+) -> ValidationError {
+    use crate::transaction::threshold_approval::ThresholdError;
+    match e {
+        ThresholdError::DuplicateSigner(_) => ValidationError::DuplicateSigner,
+        ThresholdError::InvalidSignature(_) => ValidationError::InvalidApproval,
+        ThresholdError::UnauthorizedSigner(_) => ValidationError::Unauthorized,
+        ThresholdError::ThresholdNotMet { .. } => ValidationError::ThresholdNotMet,
+    }
+}
+
+/// Reject a transaction that carries UTXO inputs/outputs (and, optionally, a
+/// non-zero fee). Shared by system registry / allocation validators that must
+/// be pure metadata updates.
+fn validate_no_utxo_transaction(
+    transaction: &Transaction,
+    require_zero_fee: bool,
+) -> ValidationResult {
+    if !transaction.inputs.is_empty() {
+        return Err(ValidationError::InvalidInputs);
+    }
+    if !transaction.outputs.is_empty() {
+        return Err(ValidationError::InvalidOutputs);
+    }
+    if require_zero_fee && transaction.fee != 0 {
+        return Err(ValidationError::InvalidFee);
+    }
+    Ok(())
+}
+
 /// Validates that an observer transaction carries its typed payload and has
 /// no UTXO inputs or outputs.  Reused in both stateless validation functions.
 fn validate_observer_tx_structure(tx: &Transaction) -> ValidationResult {
@@ -327,25 +383,7 @@ impl TransactionValidator {
         // Observer admission transactions (observer-admission-4) carry no
         // inputs/outputs by design but MUST be authenticated and identity-bound;
         // mark them non-system so signature + identity validation runs.
-        if matches!(
-            transaction.transaction_type,
-            TransactionType::TokenTransfer
-                | TransactionType::RewardClaim
-                | TransactionType::TokenCreation
-                | TransactionType::AssetLaunch
-                | TransactionType::AssetModuleUpgrade
-                | TransactionType::AssetManifestUpdate
-                | TransactionType::AssetAuthorityTransfer
-                | TransactionType::AssetAuthorityTransferCancel
-                | TransactionType::AssetRewardsDelegateRotate
-                | TransactionType::AssetRewardsPolicyUpdate
-                | TransactionType::AssetBurnBpsUpdate
-                | TransactionType::RegisterObserver
-                | TransactionType::UpdateObserverMetadata
-                | TransactionType::SuspendObserver
-                | TransactionType::RevokeObserver
-                | TransactionType::ReauthorizeObserver
-        ) {
+        if forces_non_system_type(transaction.transaction_type) {
             is_system_transaction = false;
         }
 
@@ -1915,25 +1953,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         // TokenTransfer must pay fees even with empty inputs.
         // Observer admission transactions (observer-admission-4) require
         // signature + identity validation despite having no inputs.
-        if matches!(
-            transaction.transaction_type,
-            TransactionType::TokenTransfer
-                | TransactionType::RewardClaim
-                | TransactionType::TokenCreation
-                | TransactionType::AssetLaunch
-                | TransactionType::AssetModuleUpgrade
-                | TransactionType::AssetManifestUpdate
-                | TransactionType::AssetAuthorityTransfer
-                | TransactionType::AssetAuthorityTransferCancel
-                | TransactionType::AssetRewardsDelegateRotate
-                | TransactionType::AssetRewardsPolicyUpdate
-                | TransactionType::AssetBurnBpsUpdate
-                | TransactionType::RegisterObserver
-                | TransactionType::UpdateObserverMetadata
-                | TransactionType::SuspendObserver
-                | TransactionType::RevokeObserver
-                | TransactionType::ReauthorizeObserver
-        ) {
+        if forces_non_system_type(transaction.transaction_type) {
             is_system_transaction = false;
         }
         tracing::debug!(
@@ -2732,10 +2752,32 @@ impl<'a> StatefulTransactionValidator<'a> {
         Ok(())
     }
 
+    /// Validate a Bootstrap-Council threshold approval set against the signer's
+    /// council membership. Shared by entity-registry init and treasury allocation.
+    fn validate_council_threshold(
+        &self,
+        approvals: &crate::transaction::threshold_approval::ThresholdApprovalSet,
+        preimage: &[u8; 32],
+    ) -> ValidationResult {
+        use crate::transaction::threshold_approval::validate_threshold_approvals;
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        validate_threshold_approvals(
+            approvals,
+            preimage,
+            |pk_bytes| {
+                // #2639: sled-first DID-by-pubkey (in-mem fallback).
+                blockchain
+                    .did_by_public_key(pk_bytes)
+                    .map(|did| blockchain.is_council_member(&did))
+                    .unwrap_or(false)
+            },
+            blockchain.council_threshold as usize,
+        )
+        .map_err(to_threshold_validation_error)
+    }
+
     fn validate_init_entity_registry(&self, transaction: &Transaction) -> ValidationResult {
-        use crate::transaction::threshold_approval::{
-            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
-        };
+        use crate::transaction::threshold_approval::{compute_approval_preimage, ApprovalDomain};
 
         const MIN_TREASURY_DILITHIUM_PK_LEN: usize = 1312;
         // tx_type byte for InitEntityRegistry = 38
@@ -2745,15 +2787,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .init_entity_registry_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
+        validate_no_utxo_transaction(transaction, true)?;
 
         let cbe_pk = &data.cbe_treasury.dilithium_pk;
         let nonprofit_pk = &data.nonprofit_treasury.dilithium_pk;
@@ -2810,35 +2844,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::ThresholdNotMet);
         }
 
-        validate_threshold_approvals(
-            &data.approvals,
-            &preimage,
-            |pk_bytes| {
-                // #2639: sled-first DID-by-pubkey (in-mem fallback). The old
-                // get_identity_by_public_key scanned the in-memory shadow only,
-                // empty on a store-backed node after restart — so council members
-                // were unverifiable and threshold approvals silently failed there.
-                blockchain
-                    .did_by_public_key(pk_bytes)
-                    .map(|did| blockchain.is_council_member(&did))
-                    .unwrap_or(false)
-            },
-            blockchain.council_threshold as usize,
-        )
-        .map_err(|e| match e {
-            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                ValidationError::DuplicateSigner
-            }
-            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                ValidationError::InvalidApproval
-            }
-            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                ValidationError::Unauthorized
-            }
-            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                ValidationError::ThresholdNotMet
-            }
-        })?;
+        self.validate_council_threshold(&data.approvals, &preimage)?;
 
         Ok(())
     }
@@ -2855,15 +2861,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .record_on_ramp_trade_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
+        validate_no_utxo_transaction(transaction, true)?;
         if data.cbe_amount == 0 {
             return Err(ValidationError::InvalidAmount);
         }
@@ -2923,29 +2921,14 @@ impl<'a> StatefulTransactionValidator<'a> {
             },
             oracle_threshold,
         )
-        .map_err(|e| match e {
-            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                ValidationError::DuplicateSigner
-            }
-            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                ValidationError::InvalidApproval
-            }
-            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                ValidationError::Unauthorized
-            }
-            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                ValidationError::ThresholdNotMet
-            }
-        })?;
+        .map_err(to_threshold_validation_error)?;
 
         Ok(())
     }
 
     /// Validate a TreasuryAllocation transaction.
     fn validate_treasury_allocation(&self, transaction: &Transaction) -> ValidationResult {
-        use crate::transaction::threshold_approval::{
-            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
-        };
+        use crate::transaction::threshold_approval::{compute_approval_preimage, ApprovalDomain};
 
         // tx_type byte for TreasuryAllocation = 40
         const TX_TYPE_BYTE: u8 = 40;
@@ -2954,15 +2937,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .treasury_allocation_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
+        validate_no_utxo_transaction(transaction, true)?;
         if data.amount == 0 {
             return Err(ValidationError::InvalidAmount);
         }
@@ -3019,35 +2994,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             &payload_bytes,
         );
 
-        validate_threshold_approvals(
-            &data.approvals,
-            &preimage,
-            |pk_bytes| {
-                // #2639: sled-first DID-by-pubkey (in-mem fallback). The old
-                // get_identity_by_public_key scanned the in-memory shadow only,
-                // empty on a store-backed node after restart — so council members
-                // were unverifiable and threshold approvals silently failed there.
-                blockchain
-                    .did_by_public_key(pk_bytes)
-                    .map(|did| blockchain.is_council_member(&did))
-                    .unwrap_or(false)
-            },
-            blockchain.council_threshold as usize,
-        )
-        .map_err(|e| match e {
-            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                ValidationError::DuplicateSigner
-            }
-            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                ValidationError::InvalidApproval
-            }
-            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                ValidationError::Unauthorized
-            }
-            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                ValidationError::ThresholdNotMet
-            }
-        })?;
+        self.validate_council_threshold(&data.approvals, &preimage)?;
 
         Ok(())
     }
@@ -3057,12 +3004,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .create_employment_contract_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // dao_id and employee_key_id must be non-zero
         if data.dao_id == [0u8; 32] || data.employee_key_id == [0u8; 32] {
@@ -3098,12 +3040,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .process_payroll_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // contract_id must be non-zero
         if data.contract_id == [0u8; 32] {
@@ -3163,12 +3100,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // No UTXO inputs or outputs allowed.
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // Staker must be the transaction signer.
         if data.staker != transaction.signature.public_key.key_id {
@@ -3247,12 +3179,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .dao_unstake_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // Staker must be the transaction signer.
         if data.staker != transaction.signature.public_key.key_id {

@@ -215,23 +215,55 @@ async fn fetch_token_nonce(
         hex::encode(address)
     );
 
+    let response_json = get_json_checked(client, &path).await?;
+    parse_nonce_response(&response_json, &path)
+}
+
+/// Post a JSON body to `endpoint` and parse the response, mapping transport and
+/// parse failures to `ApiCallFailed`.
+async fn post_json_checked(
+    client: &ZhtpClient,
+    endpoint: &str,
+    body: &serde_json::Value,
+) -> CliResult<serde_json::Value> {
     let response = client
-        .get(&path)
+        .post_json(endpoint, body)
         .await
         .map_err(|e| CliError::ApiCallFailed {
-            endpoint: path.clone(),
+            endpoint: endpoint.to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
+    ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+        endpoint: endpoint.to_string(),
+        status: 0,
+        reason: format!("Failed to parse response: {e}"),
+    })
+}
 
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: path.clone(),
+/// GET a path and parse the response, mapping transport and parse failures to
+/// `ApiCallFailed`.
+async fn get_json_checked(client: &ZhtpClient, path: &str) -> CliResult<serde_json::Value> {
+    let response = client
+        .get(path)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: path.to_string(),
             status: 0,
-            reason: format!("Failed to parse response: {e}"),
+            reason: e.to_string(),
         })?;
+    ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+        endpoint: path.to_string(),
+        status: 0,
+        reason: format!("Failed to parse response: {e}"),
+    })
+}
 
-    parse_nonce_response(&response_json, &path)
+/// Serialize a signed transaction into the `{"signed_tx": hex}` request body.
+fn signed_tx_body(tx: &Transaction) -> CliResult<serde_json::Value> {
+    let tx_bytes = bincode::serialize(tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {e}")))?;
+    Ok(json!({ "signed_tx": hex::encode(tx_bytes) }))
 }
 
 // ============================================================================
@@ -367,21 +399,7 @@ pub async fn handle_create(
     });
 
     // Reuse the QUIC client already opened above for the fee lookup.
-    let response = client
-        .post_json("/api/v1/token/create", &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/create".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/create".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = post_json_checked(&client, "/api/v1/token/create", &request_body).await?;
 
     let formatted = format_output(&response_json, &cli.format)?;
     output.print(&formatted)?;
@@ -721,21 +739,7 @@ pub async fn handle_dao_asset_launch(
     });
 
     let client = connect_default(&cli.server).await?;
-    let response = client
-        .post_json("/api/v1/assets/launch", &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/assets/launch".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/assets/launch".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = post_json_checked(&client, "/api/v1/assets/launch", &request_body).await?;
 
     let formatted = format_output(&response_json, &cli.format)?;
     output.print(&formatted)?;
@@ -783,27 +787,11 @@ async fn handle_mint<O: Output>(
     let token_id_bytes = parse_token_id(token_id)?;
     let to_pubkey = parse_public_key(to)?;
     let tx = build_signed_token_mint_tx(&keypair, token_id_bytes, to_pubkey.key_id, amount)?;
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
+    let request_body = signed_tx_body(&tx)?;
 
     let client = connect_default(&cli.server).await?;
 
-    let response = client
-        .post_json("/api/v1/token/mint", &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/mint".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/mint".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = post_json_checked(&client, "/api/v1/token/mint", &request_body).await?;
 
     if response_json
         .get("success")
@@ -856,25 +844,9 @@ async fn handle_transfer<O: Output>(
     output.info(&format!("Using transfer nonce: {}", nonce))?;
     let tx =
         build_signed_token_transfer_tx(&keypair, token_id_bytes, to_pubkey.key_id, amount, nonce)?;
-    let tx_bytes = bincode::serialize(&tx)
-        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
-    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
+    let request_body = signed_tx_body(&tx)?;
 
-    let response = client
-        .post_json("/api/v1/token/transfer", &request_body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/transfer".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/token/transfer".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = post_json_checked(&client, "/api/v1/token/transfer", &request_body).await?;
 
     if response_json
         .get("success")
@@ -915,21 +887,7 @@ async fn handle_info<O: Output>(cli: &ZhtpCli, output: &O, token_id: &str) -> Cl
     let client = connect_default(&cli.server).await?;
 
     let path = build_info_path(token_id);
-    let response = client
-        .get(&path)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: path.clone(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: path,
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = get_json_checked(&client, &path).await?;
 
     let formatted = format_output(&response_json, &cli.format)?;
     output.print(&formatted)?;
@@ -952,21 +910,7 @@ async fn handle_balance<O: Output>(
     let client = connect_default(&cli.server).await?;
 
     let path = build_balance_path(token_id, address);
-    let response = client
-        .get(&path)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: path.clone(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: path,
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = get_json_checked(&client, &path).await?;
 
     if let Some(balance) = response_json.get("balance") {
         let symbol = response_json
@@ -988,21 +932,7 @@ async fn handle_list<O: Output>(cli: &ZhtpCli, output: &O) -> CliResult<()> {
 
     let client = connect_default(&cli.server).await?;
 
-    let response = client
-        .get("/api/v1/assets")
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/assets".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
-
-    let response_json: serde_json::Value =
-        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/assets".to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let response_json = get_json_checked(&client, "/api/v1/assets").await?;
 
     if let Some(count) = response_json.get("count").and_then(|v| v.as_u64()) {
         output.info(&format!("Found {} asset(s)", count))?;
