@@ -2318,16 +2318,11 @@ impl IdentityHandler {
                         .to_string(),
                 ));
             }
-            for (label, wid) in [("primary", primary_wallet_id.as_str())] {
-                if blockchain.wallet_exists(wid) {
-                    return Err((
-                        ZhtpStatus::Conflict,
-                        format!(
-                            "{} wallet already exists on chain; cannot re-register",
-                            label
-                        ),
-                    ));
-                }
+            if blockchain.wallet_exists(primary_wallet_id.as_str()) {
+                return Err((
+                    ZhtpStatus::Conflict,
+                    format!("primary wallet already exists on chain; cannot re-register"),
+                ));
             }
 
             let mut queued_txs: Vec<Transaction> = Vec::new();

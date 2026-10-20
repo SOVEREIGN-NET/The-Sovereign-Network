@@ -501,8 +501,6 @@ fn reconstruct_identity_manager_from_blockchain_state(
 async fn rebuild_index_from_backup(
     storage: &mut lib_storage::PersistentStorageSystem,
 ) -> Result<u32> {
-    use std::io::BufReader;
-
     let backup_path = crate::node_data_dir()
         .join("backup")
         .join("identities.json");
@@ -514,10 +512,10 @@ async fn rebuild_index_from_backup(
 
     info!("📂 Reading identity backup from {:?}", backup_path);
 
-    let file = std::fs::File::open(&backup_path)
+    let backup_content = tokio::fs::read_to_string(&backup_path)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
-    let reader = BufReader::new(file);
-    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_reader(reader)
+    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&backup_content)
         .map_err(|e| anyhow::anyhow!("Failed to parse backup: {}", e))?;
 
     let mut indexed = 0u32;
@@ -545,8 +543,6 @@ async fn rebuild_index_from_backup(
 ///
 /// SAFE: Only adds missing identities, never overwrites existing ones.
 async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
-    use std::io::BufReader;
-
     if !dht_authority_mutations_enabled() {
         return Ok((0, 0));
     }
@@ -564,10 +560,10 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
 
     info!("📂 Reading identities from {:?}", backup_path);
 
-    let file = std::fs::File::open(&backup_path)
+    let backup_content = tokio::fs::read_to_string(&backup_path)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
-    let reader = BufReader::new(file);
-    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_reader(reader)
+    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&backup_content)
         .map_err(|e| anyhow::anyhow!("Failed to parse backup: {}", e))?;
 
     info!("📋 Found {} identities in backup file", backup.len());

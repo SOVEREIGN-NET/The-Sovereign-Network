@@ -178,7 +178,6 @@ impl std::error::Error for ValidationError {}
 pub type ValidationResult = Result<(), ValidationError>;
 
 /// Transaction validator with state context
-
 pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
     // blockchain state, UTXO set, nullifier set, etc.

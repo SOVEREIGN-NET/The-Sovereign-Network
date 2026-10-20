@@ -51,7 +51,7 @@ impl Component for StorageComponent {
 
                 // Ensure the storage directory exists
                 if let Some(parent) = db_path.parent() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
+                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
                         warn!("Failed to create storage directory {:?}: {}", parent, e);
                     }
                 }
