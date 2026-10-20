@@ -130,14 +130,14 @@ async fn main() -> Result<()> {
     // Test 8: Test wallet types (use imported WalletType)
     println!("\n8. Testing wallet types...");
     let wallet_type_standard: WalletType = WalletType::Standard;
-    let wallet_type_savings: WalletType = WalletType::Savings;
+    let wallet_type_primary: WalletType = WalletType::Primary;
     println!(
         "   ✓ WalletType::Standard imported and used: {:?}",
         wallet_type_standard
     );
     println!(
-        "   ✓ WalletType::Savings imported and used: {:?}",
-        wallet_type_savings
+        "   ✓ WalletType::Primary imported and used: {:?}",
+        wallet_type_primary
     );
 
     // Test via wallets module

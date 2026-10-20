@@ -186,7 +186,7 @@ fn main() -> Result<()> {
 
     // ── 5. Block 2: TokenMint 5,000 SOV per PRIMARY wallet only ──────────
     // Only Primary wallets receive the welcome bonus.
-    // UBI, Savings, and other wallet types start at 0 SOV.
+    // Non-primary wallet types start at 0 SOV.
     let primary_wallets: Vec<&WalletTransactionData> = wallets_sorted
         .iter()
         .filter(|w| w.wallet_type.eq_ignore_ascii_case(PRIMARY_WALLET_TYPE))

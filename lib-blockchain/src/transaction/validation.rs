@@ -1658,7 +1658,7 @@ impl TransactionValidator {
 
         // Validate wallet type is recognized
         match wallet_data.wallet_type.as_str() {
-            "Primary" | "UBI" | "Savings" | "DAO" => {
+            "Primary" | "DAO" => {
                 // Valid wallet types
             }
             _ => return Err(ValidationError::InvalidWalletType),

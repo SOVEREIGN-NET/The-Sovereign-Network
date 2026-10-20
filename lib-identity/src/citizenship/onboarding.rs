@@ -13,11 +13,7 @@ pub struct CitizenshipResult {
     pub identity_id: IdentityId,
     /// Primary wallet for daily transactions
     pub primary_wallet_id: WalletId,
-    /// UBI wallet for automatic Universal Basic Income payouts
-    pub ubi_wallet_id: WalletId,
-    /// Savings wallet for long-term storage
-    pub savings_wallet_id: WalletId,
-    /// Recovery seed phrases for all wallets (CRITICAL TO SAVE!)
+    /// Recovery seed phrases for the primary wallet (CRITICAL TO SAVE!)
     pub wallet_seed_phrases: WalletSeedPhrases,
     /// DAO governance registration
     pub dao_registration: DaoRegistration,
@@ -33,13 +29,10 @@ pub struct CitizenshipResult {
 
 /// Wallet recovery seed phrase - MUST BE STORED SECURELY!
 ///
-/// Single master seed phrase that derives all 3 citizen wallets via HD derivation:
-/// - Index 0 → Primary wallet
-/// - Index 1 → UBI wallet
-/// - Index 2 → Savings wallet
+/// Single master seed phrase that derives the citizen's Primary wallet via HD derivation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSeedPhrases {
-    /// Master 24-word seed phrase (derives all wallets)
+    /// Master 24-word seed phrase (derives the Primary wallet)
     pub master_seed_phrase: crate::recovery::RecoveryPhrase,
 }
 
@@ -59,8 +52,6 @@ impl CitizenshipResult {
     pub fn new(
         identity_id: IdentityId,
         primary_wallet_id: WalletId,
-        ubi_wallet_id: WalletId,
-        savings_wallet_id: WalletId,
         wallet_seed_phrases: WalletSeedPhrases,
         dao_registration: DaoRegistration,
         ubi_registration: UbiRegistration,
@@ -71,8 +62,6 @@ impl CitizenshipResult {
         Self {
             identity_id,
             primary_wallet_id,
-            ubi_wallet_id,
-            savings_wallet_id,
             wallet_seed_phrases,
             dao_registration,
             ubi_registration,
@@ -86,7 +75,7 @@ impl CitizenshipResult {
     pub fn get_benefits_summary(&self) -> CitizenBenefitsSummary {
         CitizenBenefitsSummary {
             identity_id: self.identity_id.clone(),
-            wallet_count: 3, // Primary, UBI, Savings
+            wallet_count: 1, // Primary
             monthly_ubi_amount: self.ubi_registration.monthly_amount,
             daily_ubi_amount: self.ubi_registration.daily_amount,
             welcome_bonus_amount: self.welcome_bonus.bonus_amount,

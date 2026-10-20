@@ -119,28 +119,15 @@ async fn handle_identity_command_impl(
             device_id,
             keystore,
         } => {
-            init_creator_identity(
-                &display_name,
-                &device_id,
-                keystore.as_deref(),
-                cli,
-                output,
-            )
-            .await
+            init_creator_identity(&display_name, &device_id, keystore.as_deref(), cli, output).await
         }
         IdentityAction::Register {
             display_name,
             device_id,
             keystore,
         } => {
-            register_identity_on_chain(
-                &display_name,
-                &device_id,
-                keystore.as_deref(),
-                cli,
-                output,
-            )
-            .await
+            register_identity_on_chain(&display_name, &device_id, keystore.as_deref(), cli, output)
+                .await
         }
         IdentityAction::Verify { identity_id } => {
             // Pure validation
@@ -195,9 +182,8 @@ async fn import_identity_impl(
     let zkdid_content = std::fs::read_to_string(file_path).map_err(|e| {
         CliError::IdentityError(format!("Failed to read .zkdid file '{}': {}", file_path, e))
     })?;
-    let zkdid: serde_json::Value = serde_json::from_str(&zkdid_content).map_err(|e| {
-        CliError::IdentityError(format!("Failed to parse .zkdid JSON: {}", e))
-    })?;
+    let zkdid: serde_json::Value = serde_json::from_str(&zkdid_content)
+        .map_err(|e| CliError::IdentityError(format!("Failed to parse .zkdid JSON: {}", e)))?;
 
     let keystore_b64 = zkdid
         .get("keystore_base64")
@@ -217,12 +203,12 @@ async fn import_identity_impl(
     let mut identity_json: Option<String> = None;
     let mut private_key_json: Option<String> = None;
 
-    for entry_result in archive.entries().map_err(|e| {
-        CliError::IdentityError(format!("Failed to read tar archive: {}", e))
-    })? {
-        let mut entry = entry_result.map_err(|e| {
-            CliError::IdentityError(format!("Failed to read tar entry: {}", e))
-        })?;
+    for entry_result in archive
+        .entries()
+        .map_err(|e| CliError::IdentityError(format!("Failed to read tar archive: {}", e)))?
+    {
+        let mut entry = entry_result
+            .map_err(|e| CliError::IdentityError(format!("Failed to read tar entry: {}", e)))?;
         let path = entry
             .path()
             .map_err(|e| CliError::IdentityError(format!("Failed to read entry path: {}", e)))?
@@ -230,9 +216,9 @@ async fn import_identity_impl(
             .to_string();
 
         let mut content = String::new();
-        entry.read_to_string(&mut content).map_err(|e| {
-            CliError::IdentityError(format!("Failed to read entry content: {}", e))
-        })?;
+        entry
+            .read_to_string(&mut content)
+            .map_err(|e| CliError::IdentityError(format!("Failed to read entry content: {}", e)))?;
 
         if path.ends_with("user_identity.json") {
             identity_json = Some(content);
@@ -242,21 +228,15 @@ async fn import_identity_impl(
     }
 
     let identity_json = identity_json.ok_or_else(|| {
-        CliError::IdentityError(
-            "Backup archive missing keystore/user_identity.json".to_string(),
-        )
+        CliError::IdentityError("Backup archive missing keystore/user_identity.json".to_string())
     })?;
     let private_key_json = private_key_json.ok_or_else(|| {
-        CliError::IdentityError(
-            "Backup archive missing keystore/user_private_key.json".to_string(),
-        )
+        CliError::IdentityError("Backup archive missing keystore/user_private_key.json".to_string())
     })?;
 
     // 3. Parse identity to extract DID and public key
-    let identity_value: serde_json::Value =
-        serde_json::from_str(&identity_json).map_err(|e| {
-            CliError::IdentityError(format!("Failed to parse identity JSON: {}", e))
-        })?;
+    let identity_value: serde_json::Value = serde_json::from_str(&identity_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to parse identity JSON: {}", e)))?;
 
     let did = identity_value
         .get("did")
@@ -267,9 +247,8 @@ async fn import_identity_impl(
     output.info(&format!("DID: {}", did))?;
 
     // 4. Convert private key from JSON array format to hex format for KeystorePrivateKey
-    let pk_value: serde_json::Value = serde_json::from_str(&private_key_json).map_err(|e| {
-        CliError::IdentityError(format!("Failed to parse private key JSON: {}", e))
-    })?;
+    let pk_value: serde_json::Value = serde_json::from_str(&private_key_json)
+        .map_err(|e| CliError::IdentityError(format!("Failed to parse private key JSON: {}", e)))?;
 
     let extract_bytes = |value: &serde_json::Value, field: &str| -> CliResult<Vec<u8>> {
         let arr = value.get(field).ok_or_else(|| {
@@ -277,14 +256,10 @@ async fn import_identity_impl(
         })?;
         // Handle both hex string and JSON array formats
         if let Some(hex_str) = arr.as_str() {
-            hex::decode(hex_str).map_err(|e| {
-                CliError::IdentityError(format!("Invalid hex in '{}': {}", field, e))
-            })
+            hex::decode(hex_str)
+                .map_err(|e| CliError::IdentityError(format!("Invalid hex in '{}': {}", field, e)))
         } else if let Some(arr) = arr.as_array() {
-            Ok(arr
-                .iter()
-                .map(|v| v.as_u64().unwrap_or(0) as u8)
-                .collect())
+            Ok(arr.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect())
         } else {
             Err(CliError::IdentityError(format!(
                 "Field '{}' must be hex string or byte array",
@@ -317,9 +292,9 @@ async fn import_identity_impl(
         extract_bytes(&pk_value, "dilithium_pk")?
     } else {
         // Fall back to identity's public_key
-        let pk_obj = identity_value.get("public_key").ok_or_else(|| {
-            CliError::IdentityError("Identity missing public_key".to_string())
-        })?;
+        let pk_obj = identity_value
+            .get("public_key")
+            .ok_or_else(|| CliError::IdentityError("Identity missing public_key".to_string()))?;
         if let Some(arr) = pk_obj.get("dilithium_pk") {
             if let Some(hex_str) = arr.as_str() {
                 hex::decode(hex_str).map_err(|e| {
@@ -344,13 +319,12 @@ async fn import_identity_impl(
     dilithium_pk[..copy_len].copy_from_slice(&dilithium_pk_raw[..copy_len]);
 
     // 5. Build KeystorePrivateKey in hex format and save
-    let keystore_private_key =
-        zhtp::keyfile_names::KeystorePrivateKey {
-            dilithium_sk,
-            dilithium_pk,
-            kyber_sk,
-            master_seed,
-        };
+    let keystore_private_key = zhtp::keyfile_names::KeystorePrivateKey {
+        dilithium_sk,
+        dilithium_pk,
+        kyber_sk,
+        master_seed,
+    };
 
     let keystore_dir = match keystore_path {
         Some(p) => PathBuf::from(p),
@@ -370,9 +344,8 @@ async fn import_identity_impl(
 
     // Save private key in hex-encoded KeystorePrivateKey format
     let private_key_file = keystore_dir.join(USER_PRIVATE_KEY_FILENAME);
-    let pk_json = serde_json::to_string_pretty(&keystore_private_key).map_err(|e| {
-        CliError::IdentityError(format!("Failed to serialize private key: {}", e))
-    })?;
+    let pk_json = serde_json::to_string_pretty(&keystore_private_key)
+        .map_err(|e| CliError::IdentityError(format!("Failed to serialize private key: {}", e)))?;
     std::fs::write(&private_key_file, &pk_json).map_err(|e| {
         CliError::IdentityError(format!(
             "Failed to write {}: {}",
@@ -478,14 +451,16 @@ async fn init_creator_identity(
     output.success("Creator identity ready.")?;
     output.print("Next steps:")?;
     output.print(&format!("  1. Keystore: {:?}", keystore))?;
-    output.print("  2. Launch DAO token: zhtp-cli dao launch --name <NAME> --symbol <SYM> --supply <atoms>")?;
+    output.print(
+        "  2. Launch DAO token: zhtp-cli dao launch --name <NAME> --symbol <SYM> --supply <atoms>",
+    )?;
     output.print("  3. Operator runbook: docs/ops/dao-launch-bootstrap.md")?;
     output.print("  4. Rewards policy: schemas/zhtp/rewards-policy/examples/bubl-v1.json")?;
     Ok(())
 }
 
 /// Register identity on-chain: generates keys (if needed), then calls
-/// POST /api/v1/identity/register to create identity + 3 wallets + SOV welcome bonus.
+/// POST /api/v1/identity/register to create identity + Primary wallet + SOV welcome bonus.
 /// This matches the app's identity creation flow — the single canonical path.
 async fn register_identity_on_chain(
     display_name: &str,
@@ -529,17 +504,14 @@ async fn register_identity_on_chain(
         // Save identity
         let json = serde_json::to_string_pretty(&id)
             .map_err(|e| CliError::IdentityError(format!("Failed to serialize: {}", e)))?;
-        std::fs::write(&identity_file, &json).map_err(|e| {
-            CliError::IdentityError(format!("Failed to write identity: {}", e))
-        })?;
+        std::fs::write(&identity_file, &json)
+            .map_err(|e| CliError::IdentityError(format!("Failed to write identity: {}", e)))?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &private_key_file,
-                std::fs::Permissions::from_mode(0o600),
-            );
+            let _ =
+                std::fs::set_permissions(&private_key_file, std::fs::Permissions::from_mode(0o600));
         }
 
         output.success(&format!("DID: {}", id.did))?;
@@ -561,12 +533,11 @@ async fn register_identity_on_chain(
         .map_err(|e| CliError::IdentityError(format!("Failed to sign proof: {}", e)))?;
 
     // Base64-encode public keys
-    let dilithium_pk_b64 = base64::engine::general_purpose::STANDARD
-        .encode(&loaded.keypair.public_key.dilithium_pk);
-    let kyber_pk_b64 = base64::engine::general_purpose::STANDARD
-        .encode(&loaded.keypair.public_key.kyber_pk);
-    let proof_b64 =
-        base64::engine::general_purpose::STANDARD.encode(&proof_sig.signature);
+    let dilithium_pk_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&loaded.keypair.public_key.dilithium_pk);
+    let kyber_pk_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&loaded.keypair.public_key.kyber_pk);
+    let proof_b64 = base64::engine::general_purpose::STANDARD.encode(&proof_sig.signature);
 
     let body = serde_json::json!({
         "public_key": dilithium_pk_b64,
@@ -605,12 +576,6 @@ async fn register_identity_on_chain(
         }
         if let Some(primary) = result.get("primary_wallet_id").and_then(|w| w.as_str()) {
             output.print(&format!("Primary wallet: {}", primary))?;
-        }
-        if let Some(ubi) = result.get("ubi_wallet_id").and_then(|w| w.as_str()) {
-            output.print(&format!("UBI wallet: {}", ubi))?;
-        }
-        if let Some(savings) = result.get("savings_wallet_id").and_then(|w| w.as_str()) {
-            output.print(&format!("Savings wallet: {}", savings))?;
         }
         if let Some(tx) = result.get("blockchain_tx").and_then(|t| t.as_str()) {
             output.print(&format!("Tx: {}", tx))?;
@@ -729,7 +694,6 @@ async fn list_identities_impl(cli: &ZhtpCli, output: &dyn Output) -> CliResult<(
 
     Ok(())
 }
-
 
 // ============================================================================
 // TESTS - Pure logic is testable without mocks or side effects

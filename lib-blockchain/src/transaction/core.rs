@@ -549,7 +549,7 @@ pub struct IdentityTransactionData {
 pub struct WalletTransactionData {
     /// Unique wallet identifier (32-byte hash)
     pub wallet_id: Hash,
-    /// Wallet type (Primary, UBI, Savings, etc.)
+    /// Wallet type (Primary, DAO, etc.)
     pub wallet_type: String,
     /// Human-readable wallet name
     pub wallet_name: String,
@@ -582,7 +582,7 @@ pub struct WalletTransactionData {
 pub struct WalletReference {
     /// Unique wallet identifier (32-byte hash)
     pub wallet_id: Hash,
-    /// Wallet type (Primary, UBI, Savings, etc.)
+    /// Wallet type (Primary, DAO, etc.)
     pub wallet_type: String,
     /// Public key for wallet operations
     pub public_key: Vec<u8>,

@@ -20,8 +20,8 @@ const DAYS_PER_MONTH: u64 = 30;
 pub struct UbiRegistration {
     /// Citizen's identity ID
     pub identity_id: IdentityId,
-    /// UBI wallet ID for automatic payouts
-    pub ubi_wallet_id: WalletId,
+    /// Primary wallet ID receiving automatic payouts
+    pub primary_wallet_id: WalletId,
     /// UBI registration transaction
     pub registration_tx: Transaction,
     /// Daily UBI amount (~33 SOV, atomic units)
@@ -44,7 +44,7 @@ impl UbiRegistration {
     /// Create a new UBI registration
     pub fn new(
         identity_id: IdentityId,
-        ubi_wallet_id: WalletId,
+        primary_wallet_id: WalletId,
         registration_tx: Transaction,
         daily_amount: u128,
         monthly_amount: u128,
@@ -57,7 +57,7 @@ impl UbiRegistration {
         let remainder = monthly_amount % 30u128;
         Self {
             identity_id,
-            ubi_wallet_id,
+            primary_wallet_id,
             registration_tx,
             daily_amount,
             monthly_amount,
@@ -72,7 +72,7 @@ impl UbiRegistration {
     /// Register identity for Universal Basic Income payouts - IMPLEMENTATION FROM ORIGINAL
     pub async fn register_for_ubi_payouts(
         identity_id: &IdentityId,
-        ubi_wallet_id: &WalletId,
+        primary_wallet_id: &WalletId,
         economic_model: &mut EconomicModel,
     ) -> Result<Self> {
         // Use block height for deterministic consensus (not wall-clock time)
@@ -97,7 +97,7 @@ impl UbiRegistration {
         let eligibility_proof = lib_crypto::hash_blake3(
             &[
                 identity_id.0.as_slice(),
-                ubi_wallet_id.0.as_slice(),
+                primary_wallet_id.0.as_slice(),
                 &daily_ubi_amount.to_le_bytes(),
                 &current_block.to_le_bytes(),
             ]
@@ -114,7 +114,7 @@ impl UbiRegistration {
 
         Ok(Self::new(
             identity_id.clone(),
-            ubi_wallet_id.clone(),
+            primary_wallet_id.clone(),
             ubi_tx,
             daily_ubi_amount,
             monthly_ubi_amount,
@@ -173,8 +173,7 @@ impl UbiRegistration {
 
     /// Calculate expected total UBI based on blocks since registration
     pub fn expected_total_ubi(&self, current_block: u64) -> u128 {
-        (self.days_since_registration(current_block) as u128)
-            .saturating_mul(self.daily_amount)
+        (self.days_since_registration(current_block) as u128).saturating_mul(self.daily_amount)
     }
 
     /// Check if citizen is up to date with UBI payouts

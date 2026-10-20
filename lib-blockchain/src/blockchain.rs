@@ -664,8 +664,8 @@ pub struct GatewayInfo {
 pub struct UbiRegistryEntry {
     /// Citizen's identity ID (hex string)
     pub identity_id: String,
-    /// UBI wallet ID where payments are sent
-    pub ubi_wallet_id: String,
+    /// Primary wallet ID where payments are sent
+    pub primary_wallet_id: String,
     /// Daily UBI amount (~33 SOV, atomic units u128 for 18-decimal)
     pub daily_amount: u128,
     /// Monthly UBI amount (1000 SOV, atomic units u128 for 18-decimal)
@@ -6753,8 +6753,8 @@ impl Blockchain {
                 entry.total_received += payout;
                 entry.remainder_balance = remainder;
 
-                // Credit the UBI wallet in wallet_registry
-                let wallet_id = entry.ubi_wallet_id.clone();
+                // Credit the Primary wallet in wallet_registry
+                let wallet_id = entry.primary_wallet_id.clone();
                 if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
                     wallet.initial_balance += payout;
                     debug!(
@@ -6804,7 +6804,7 @@ impl Blockchain {
                 payout += new_remainder / 30;
             }
 
-            let wallet_id = entry.ubi_wallet_id.clone();
+            let wallet_id = entry.primary_wallet_id.clone();
             if let Some(_wallet) = self.wallet_registry.get(&wallet_id) {
                 let wallet_id_bytes = match Self::wallet_id_bytes(&wallet_id) {
                     Some(bytes) => bytes,
@@ -6842,7 +6842,7 @@ impl Blockchain {
     pub fn register_for_ubi(
         &mut self,
         identity_id: String,
-        ubi_wallet_id: String,
+        primary_wallet_id: String,
         current_block: u64,
     ) -> Result<()> {
         // Check if already registered
@@ -6858,7 +6858,7 @@ impl Blockchain {
 
         let entry = UbiRegistryEntry {
             identity_id: identity_id.clone(),
-            ubi_wallet_id: ubi_wallet_id.clone(),
+            primary_wallet_id: primary_wallet_id.clone(),
             daily_amount,
             monthly_amount,
             registered_at_block: current_block,

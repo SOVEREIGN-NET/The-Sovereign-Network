@@ -952,21 +952,21 @@ impl Blockchain {
                                 || identity_data.identity_type == "citizen"
                                 || identity_data.identity_type == "external_citizen"
                             {
-                                let ubi_wallet_id = new_identity_data
+                                let primary_wallet_id = new_identity_data
                                     .owned_wallets
                                     .iter()
                                     .find(|wallet_id| {
                                         self.wallet_registry
                                             .get(*wallet_id)
-                                            .map(|w| w.wallet_type == "UBI")
+                                            .map(|w| w.wallet_type == "Primary")
                                             .unwrap_or(false)
                                     })
                                     .cloned();
 
-                                if let Some(ubi_wallet) = ubi_wallet_id {
+                                if let Some(primary_wallet) = primary_wallet_id {
                                     if let Err(e) = self.register_for_ubi(
                                         identity_data.did.clone(),
-                                        ubi_wallet,
+                                        primary_wallet,
                                         block.height(),
                                     ) {
                                         warn!(
@@ -975,7 +975,10 @@ impl Blockchain {
                                         );
                                     }
                                 } else {
-                                    warn!("No UBI wallet found for citizen {}", identity_data.did);
+                                    warn!(
+                                        "No Primary wallet found for citizen {}",
+                                        identity_data.did
+                                    );
                                 }
                             }
                         }
@@ -1067,6 +1070,77 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+
+    /// Resolve the DID string for an owner identity hash (`owner_identity_id`).
+    ///
+    /// Wallet registrations carry `owner_identity_id` (a 32-byte `IdentityId`
+    /// hash) rather than the owner's DID. The DID is `did:zhtp:{hex(identity_id)}`,
+    /// so this matches the hash against each registered DID's suffix.
+    pub fn did_for_identity_hash(&self, owner: &crate::types::Hash) -> Option<String> {
+        let owner_hex = hex::encode(owner.as_bytes());
+        self.identity_registry.keys().find_map(|did| {
+            let did_hex = did.strip_prefix("did:zhtp:").unwrap_or(did.as_str());
+            if did_hex == owner_hex {
+                Some(did.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Link a newly-registered wallet to its owner identity and register UBI for
+    /// citizen identities when the wallet is that identity's Primary wallet.
+    ///
+    /// The client-registration path emits the identity tx with
+    /// `owned_wallets: vec![]` and a separate `WalletRegistration` whose
+    /// `owner_identity_id` names the owner. Because `process_identity_transactions`
+    /// runs before `process_wallet_transactions` (and the wallet registry is empty
+    /// at identity-processing time), the UBI filter there never sees a Primary
+    /// wallet. Registration is therefore deferred to wallet processing (this hook),
+    /// which links the wallet into the owner's `owned_wallets` and fires
+    /// `register_for_ubi` for citizen identities.
+    pub fn link_wallet_to_owner(
+        &mut self,
+        wallet_id_hex: String,
+        owner: &crate::types::Hash,
+        wallet_type: &str,
+        block_height: u64,
+    ) {
+        let Some(did) = self.did_for_identity_hash(owner) else {
+            return;
+        };
+
+        let mut register_ubi = false;
+        {
+            let Some(identity) = self.identity_registry.get_mut(&did) else {
+                return;
+            };
+            if !identity.owned_wallets.contains(&wallet_id_hex) {
+                identity.owned_wallets.push(wallet_id_hex.clone());
+            }
+            register_ubi = wallet_type == "Primary"
+                && matches!(
+                    identity.identity_type.as_str(),
+                    "verified_citizen" | "citizen" | "external_citizen"
+                );
+        }
+
+        if let Some(ref store) = self.store {
+            if let Some(identity_data) = self.identity_registry.get(&did).cloned() {
+                if let Err(e) =
+                    self.persist_identity_registration(store.as_ref(), &identity_data, block_height)
+                {
+                    warn!("Failed to persist owned_wallets linkage for {}: {}", did, e);
+                }
+            }
+        }
+
+        if register_ubi && !self.ubi_registry.contains_key(&did) {
+            if let Err(e) = self.register_for_ubi(did.clone(), wallet_id_hex, block_height) {
+                warn!("Failed to register {} for UBI: {}", did, e);
+            }
+        }
     }
 
     pub(super) fn persist_identity_registration(

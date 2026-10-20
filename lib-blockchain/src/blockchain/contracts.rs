@@ -566,7 +566,7 @@ impl Blockchain {
                                     self.ubi_registry.get_mut(&identity_id).ok_or_else(|| {
                                         anyhow::anyhow!("UBI mint for unknown identity")
                                     })?;
-                                if entry.ubi_wallet_id != wallet_id {
+                                if entry.primary_wallet_id != wallet_id {
                                     return Err(anyhow::anyhow!("UBI mint wallet mismatch"));
                                 }
                                 if Self::is_sov_token_id(&mint.token_id) {

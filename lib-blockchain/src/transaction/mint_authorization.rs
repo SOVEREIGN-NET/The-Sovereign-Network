@@ -107,7 +107,7 @@ fn validate_ubi_distribution_memo(
         .ubi_registry
         .get(identity_id)
         .ok_or(ValidationError::InvalidTransaction)?;
-    if entry.ubi_wallet_id != wallet_id {
+    if entry.primary_wallet_id != wallet_id {
         return Err(ValidationError::InvalidTransaction);
     }
 
@@ -423,7 +423,7 @@ mod tests {
             "identity-1".to_string(),
             crate::blockchain::UbiRegistryEntry {
                 identity_id: "identity-1".to_string(),
-                ubi_wallet_id: wallet_hex.clone(),
+                primary_wallet_id: wallet_hex.clone(),
                 daily_amount: 33,
                 monthly_amount: 1_000,
                 registered_at_block: 1,
@@ -464,7 +464,7 @@ mod tests {
             "identity-1".to_string(),
             crate::blockchain::UbiRegistryEntry {
                 identity_id: "identity-1".to_string(),
-                ubi_wallet_id: wrong_wallet_hex,
+                primary_wallet_id: wrong_wallet_hex,
                 daily_amount: 33,
                 monthly_amount: 1_000,
                 registered_at_block: 1,
@@ -596,7 +596,7 @@ mod tests {
             "id".to_string(),
             crate::blockchain::UbiRegistryEntry {
                 identity_id: "id".to_string(),
-                ubi_wallet_id: "wid".to_string(),
+                primary_wallet_id: "wid".to_string(),
                 daily_amount: 1,
                 monthly_amount: 1,
                 registered_at_block: 1,

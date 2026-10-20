@@ -7,7 +7,6 @@
 ///
 /// Each wallet is submitted as a WalletRegistration system transaction via
 /// the blockchain's pending transaction pool.
-
 use anyhow::Result;
 use std::path::Path;
 
@@ -44,10 +43,7 @@ fn main() -> Result<()> {
     for w in wallets {
         let wallet_id = w["wallet_id"].as_str().unwrap_or("");
         let wallet_type = w["wallet_type"].as_str().unwrap_or("Primary");
-        let wallet_name = w["wallet_name"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let wallet_name = w["wallet_name"].as_str().unwrap_or("").to_string();
         let owner_identity_id = w["owner_identity_id"].as_str().unwrap_or("");
         let public_key = w["public_key"].as_str().unwrap_or("");
         let timestamp = w["timestamp"].as_u64().unwrap_or(0);
@@ -94,22 +90,9 @@ fn main() -> Result<()> {
         .iter()
         .filter(|w| w["wallet_type"].as_str() == Some("Primary"))
         .count();
-    let ubi = wallets
-        .iter()
-        .filter(|w| w["wallet_type"].as_str() == Some("UBI"))
-        .count();
-    let savings = wallets
-        .iter()
-        .filter(|w| w["wallet_type"].as_str() == Some("Savings"))
-        .count();
     eprintln!("\nSummary:");
     eprintln!("  Primary: {} (each gets 5000 SOV welcome bonus)", primary);
-    eprintln!("  UBI:     {} (no initial balance)", ubi);
-    eprintln!("  Savings: {} (no initial balance)", savings);
-    eprintln!(
-        "  Total SOV to mint: {} SOV",
-        primary as u128 * 5_000
-    );
+    eprintln!("  Total SOV to mint: {} SOV", primary as u128 * 5_000);
 
     Ok(())
 }

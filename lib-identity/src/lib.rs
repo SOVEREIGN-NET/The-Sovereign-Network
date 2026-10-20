@@ -101,29 +101,29 @@ pub use citizenship::{
 
 // DID module - Decentralized identifiers
 pub use did::{
-    apply_did_update,            // ✓ Apply DID document update
-    apply_did_update_and_store,  // ✓ Apply + store DID update
-    create_device_add_update,    // ✓ Create device add update
-    create_device_remove_update, // ✓ Create device remove update
-    decode_public_key_multibase, // ✓ Decode multibase key
+    apply_did_update,                    // ✓ Apply DID document update
+    apply_did_update_and_store,          // ✓ Apply + store DID update
+    create_device_add_update,            // ✓ Create device add update
+    create_device_remove_update,         // ✓ Create device remove update
+    decode_public_key_multibase,         // ✓ Decode multibase key
     generate_did_document_for_principal, // ✓ Principal-aware DID document generation
-    get_device_entry,            // ✓ Get device entry
-    get_device_keys,             // ✓ Get device keys
-    list_active_devices,         // ✓ List active devices
-    resolve_did,                 // ✓ Resolve DID document
-    resolve_did_for_principal,   // ✓ Principal-aware DID resolution
-    set_did_store_dir,           // ✓ Configure filesystem DID store
-    set_did_store_memory,        // ✓ Configure in-memory DID store
-    store_did_document,          // ✓ Store DID document
-    validate_did_update,         // ✓ Validate DID update
-    DeviceEntry,                 // ✓ Device registry entry
-    DeviceRegistryDiff,          // ✓ Device registry diff
-    DeviceStatus,                // ✓ Device status
-    DidDocument,                 // ✓ DID document structure
-    DidDocumentUpdate,           // ✓ DID document signed update
-    DidDocumentView,             // ✓ Access-controlled DID document view
-    ServiceEndpoint,             // ✓ Service endpoints
-    VerificationMethod,          // ✓ Verification methods
+    get_device_entry,                    // ✓ Get device entry
+    get_device_keys,                     // ✓ Get device keys
+    list_active_devices,                 // ✓ List active devices
+    resolve_did,                         // ✓ Resolve DID document
+    resolve_did_for_principal,           // ✓ Principal-aware DID resolution
+    set_did_store_dir,                   // ✓ Configure filesystem DID store
+    set_did_store_memory,                // ✓ Configure in-memory DID store
+    store_did_document,                  // ✓ Store DID document
+    validate_did_update,                 // ✓ Validate DID update
+    DeviceEntry,                         // ✓ Device registry entry
+    DeviceRegistryDiff,                  // ✓ Device registry diff
+    DeviceStatus,                        // ✓ Device status
+    DidDocument,                         // ✓ DID document structure
+    DidDocumentUpdate,                   // ✓ DID document signed update
+    DidDocumentView,                     // ✓ Access-controlled DID document view
+    ServiceEndpoint,                     // ✓ Service endpoints
+    VerificationMethod,                  // ✓ Verification methods
 };
 
 // Recovery module - Identity recovery mechanisms
@@ -169,7 +169,7 @@ pub use wallets::{
     WalletPasswordValidation, // ✓ Password validation results
     WalletSummary,            // ✓ Wallet summary information
 
-    WalletType, // ✓ Standard, Savings, Staking, etc.
+    WalletType, // ✓ Standard, Primary, Stealth, Business, DAO, etc.
 };
 
 // Auth module - Authentication and password management
@@ -214,9 +214,8 @@ pub async fn initialize_identity_system() -> Result<IdentityManager> {
 ///
 /// This creates a proper identity with a wallet attached to it.
 /// Wallets cannot exist without an identity in ZHTP.
-/// Create a user/person identity with multiple wallets
+/// Create a user/person identity with a single Primary wallet
 /// This creates a Person/Organization identity that can own nodes
-/// Automatically creates: Primary, Savings, and Staking wallets
 /// Returns: (identity_id, primary_wallet_id, seed_phrase)
 pub async fn create_user_identity_with_wallet(
     user_name: String,
@@ -279,40 +278,6 @@ pub async fn create_user_identity_with_wallet(
         hex::encode(&identity_id.0)
     );
 
-    // Create SAVINGS wallet (for long-term storage)
-    let savings_name = format!("{} - Savings", wallet_name);
-    let (savings_wallet_id, _) = identity
-        .wallet_manager
-        .create_wallet_with_seed_phrase(
-            WalletType::Standard,
-            savings_name,
-            Some("savings".to_string()),
-        )
-        .await?;
-
-    tracing::info!(
-        "✓ Created SAVINGS wallet {} for identity {}",
-        hex::encode(&savings_wallet_id.0),
-        hex::encode(&identity_id.0)
-    );
-
-    // Create STAKING wallet (for staking and governance)
-    let staking_name = format!("{} - Staking", wallet_name);
-    let (staking_wallet_id, _) = identity
-        .wallet_manager
-        .create_wallet_with_seed_phrase(
-            WalletType::Standard,
-            staking_name,
-            Some("staking".to_string()),
-        )
-        .await?;
-
-    tracing::info!(
-        "✓ Created STAKING wallet {} for identity {}",
-        hex::encode(&staking_wallet_id.0),
-        hex::encode(&identity_id.0)
-    );
-
     // Store the identity
     let mut manager = IdentityManager::new();
     manager.add_identity(identity);
@@ -321,11 +286,9 @@ pub async fn create_user_identity_with_wallet(
     let seed_phrase_string = seed_phrase_struct.words.join(" ");
 
     tracing::info!(
-        "✓ Created user identity {} with 3 wallets (Primary: {}, Savings: {}, Staking: {})",
+        "✓ Created user identity {} with Primary wallet: {}",
         hex::encode(&identity_id.0),
-        hex::encode(&primary_wallet_id.0),
-        hex::encode(&savings_wallet_id.0),
-        hex::encode(&staking_wallet_id.0)
+        hex::encode(&primary_wallet_id.0)
     );
 
     // Return the primary wallet ID and its seed phrase

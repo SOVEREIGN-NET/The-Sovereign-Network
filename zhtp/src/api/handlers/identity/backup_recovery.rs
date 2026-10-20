@@ -1999,14 +1999,6 @@ pub async fn handle_migrate_identity(
         .iter()
         .find(|(_, t, _)| t.contains("Primary"))
         .map(|(wid, _, _)| hex::encode(wid.0));
-    let ubi_wallet_id = wallet_ids_to_transfer
-        .iter()
-        .find(|(_, t, _)| t.contains("UBI"))
-        .map(|(wid, _, _)| hex::encode(wid.0));
-    let savings_wallet_id = wallet_ids_to_transfer
-        .iter()
-        .find(|(_, t, _)| t.contains("Savings"))
-        .map(|(wid, _, _)| hex::encode(wid.0));
 
     let identity_record = serde_json::json!({
         "did": new_did.clone(),
@@ -2018,8 +2010,6 @@ pub async fn handle_migrate_identity(
         "created_at": created_at,
         "migrated_from": old_did.clone(),
         "primary_wallet_id": primary_wallet_id,
-        "ubi_wallet_id": ubi_wallet_id,
-        "savings_wallet_id": savings_wallet_id,
     });
 
     if let Ok(identity_data) = serde_json::to_vec(&identity_record) {
@@ -2075,8 +2065,6 @@ pub async fn handle_migrate_identity(
                     if let Some(obj) = old_json.as_object_mut() {
                         obj.remove("display_name");
                         obj.remove("primary_wallet_id");
-                        obj.remove("ubi_wallet_id");
-                        obj.remove("savings_wallet_id");
                         obj.insert(
                             "migrated_to".to_string(),
                             serde_json::Value::String(new_did.clone()),
@@ -2572,50 +2560,6 @@ mod tests {
                     w.balance,
                 ));
             }
-
-            let (w2, _) = old
-                .wallet_manager
-                .create_wallet_with_seed_phrase(
-                    lib_identity::wallets::WalletType::UBI,
-                    "UBI".to_string(),
-                    Some("ubi".to_string()),
-                )
-                .await
-                .expect("create ubi wallet");
-            if let Some(w) = old.wallet_manager.get_wallet_mut(&w2) {
-                w.balance = 222;
-                wallet_summaries.push((
-                    w2.clone(),
-                    lib_identity::wallets::WalletType::UBI,
-                    w.name.clone(),
-                    w.alias.clone(),
-                    w.public_key.clone(),
-                    w.created_at,
-                    w.balance,
-                ));
-            }
-
-            let (w3, _) = old
-                .wallet_manager
-                .create_wallet_with_seed_phrase(
-                    lib_identity::wallets::WalletType::Savings,
-                    "Savings".to_string(),
-                    Some("savings".to_string()),
-                )
-                .await
-                .expect("create savings wallet");
-            if let Some(w) = old.wallet_manager.get_wallet_mut(&w3) {
-                w.balance = 333;
-                wallet_summaries.push((
-                    w3.clone(),
-                    lib_identity::wallets::WalletType::Savings,
-                    w.name.clone(),
-                    w.alias.clone(),
-                    w.public_key.clone(),
-                    w.created_at,
-                    w.balance,
-                ));
-            }
         }
 
         let manager = Arc::new(RwLock::new(manager));
@@ -2747,7 +2691,7 @@ mod tests {
                 .get_identity(&new_identity_id_1)
                 .expect("new identity missing");
             assert_eq!(new.metadata.get("migrated_from"), Some(&parsed_1.old_did));
-            assert_eq!(new.wallet_manager.wallets.len(), 3);
+            assert_eq!(new.wallet_manager.wallets.len(), 1);
         }
 
         // Second migration attempt for same display_name with a different new identity must fail,
@@ -2787,7 +2731,7 @@ mod tests {
             let new = mgr
                 .get_identity(&new_identity_id_1)
                 .expect("new identity missing");
-            assert_eq!(new.wallet_manager.wallets.len(), 3);
+            assert_eq!(new.wallet_manager.wallets.len(), 1);
         }
     }
 }
