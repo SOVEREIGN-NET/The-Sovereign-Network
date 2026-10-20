@@ -112,13 +112,17 @@ pub fn evaluate_observer_admission_for_sync(
     let record = match store.get_observer_record(&did_hash) {
         Ok(Some(r)) => r,
         Ok(None) => return SyncSourceEligibility::Rejected(RejectionReason::NotAdmitted),
-        Err(e) => return SyncSourceEligibility::Rejected(RejectionReason::StoreError(e.to_string())),
+        Err(e) => {
+            return SyncSourceEligibility::Rejected(RejectionReason::StoreError(e.to_string()))
+        }
     };
 
     let policy = match store.get_observer_policy() {
         Ok(Some(p)) => p,
         Ok(None) => default_policy(),
-        Err(e) => return SyncSourceEligibility::Rejected(RejectionReason::StoreError(e.to_string())),
+        Err(e) => {
+            return SyncSourceEligibility::Rejected(RejectionReason::StoreError(e.to_string()))
+        }
     };
 
     match evaluate_admission(&record, &policy, expected_network, now) {
@@ -216,9 +220,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_blockchain::storage::{self, BlockchainStore, StorageResult};
     #[allow(unused_imports)]
     use lib_blockchain::storage::*;
+    use lib_blockchain::storage::{self, BlockchainStore, StorageResult};
     use lib_types::{
         ObserverAdmissionPolicy, ObserverAdmissionRecord, ObserverAdmissionStatus,
         ObserverNetworkBinding, ObserverNodeInfo, ObserverProofLevel, ObserverRateLimitTier,
@@ -265,9 +269,8 @@ mod tests {
         // double holds no identities, so an empty scan / zero count is correct.
         fn iter_identities(
             &self,
-        ) -> StorageResult<
-            Box<dyn Iterator<Item = lib_blockchain::storage::IdentityConsensus> + '_>,
-        > {
+        ) -> StorageResult<Box<dyn Iterator<Item = lib_blockchain::storage::IdentityConsensus> + '_>>
+        {
             Ok(Box::new(std::iter::empty()))
         }
 
@@ -276,9 +279,8 @@ mod tests {
         }
         fn iter_identity_metadata(
             &self,
-        ) -> StorageResult<
-            Box<dyn Iterator<Item = lib_blockchain::storage::IdentityMetadata> + '_>,
-        > {
+        ) -> StorageResult<Box<dyn Iterator<Item = lib_blockchain::storage::IdentityMetadata> + '_>>
+        {
             Ok(Box::new(std::iter::empty()))
         }
         fn iter_validator_records(
@@ -300,59 +302,244 @@ mod tests {
                 "MockObserverStore: block presence simulated".to_string(),
             ))
         }
-        fn append_block(&self, block: &lib_blockchain::block::Block) -> StorageResult<()> { unimplemented!("MockObserverStore::append_block unused by observer tests") }
-        fn get_block_by_hash(&self, h: &BlockHash) -> StorageResult<Option<lib_blockchain::block::Block>> { unimplemented!("MockObserverStore::get_block_by_hash unused by observer tests") }
-        fn latest_height(&self) -> StorageResult<BlockHeight> { unimplemented!("MockObserverStore::latest_height unused by observer tests") }
-        fn get_utxo(&self, op: &OutPoint) -> StorageResult<Option<Utxo>> { unimplemented!("MockObserverStore::get_utxo unused by observer tests") }
-        fn put_utxo(&self, op: &OutPoint, u: &Utxo) -> StorageResult<()> { unimplemented!("MockObserverStore::put_utxo unused by observer tests") }
-        fn delete_utxo(&self, op: &OutPoint) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_utxo unused by observer tests") }
-        fn put_utxo_merkle_leaf(&self, op: &OutPoint, leaf: [u8; 32]) -> StorageResult<u64> { unimplemented!("MockObserverStore::put_utxo_merkle_leaf unused by observer tests") }
-        fn delete_utxo_merkle_leaf(&self, op: &OutPoint) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_utxo_merkle_leaf unused by observer tests") }
-        fn get_utxo_merkle_root(&self) -> StorageResult<Option<[u8; 32]>> { unimplemented!("MockObserverStore::get_utxo_merkle_root unused by observer tests") }
-        fn get_utxo_merkle_proof(&self, op: &OutPoint) -> StorageResult<Option<UtxoMerkleProof>> { unimplemented!("MockObserverStore::get_utxo_merkle_proof unused by observer tests") }
-        fn get_utxo_merkle_leaf_index(&self, op: &OutPoint) -> StorageResult<Option<u64>> { unimplemented!("MockObserverStore::get_utxo_merkle_leaf_index unused by observer tests") }
-        fn get_token_contract( &self, id: &TokenId, ) -> StorageResult<Option<lib_blockchain::contracts::TokenContract>> { unimplemented!("MockObserverStore::get_token_contract unused by observer tests") }
-        fn iter_token_contracts( &self, ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, lib_blockchain::contracts::TokenContract)> + '_>> { unimplemented!("MockObserverStore::iter_token_contracts unused by observer tests") }
-        fn put_token_contract(&self, c: &lib_blockchain::contracts::TokenContract) -> StorageResult<()> { unimplemented!("MockObserverStore::put_token_contract unused by observer tests") }
-        fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u128>> { unimplemented!("MockObserverStore::get_token_supply unused by observer tests") }
-        fn put_token_supply(&self, token: &TokenId, supply: u128) -> StorageResult<()> { unimplemented!("MockObserverStore::put_token_supply unused by observer tests") }
-        fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>> { unimplemented!("MockObserverStore::get_token_state_snapshot unused by observer tests") }
-        fn put_token_state_snapshot(&self, snapshot: &TokenStateSnapshot) -> StorageResult<()> { unimplemented!("MockObserverStore::put_token_state_snapshot unused by observer tests") }
-        fn put_pending_transaction(&self, tx: &lib_blockchain::transaction::Transaction) -> StorageResult<()> { unimplemented!("MockObserverStore::put_pending_transaction unused by observer tests") }
-        fn delete_pending_transaction(&self, tx_hash: &[u8; 32]) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_pending_transaction unused by observer tests") }
-        fn iter_pending_transactions( &self, ) -> StorageResult<Box<dyn Iterator<Item = lib_blockchain::transaction::Transaction> + '_>> { unimplemented!("MockObserverStore::iter_pending_transactions unused by observer tests") }
-        fn get_wallet_projection( &self, wallet_id: &[u8; 32], ) -> StorageResult<Option<WalletProjectionRecord>> { unimplemented!("MockObserverStore::get_wallet_projection unused by observer tests") }
-        fn put_wallet_projection( &self, wallet_id: &[u8; 32], record: &WalletProjectionRecord, ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_wallet_projection unused by observer tests") }
-        fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_wallet_projection unused by observer tests") }
-        fn iter_wallet_projections( &self, ) -> StorageResult<Box<dyn Iterator<Item = ([u8; 32], WalletProjectionRecord)> + '_>> { unimplemented!("MockObserverStore::iter_wallet_projections unused by observer tests") }
-        fn replace_wallet_projections( &self, records: &[([u8; 32], WalletProjectionRecord)], ) -> StorageResult<()> { unimplemented!("MockObserverStore::replace_wallet_projections unused by observer tests") }
-        fn get_token_balance(&self, t: &TokenId, a: &Address) -> StorageResult<Amount> { unimplemented!("MockObserverStore::get_token_balance unused by observer tests") }
-        fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()> { unimplemented!("MockObserverStore::set_token_balance unused by observer tests") }
-        fn get_token_nonce(&self, token_id: &TokenId, sender: &Address) -> StorageResult<u64> { unimplemented!("MockObserverStore::get_token_nonce unused by observer tests") }
-        fn set_token_nonce( &self, token_id: &TokenId, sender: &Address, nonce: u64, ) -> StorageResult<()> { unimplemented!("MockObserverStore::set_token_nonce unused by observer tests") }
-        fn get_contract_code(&self, contract_id: &[u8; 32]) -> StorageResult<Option<Vec<u8>>> { unimplemented!("MockObserverStore::get_contract_code unused by observer tests") }
-        fn put_contract_code(&self, contract_id: &[u8; 32], code: &[u8]) -> StorageResult<()> { unimplemented!("MockObserverStore::put_contract_code unused by observer tests") }
-        fn get_contract_storage( &self, contract_id: &[u8; 32], key: &[u8], ) -> StorageResult<Option<Vec<u8>>> { unimplemented!("MockObserverStore::get_contract_storage unused by observer tests") }
-        fn put_contract_storage( &self, contract_id: &[u8; 32], key: &[u8], value: &[u8], ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_contract_storage unused by observer tests") }
-        fn delete_contract_storage(&self, contract_id: &[u8; 32], key: &[u8]) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_contract_storage unused by observer tests") }
-        fn get_identity(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityConsensus>> { unimplemented!("MockObserverStore::get_identity unused by observer tests") }
-        fn put_identity(&self, did_hash: &[u8; 32], identity: &IdentityConsensus) -> StorageResult<()> { unimplemented!("MockObserverStore::put_identity unused by observer tests") }
-        fn delete_identity(&self, did_hash: &[u8; 32]) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_identity unused by observer tests") }
-        fn begin_block(&self, height: BlockHeight) -> StorageResult<()> { unimplemented!("MockObserverStore::begin_block unused by observer tests") }
-        fn commit_block(&self) -> StorageResult<()> { unimplemented!("MockObserverStore::commit_block unused by observer tests") }
-        fn rollback_block(&self) -> StorageResult<()> { unimplemented!("MockObserverStore::rollback_block unused by observer tests") }
-        fn begin_metadata_write(&self) -> StorageResult<()> { unimplemented!("MockObserverStore::begin_metadata_write unused by observer tests") }
-        fn commit_metadata_write(&self) -> StorageResult<()> { unimplemented!("MockObserverStore::commit_metadata_write unused by observer tests") }
-        fn get_account(&self, addr: &Address) -> StorageResult<Option<AccountState>> { unimplemented!("MockObserverStore::get_account unused by observer tests") }
-        fn put_account(&self, addr: &Address, acct: &AccountState) -> StorageResult<()> { unimplemented!("MockObserverStore::put_account unused by observer tests") }
-        fn get_bonding_curve_token( &self, token_id: &TokenId, ) -> StorageResult<Option<lib_blockchain::contracts::bonding_curve::BondingCurveToken>> { unimplemented!("MockObserverStore::get_bonding_curve_token unused by observer tests") }
-        fn put_bonding_curve_token( &self, token_id: &TokenId, token: &lib_blockchain::contracts::bonding_curve::BondingCurveToken, ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_bonding_curve_token unused by observer tests") }
-        fn delete_bonding_curve_token(&self, token_id: &TokenId) -> StorageResult<()> { unimplemented!("MockObserverStore::delete_bonding_curve_token unused by observer tests") }
-        fn iter_bonding_curve_tokens( &self, ) -> StorageResult< Box< dyn Iterator<Item = (TokenId, lib_blockchain::contracts::bonding_curve::BondingCurveToken)> + '_, >, > { unimplemented!("MockObserverStore::iter_bonding_curve_tokens unused by observer tests") }
-        fn get_cbe_economic_state(&self) -> StorageResult<lib_types::BondingCurveEconomicState> { unimplemented!("MockObserverStore::get_cbe_economic_state unused by observer tests") }
-        fn put_cbe_economic_state( &self, state: &lib_types::BondingCurveEconomicState, ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_cbe_economic_state unused by observer tests") }
-        fn get_cbe_account_state( &self, key_id: &[u8; 32], ) -> StorageResult<Option<lib_types::BondingCurveAccountState>> { unimplemented!("MockObserverStore::get_cbe_account_state unused by observer tests") }
-        fn put_cbe_account_state( &self, key_id: &[u8; 32], state: &lib_types::BondingCurveAccountState, ) -> StorageResult<()> { unimplemented!("MockObserverStore::put_cbe_account_state unused by observer tests") }
+        fn append_block(&self, block: &lib_blockchain::block::Block) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::append_block unused by observer tests")
+        }
+        fn get_block_by_hash(
+            &self,
+            h: &BlockHash,
+        ) -> StorageResult<Option<lib_blockchain::block::Block>> {
+            unimplemented!("MockObserverStore::get_block_by_hash unused by observer tests")
+        }
+        fn latest_height(&self) -> StorageResult<BlockHeight> {
+            unimplemented!("MockObserverStore::latest_height unused by observer tests")
+        }
+        fn get_utxo(&self, op: &OutPoint) -> StorageResult<Option<Utxo>> {
+            unimplemented!("MockObserverStore::get_utxo unused by observer tests")
+        }
+        fn put_utxo(&self, op: &OutPoint, u: &Utxo) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_utxo unused by observer tests")
+        }
+        fn delete_utxo(&self, op: &OutPoint) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_utxo unused by observer tests")
+        }
+        fn put_utxo_merkle_leaf(&self, op: &OutPoint, leaf: [u8; 32]) -> StorageResult<u64> {
+            unimplemented!("MockObserverStore::put_utxo_merkle_leaf unused by observer tests")
+        }
+        fn delete_utxo_merkle_leaf(&self, op: &OutPoint) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_utxo_merkle_leaf unused by observer tests")
+        }
+        fn get_utxo_merkle_root(&self) -> StorageResult<Option<[u8; 32]>> {
+            unimplemented!("MockObserverStore::get_utxo_merkle_root unused by observer tests")
+        }
+        fn get_utxo_merkle_proof(&self, op: &OutPoint) -> StorageResult<Option<UtxoMerkleProof>> {
+            unimplemented!("MockObserverStore::get_utxo_merkle_proof unused by observer tests")
+        }
+        fn get_utxo_merkle_leaf_index(&self, op: &OutPoint) -> StorageResult<Option<u64>> {
+            unimplemented!("MockObserverStore::get_utxo_merkle_leaf_index unused by observer tests")
+        }
+        fn get_token_contract(
+            &self,
+            id: &TokenId,
+        ) -> StorageResult<Option<lib_blockchain::contracts::TokenContract>> {
+            unimplemented!("MockObserverStore::get_token_contract unused by observer tests")
+        }
+        fn iter_token_contracts(
+            &self,
+        ) -> StorageResult<
+            Box<dyn Iterator<Item = (TokenId, lib_blockchain::contracts::TokenContract)> + '_>,
+        > {
+            unimplemented!("MockObserverStore::iter_token_contracts unused by observer tests")
+        }
+        fn put_token_contract(
+            &self,
+            c: &lib_blockchain::contracts::TokenContract,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_token_contract unused by observer tests")
+        }
+        fn get_token_supply(&self, token: &TokenId) -> StorageResult<Option<u128>> {
+            unimplemented!("MockObserverStore::get_token_supply unused by observer tests")
+        }
+        fn put_token_supply(&self, token: &TokenId, supply: u128) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_token_supply unused by observer tests")
+        }
+        fn get_token_state_snapshot(&self) -> StorageResult<Option<TokenStateSnapshot>> {
+            unimplemented!("MockObserverStore::get_token_state_snapshot unused by observer tests")
+        }
+        fn put_token_state_snapshot(&self, snapshot: &TokenStateSnapshot) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_token_state_snapshot unused by observer tests")
+        }
+        fn put_pending_transaction(
+            &self,
+            tx: &lib_blockchain::transaction::Transaction,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_pending_transaction unused by observer tests")
+        }
+        fn delete_pending_transaction(&self, tx_hash: &[u8; 32]) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_pending_transaction unused by observer tests")
+        }
+        fn iter_pending_transactions(
+            &self,
+        ) -> StorageResult<Box<dyn Iterator<Item = lib_blockchain::transaction::Transaction> + '_>>
+        {
+            unimplemented!("MockObserverStore::iter_pending_transactions unused by observer tests")
+        }
+        fn get_wallet_projection(
+            &self,
+            wallet_id: &[u8; 32],
+        ) -> StorageResult<Option<WalletProjectionRecord>> {
+            unimplemented!("MockObserverStore::get_wallet_projection unused by observer tests")
+        }
+        fn put_wallet_projection(
+            &self,
+            wallet_id: &[u8; 32],
+            record: &WalletProjectionRecord,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_wallet_projection unused by observer tests")
+        }
+        fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_wallet_projection unused by observer tests")
+        }
+        fn iter_wallet_projections(
+            &self,
+        ) -> StorageResult<Box<dyn Iterator<Item = ([u8; 32], WalletProjectionRecord)> + '_>>
+        {
+            unimplemented!("MockObserverStore::iter_wallet_projections unused by observer tests")
+        }
+        fn replace_wallet_projections(
+            &self,
+            records: &[([u8; 32], WalletProjectionRecord)],
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::replace_wallet_projections unused by observer tests")
+        }
+        fn get_token_balance(&self, t: &TokenId, a: &Address) -> StorageResult<Amount> {
+            unimplemented!("MockObserverStore::get_token_balance unused by observer tests")
+        }
+        fn set_token_balance(&self, t: &TokenId, a: &Address, v: Amount) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::set_token_balance unused by observer tests")
+        }
+        fn get_token_nonce(&self, token_id: &TokenId, sender: &Address) -> StorageResult<u64> {
+            unimplemented!("MockObserverStore::get_token_nonce unused by observer tests")
+        }
+        fn set_token_nonce(
+            &self,
+            token_id: &TokenId,
+            sender: &Address,
+            nonce: u64,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::set_token_nonce unused by observer tests")
+        }
+        fn get_contract_code(&self, contract_id: &[u8; 32]) -> StorageResult<Option<Vec<u8>>> {
+            unimplemented!("MockObserverStore::get_contract_code unused by observer tests")
+        }
+        fn put_contract_code(&self, contract_id: &[u8; 32], code: &[u8]) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_contract_code unused by observer tests")
+        }
+        fn get_contract_storage(
+            &self,
+            contract_id: &[u8; 32],
+            key: &[u8],
+        ) -> StorageResult<Option<Vec<u8>>> {
+            unimplemented!("MockObserverStore::get_contract_storage unused by observer tests")
+        }
+        fn put_contract_storage(
+            &self,
+            contract_id: &[u8; 32],
+            key: &[u8],
+            value: &[u8],
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_contract_storage unused by observer tests")
+        }
+        fn delete_contract_storage(&self, contract_id: &[u8; 32], key: &[u8]) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_contract_storage unused by observer tests")
+        }
+        fn get_identity(&self, did_hash: &[u8; 32]) -> StorageResult<Option<IdentityConsensus>> {
+            unimplemented!("MockObserverStore::get_identity unused by observer tests")
+        }
+        fn put_identity(
+            &self,
+            did_hash: &[u8; 32],
+            identity: &IdentityConsensus,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_identity unused by observer tests")
+        }
+        fn delete_identity(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_identity unused by observer tests")
+        }
+        fn begin_block(&self, height: BlockHeight) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::begin_block unused by observer tests")
+        }
+        fn commit_block(&self) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::commit_block unused by observer tests")
+        }
+        fn rollback_block(&self) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::rollback_block unused by observer tests")
+        }
+        fn begin_metadata_write(&self) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::begin_metadata_write unused by observer tests")
+        }
+        fn commit_metadata_write(&self) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::commit_metadata_write unused by observer tests")
+        }
+        fn get_account(&self, addr: &Address) -> StorageResult<Option<AccountState>> {
+            unimplemented!("MockObserverStore::get_account unused by observer tests")
+        }
+        fn put_account(&self, addr: &Address, acct: &AccountState) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_account unused by observer tests")
+        }
+        fn get_bonding_curve_token(
+            &self,
+            token_id: &TokenId,
+        ) -> StorageResult<Option<lib_blockchain::contracts::bonding_curve::BondingCurveToken>>
+        {
+            unimplemented!("MockObserverStore::get_bonding_curve_token unused by observer tests")
+        }
+        fn put_bonding_curve_token(
+            &self,
+            token_id: &TokenId,
+            token: &lib_blockchain::contracts::bonding_curve::BondingCurveToken,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_bonding_curve_token unused by observer tests")
+        }
+        fn delete_bonding_curve_token(&self, token_id: &TokenId) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::delete_bonding_curve_token unused by observer tests")
+        }
+        fn iter_bonding_curve_tokens(
+            &self,
+        ) -> StorageResult<
+            Box<
+                dyn Iterator<
+                        Item = (
+                            TokenId,
+                            lib_blockchain::contracts::bonding_curve::BondingCurveToken,
+                        ),
+                    > + '_,
+            >,
+        > {
+            unimplemented!("MockObserverStore::iter_bonding_curve_tokens unused by observer tests")
+        }
+        fn get_cbe_economic_state(&self) -> StorageResult<lib_types::BondingCurveEconomicState> {
+            unimplemented!("MockObserverStore::get_cbe_economic_state unused by observer tests")
+        }
+        fn put_cbe_economic_state(
+            &self,
+            state: &lib_types::BondingCurveEconomicState,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_cbe_economic_state unused by observer tests")
+        }
+        fn get_cbe_account_state(
+            &self,
+            key_id: &[u8; 32],
+        ) -> StorageResult<Option<lib_types::BondingCurveAccountState>> {
+            unimplemented!("MockObserverStore::get_cbe_account_state unused by observer tests")
+        }
+        fn put_cbe_account_state(
+            &self,
+            key_id: &[u8; 32],
+            state: &lib_types::BondingCurveAccountState,
+        ) -> StorageResult<()> {
+            unimplemented!("MockObserverStore::put_cbe_account_state unused by observer tests")
+        }
         fn list_governance_module_asset_ids(&self) -> StorageResult<Vec<[u8; 32]>> {
             Ok(Vec::new())
         }
@@ -391,14 +578,7 @@ mod tests {
     #[test]
     fn anonymous_peer_rejected_when_not_in_allowlist() {
         let store = MockObserverStore::default();
-        let result = is_eligible_sync_source(
-            "10.0.0.1:9334",
-            None,
-            &[],
-            &store,
-            "testnet",
-            100,
-        );
+        let result = is_eligible_sync_source("10.0.0.1:9334", None, &[], &store, "testnet", 100);
         assert_eq!(
             result,
             SyncSourceEligibility::Rejected(RejectionReason::AnonymousAndNotAllowlisted)
@@ -566,7 +746,10 @@ mod tests {
         );
         match result {
             SyncSourceEligibility::Rejected(RejectionReason::AdmissionDenied(
-                PolicyDenial::Expired { expires_at: 50, now: 100 },
+                PolicyDenial::Expired {
+                    expires_at: 50,
+                    now: 100,
+                },
             )) => {}
             other => panic!("expected expired denial, got {other:?}"),
         }
@@ -696,14 +879,23 @@ mod tests {
             "testnet",
         ));
         let candidates = vec![
-            ("10.0.0.1:9334".to_string(), Some("did:zhtp:stranger".to_string())),
-            ("10.0.0.2:9334".to_string(), Some("did:zhtp:good".to_string())),
+            (
+                "10.0.0.1:9334".to_string(),
+                Some("did:zhtp:stranger".to_string()),
+            ),
+            (
+                "10.0.0.2:9334".to_string(),
+                Some("did:zhtp:good".to_string()),
+            ),
             ("10.0.0.3:9334".to_string(), None),
         ];
         let out = select_trusted_sync_sources(candidates, &[], &store, "testnet", 100);
         assert_eq!(
             out,
-            vec![("10.0.0.2:9334".to_string(), Some("did:zhtp:good".to_string()))]
+            vec![(
+                "10.0.0.2:9334".to_string(),
+                Some("did:zhtp:good".to_string())
+            )]
         );
     }
 
@@ -738,7 +930,10 @@ mod tests {
         }];
         let candidates = vec![
             ("10.0.0.1:9334".to_string(), None),
-            ("10.0.0.2:9334".to_string(), Some("did:zhtp:rando".to_string())),
+            (
+                "10.0.0.2:9334".to_string(),
+                Some("did:zhtp:rando".to_string()),
+            ),
         ];
         let out = select_trusted_sync_sources(candidates, &trusted, &store, "testnet", 100);
         assert_eq!(out, vec![("10.0.0.1:9334".to_string(), None)]);
@@ -753,7 +948,10 @@ mod tests {
             ObserverAdmissionStatus::Active,
             "mainnet",
         ));
-        let candidates = vec![("10.0.0.1:9334".to_string(), Some("did:zhtp:obs".to_string()))];
+        let candidates = vec![(
+            "10.0.0.1:9334".to_string(),
+            Some("did:zhtp:obs".to_string()),
+        )];
         let out = select_trusted_sync_sources(candidates, &[], &store, "testnet", 100);
         assert!(out.is_empty());
     }

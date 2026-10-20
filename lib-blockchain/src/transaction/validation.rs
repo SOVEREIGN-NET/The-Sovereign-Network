@@ -4,6 +4,11 @@
 
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
+use crate::transaction::asset_tx::{
+    AssetBurnBpsUpdatePayloadV1, AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1,
+    AssetModuleUpgradePayloadV1, AssetRewardsDelegateRotatePayloadV1,
+    AssetRewardsPolicyUpdatePayloadV1,
+};
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
@@ -11,11 +16,6 @@ use crate::transaction::core::{
 use crate::transaction::mint_authorization::validate_token_mint_authorization;
 use crate::transaction::system_tx_signature::{
     allows_empty_system_signature, requires_system_tx_signature,
-};
-use crate::transaction::asset_tx::{
-    AssetLaunchPayloadV1, AssetManifestUpdatePayloadV1, AssetModuleUpgradePayloadV1,
-    AssetBurnBpsUpdatePayloadV1, AssetRewardsDelegateRotatePayloadV1,
-    AssetRewardsPolicyUpdatePayloadV1,
 };
 use crate::transaction::token_creation::TokenCreationPayloadV1;
 use crate::transaction::{
@@ -55,7 +55,10 @@ pub enum ValidationError {
     /// Threshold approval count is below the required quorum.
     ThresholdNotMet,
     /// Stake is still locked - cannot unstake yet.
-    StakeStillLocked { locked_until: u64, remaining: u64 },
+    StakeStillLocked {
+        locked_until: u64,
+        remaining: u64,
+    },
     // =========================================================================
     // Observer Admission Errors (observer-admission-3)
     // =========================================================================
@@ -113,26 +116,45 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidApproval => write!(f, "Invalid threshold approval"),
             ValidationError::DuplicateSigner => write!(f, "Duplicate signer in approval set"),
             ValidationError::ThresholdNotMet => write!(f, "Approval threshold not met"),
-            ValidationError::StakeStillLocked { locked_until, remaining } => {
-                write!(f, "Stake still locked until block {} ({} blocks remaining)", locked_until, remaining)
+            ValidationError::StakeStillLocked {
+                locked_until,
+                remaining,
+            } => {
+                write!(
+                    f,
+                    "Stake still locked until block {} ({} blocks remaining)",
+                    locked_until, remaining
+                )
             }
             ValidationError::ObserverAlreadyRegistered => {
                 write!(f, "An observer with this node DID is already registered")
             }
             ValidationError::ObserverNotFound => {
-                write!(f, "No observer admission record found for the given node DID")
+                write!(
+                    f,
+                    "No observer admission record found for the given node DID"
+                )
             }
             ValidationError::InvalidObserverLifecycleTransition => {
-                write!(f, "Invalid observer lifecycle transition from current status")
+                write!(
+                    f,
+                    "Invalid observer lifecycle transition from current status"
+                )
             }
             ValidationError::InvalidSponsorBinding => {
-                write!(f, "Sponsor DID does not match the canonical sponsor binding")
+                write!(
+                    f,
+                    "Sponsor DID does not match the canonical sponsor binding"
+                )
             }
             ValidationError::SponsorProofLevelTooLow => {
                 write!(f, "Sponsor proof level is below the policy minimum")
             }
             ValidationError::SponsorQuotaExhausted => {
-                write!(f, "Sponsor has reached the observer quota for their proof level")
+                write!(
+                    f,
+                    "Sponsor has reached the observer quota for their proof level"
+                )
             }
             ValidationError::AnonymousSponsorRejected => {
                 write!(f, "Anonymous sponsors cannot register observers")
@@ -141,7 +163,10 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "Observer admission record has expired")
             }
             ValidationError::ObserverNotAuthorized => {
-                write!(f, "Observer is not currently authorized by canonical admission state")
+                write!(
+                    f,
+                    "Observer is not currently authorized by canonical admission state"
+                )
             }
         }
     }
@@ -153,7 +178,6 @@ impl std::error::Error for ValidationError {}
 pub type ValidationResult = Result<(), ValidationError>;
 
 /// Transaction validator with state context
-
 pub struct TransactionValidator {
     // Note: In implementation, this would contain references to
     // blockchain state, UTXO set, nullifier set, etc.
@@ -172,15 +196,69 @@ pub struct StatefulTransactionValidator<'a> {
 // StatefulTransactionValidator impl blocks.
 // =========================================================================
 
+/// Whether a transaction type must be treated as non-system for signature +
+/// identity validation regardless of its empty-input (coinbase) shape.
+fn forces_non_system_type(transaction_type: TransactionType) -> bool {
+    matches!(
+        transaction_type,
+        TransactionType::TokenTransfer
+            | TransactionType::RewardClaim
+            | TransactionType::TokenCreation
+            | TransactionType::AssetLaunch
+            | TransactionType::AssetModuleUpgrade
+            | TransactionType::AssetManifestUpdate
+            | TransactionType::AssetAuthorityTransfer
+            | TransactionType::AssetAuthorityTransferCancel
+            | TransactionType::AssetRewardsDelegateRotate
+            | TransactionType::AssetRewardsPolicyUpdate
+            | TransactionType::AssetBurnBpsUpdate
+            | TransactionType::RegisterObserver
+            | TransactionType::UpdateObserverMetadata
+            | TransactionType::SuspendObserver
+            | TransactionType::RevokeObserver
+            | TransactionType::ReauthorizeObserver
+    )
+}
+
+/// Map a threshold-approval error to its `ValidationError` counterpart.
+fn to_threshold_validation_error(
+    e: crate::transaction::threshold_approval::ThresholdError,
+) -> ValidationError {
+    use crate::transaction::threshold_approval::ThresholdError;
+    match e {
+        ThresholdError::DuplicateSigner(_) => ValidationError::DuplicateSigner,
+        ThresholdError::InvalidSignature(_) => ValidationError::InvalidApproval,
+        ThresholdError::UnauthorizedSigner(_) => ValidationError::Unauthorized,
+        ThresholdError::ThresholdNotMet { .. } => ValidationError::ThresholdNotMet,
+    }
+}
+
+/// Reject a transaction that carries UTXO inputs/outputs (and, optionally, a
+/// non-zero fee). Shared by system registry / allocation validators that must
+/// be pure metadata updates.
+fn validate_no_utxo_transaction(
+    transaction: &Transaction,
+    require_zero_fee: bool,
+) -> ValidationResult {
+    if !transaction.inputs.is_empty() {
+        return Err(ValidationError::InvalidInputs);
+    }
+    if !transaction.outputs.is_empty() {
+        return Err(ValidationError::InvalidOutputs);
+    }
+    if require_zero_fee && transaction.fee != 0 {
+        return Err(ValidationError::InvalidFee);
+    }
+    Ok(())
+}
+
 /// Validates that an observer transaction carries its typed payload and has
 /// no UTXO inputs or outputs.  Reused in both stateless validation functions.
 fn validate_observer_tx_structure(tx: &Transaction) -> ValidationResult {
     use crate::types::transaction_type::TransactionType;
     let has_payload = match tx.transaction_type {
         TransactionType::RegisterObserver => tx.register_observer_data().is_some(),
-        TransactionType::UpdateObserverMetadata => {
-            tx.update_observer_metadata_data().is_some()
-        }
+        TransactionType::UpdateObserverMetadata => tx.update_observer_metadata_data().is_some(),
         TransactionType::SuspendObserver => tx.suspend_observer_data().is_some(),
         TransactionType::RevokeObserver => tx.revoke_observer_data().is_some(),
         TransactionType::ReauthorizeObserver => tx.reauthorize_observer_data().is_some(),
@@ -305,25 +383,7 @@ impl TransactionValidator {
         // Observer admission transactions (observer-admission-4) carry no
         // inputs/outputs by design but MUST be authenticated and identity-bound;
         // mark them non-system so signature + identity validation runs.
-        if matches!(
-            transaction.transaction_type,
-            TransactionType::TokenTransfer
-                | TransactionType::RewardClaim
-                | TransactionType::TokenCreation
-                | TransactionType::AssetLaunch
-                | TransactionType::AssetModuleUpgrade
-                | TransactionType::AssetManifestUpdate
-                | TransactionType::AssetAuthorityTransfer
-                | TransactionType::AssetAuthorityTransferCancel
-                | TransactionType::AssetRewardsDelegateRotate
-                | TransactionType::AssetRewardsPolicyUpdate
-                | TransactionType::AssetBurnBpsUpdate
-                | TransactionType::RegisterObserver
-                | TransactionType::UpdateObserverMetadata
-                | TransactionType::SuspendObserver
-                | TransactionType::RevokeObserver
-                | TransactionType::ReauthorizeObserver
-        ) {
+        if forces_non_system_type(transaction.transaction_type) {
             is_system_transaction = false;
         }
 
@@ -447,7 +507,7 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
-            TransactionType::TokenMint => {
+            TransactionType::TokenMint | TransactionType::SystemMint => {
                 // Validate minting authority and supply cap
                 self.validate_token_mint(transaction)?;
             }
@@ -647,22 +707,34 @@ impl TransactionValidator {
                 }
             }
             TransactionType::NftCreateCollection => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftCreateCollection(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftMint => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftMint(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftTransfer => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftTransfer(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftBurn => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftBurn(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
@@ -676,8 +748,7 @@ impl TransactionValidator {
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals; the
         //   transaction-level signature may be empty/dummy on these types.
-        let require_signature =
-            !is_system_transaction || requires_system_tx_signature(transaction);
+        let require_signature = !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         // Skip tx-level sig validation for threshold-approval-only types
         let is_threshold_only = matches!(
@@ -841,7 +912,7 @@ impl TransactionValidator {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
-            TransactionType::TokenMint => {
+            TransactionType::TokenMint | TransactionType::SystemMint => {
                 if transaction.version < 2 {
                     return Err(ValidationError::InvalidTransaction);
                 }
@@ -972,22 +1043,34 @@ impl TransactionValidator {
                 }
             }
             TransactionType::NftCreateCollection => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftCreateCollection(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftMint => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftMint(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftTransfer => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftTransfer(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftBurn => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftBurn(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
@@ -1000,8 +1083,7 @@ impl TransactionValidator {
         //   This prevents malformed signatures (wrong size, invalid bytes) from passing
         //   mempool intake and poisoning block proposals on other validators.
         // - RecordOnRampTrade and TreasuryAllocation use threshold approvals.
-        let require_signature =
-            !is_system_transaction || requires_system_tx_signature(transaction);
+        let require_signature = !is_system_transaction || requires_system_tx_signature(transaction);
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         let is_threshold_only_sflag = matches!(
             transaction.transaction_type,
@@ -1148,7 +1230,6 @@ impl TransactionValidator {
 
         Ok(())
     }
-
 
     /// Validate contract transaction
     fn validate_contract_transaction(&self, transaction: &Transaction) -> ValidationResult {
@@ -1382,7 +1463,6 @@ impl TransactionValidator {
             Ok(is_valid) => {
                 if !is_valid {
                     return Err(ValidationError::InvalidZkProof);
-
                 }
             }
             Err(e) => {
@@ -1410,7 +1490,6 @@ impl TransactionValidator {
                     println!(" DEBUG: Amount range proof INVALID - returning error");
                     log::error!("Amount range proof INVALID - returning error");
                     return Err(ValidationError::InvalidZkProof);
-
                 }
                 println!(" DEBUG: Amount range proof VALID");
                 log::info!("Amount range proof VALID");
@@ -1616,7 +1695,7 @@ impl TransactionValidator {
 
         // Validate wallet type is recognized
         match wallet_data.wallet_type.as_str() {
-            "Primary" | "UBI" | "Savings" | "DAO" => {
+            "Primary" | "DAO" => {
                 // Valid wallet types
             }
             _ => return Err(ValidationError::InvalidWalletType),
@@ -1874,25 +1953,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         // TokenTransfer must pay fees even with empty inputs.
         // Observer admission transactions (observer-admission-4) require
         // signature + identity validation despite having no inputs.
-        if matches!(
-            transaction.transaction_type,
-            TransactionType::TokenTransfer
-                | TransactionType::RewardClaim
-                | TransactionType::TokenCreation
-                | TransactionType::AssetLaunch
-                | TransactionType::AssetModuleUpgrade
-                | TransactionType::AssetManifestUpdate
-                | TransactionType::AssetAuthorityTransfer
-                | TransactionType::AssetAuthorityTransferCancel
-                | TransactionType::AssetRewardsDelegateRotate
-                | TransactionType::AssetRewardsPolicyUpdate
-                | TransactionType::AssetBurnBpsUpdate
-                | TransactionType::RegisterObserver
-                | TransactionType::UpdateObserverMetadata
-                | TransactionType::SuspendObserver
-                | TransactionType::RevokeObserver
-                | TransactionType::ReauthorizeObserver
-        ) {
+        if forces_non_system_type(transaction.transaction_type) {
             is_system_transaction = false;
         }
         tracing::debug!(
@@ -1948,10 +2009,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
             TransactionType::WalletRegistration => {
                 stateless_validator.validate_transaction(transaction)?;
-                stateless_validator.validate_wallet_registration_transaction(
-                    transaction,
-                    self.blockchain,
-                )?;
+                stateless_validator
+                    .validate_wallet_registration_transaction(transaction, self.blockchain)?;
             }
             TransactionType::WalletUpdate => {
                 stateless_validator.validate_transaction(transaction)?;
@@ -2030,7 +2089,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                                 );
                                 ValidationError::InvalidTransaction
                             })?;
-                        let sig_dilithium = transaction.signature.public_key.dilithium_pk.as_slice();
+                        let sig_dilithium =
+                            transaction.signature.public_key.dilithium_pk.as_slice();
                         if wallet.public_key.len() != 2592
                             || wallet.public_key.as_slice() != sig_dilithium
                         {
@@ -2115,7 +2175,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // halts the whole chain. Reject at submission instead.
                 if !is_sov && data.token_id != cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
-                        let effective_key = if data.from != transaction.signature.public_key.key_id {
+                        let effective_key = if data.from != transaction.signature.public_key.key_id
+                        {
                             transaction.signature.public_key.key_id
                         } else {
                             data.from
@@ -2144,7 +2205,8 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // Phase 1B moved all CBE balances to token_balances; cbe_account_state is no longer used.
                 if data.token_id == cbe_token_id {
                     if let Some(blockchain) = self.blockchain {
-                        let effective_key = if data.from != transaction.signature.public_key.key_id {
+                        let effective_key = if data.from != transaction.signature.public_key.key_id
+                        {
                             transaction.signature.public_key.key_id
                         } else {
                             data.from
@@ -2187,6 +2249,24 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
 
                 self.validate_token_mint_stateful_authorization(transaction)?;
+            }
+            TransactionType::SystemMint => {
+                if transaction.version < 2 {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                let data = transaction
+                    .token_mint_data()
+                    .ok_or(ValidationError::MissingRequiredData)?;
+                if data.amount == 0 {
+                    return Err(ValidationError::InvalidAmount);
+                }
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+                // Node-emitted consensus output: no council approval set required.
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
@@ -2285,11 +2365,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::DomainRegistration => {
                 // This prevents a malicious actor from claiming ownership of a domain under a
                 // DID they don't control.
-                let payload =
-                    crate::transaction::domain::DomainRegistrationPayload::decode_memo(
-                        &transaction.memo,
-                    )
-                    .map_err(|_| ValidationError::InvalidMemo)?;
+                let payload = crate::transaction::domain::DomainRegistrationPayload::decode_memo(
+                    &transaction.memo,
+                )
+                .map_err(|_| ValidationError::InvalidMemo)?;
                 let signer_did = format!(
                     "did:zhtp:{}",
                     hex::encode(transaction.signature.public_key.key_id)
@@ -2311,9 +2390,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // which meant a hand-crafted V2 memo with both fields zeroed
                 // would silently fall through to the "legacy V1" no-check
                 // branch — registering a domain for free.
-                let memo_is_v2 = transaction.memo.starts_with(
-                    crate::transaction::domain::DOMAIN_REGISTRATION_PREFIX_V2,
-                );
+                let memo_is_v2 = transaction
+                    .memo
+                    .starts_with(crate::transaction::domain::DOMAIN_REGISTRATION_PREFIX_V2);
                 if memo_is_v2 {
                     // CONS-516 companion-fee path: DOMREG2 memo with zeroed inline
                     // fee fields + non-empty fee_tx_hash. Payment is enforced by the
@@ -2325,9 +2404,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                         && payload.fee_payer_wallet_id == [0u8; 32]
                         && !payload.fee_tx_hash.is_empty();
                     if is_cons516_companion {
-                        let bc = self
-                            .blockchain
-                            .ok_or(ValidationError::InvalidTransaction)?;
+                        let bc = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
                         crate::transaction::domain::validate_cons516_companion_fee(
                             bc,
                             transaction,
@@ -2348,9 +2425,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                             return Err(ValidationError::InvalidTransaction);
                         }
                         if payload.fee_payer_wallet_id == [0u8; 32] {
-                            tracing::warn!(
-                                "[DOMAIN_REG] V2 payload with zero fee_payer_wallet_id"
-                            );
+                            tracing::warn!("[DOMAIN_REG] V2 payload with zero fee_payer_wallet_id");
                             return Err(ValidationError::InvalidTransaction);
                         }
                         let signer_wallet_owned = bc
@@ -2368,12 +2443,10 @@ impl<'a> StatefulTransactionValidator<'a> {
                             );
                             return Err(ValidationError::InvalidTransaction);
                         }
-                        let sov_id =
-                            crate::contracts::utils::generate_lib_token_id();
-                        let payer_key =
-                            crate::contracts::utils::wallet_key_for_sov(
-                                payload.fee_payer_wallet_id,
-                            );
+                        let sov_id = crate::contracts::utils::generate_lib_token_id();
+                        let payer_key = crate::contracts::utils::wallet_key_for_sov(
+                            payload.fee_payer_wallet_id,
+                        );
                         // Use available_balance (total - locked) to match the
                         // executor's debit_balance check at apply time
                         // (CR #2665 issue #4). Using total balance_of here would
@@ -2435,32 +2508,50 @@ impl<'a> StatefulTransactionValidator<'a> {
                 }
             }
             TransactionType::NftCreateCollection => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftCreateCollection(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftMint => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftMint(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftTransfer => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftTransfer(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::NftBurn => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftBurn(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::RegisterCredential => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::RegisterCredential(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::RegisterCredential(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
             TransactionType::UpdateCredentialPassword => {
-                if !matches!(transaction.payload, crate::transaction::TransactionPayload::UpdateCredentialPassword(_)) {
+                if !matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::UpdateCredentialPassword(_)
+                ) {
                     return Err(ValidationError::MissingRequiredData);
                 }
             }
@@ -2577,14 +2668,10 @@ impl<'a> StatefulTransactionValidator<'a> {
             if crate::transaction::reward_claim::key_id_from_did(&data.owner_did)
                 != Some(data.recipient_key_id)
             {
-                tracing::warn!(
-                    "[REWARD_CLAIM] recipient_key_id does not match owner_did"
-                );
+                tracing::warn!("[REWARD_CLAIM] recipient_key_id does not match owner_did");
                 return Err(ValidationError::InvalidTransaction);
             }
-            let blockchain = self
-                .blockchain
-                .ok_or(ValidationError::InvalidTransaction)?;
+            let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
             let store = blockchain
                 .get_store()
                 .ok_or(ValidationError::InvalidTransaction)?;
@@ -2611,19 +2698,19 @@ impl<'a> StatefulTransactionValidator<'a> {
                 token_creator,
             ) {
                 Ok(_) => {}
-                Err(crate::transaction::reward_claim::RewardClaimAuthError::TokenContractNotFound) => {
+                Err(
+                    crate::transaction::reward_claim::RewardClaimAuthError::TokenContractNotFound,
+                ) => {
                     tracing::warn!(
                         "[REWARD_CLAIM] token contract not found for claim token_id={}",
                         hex::encode(data.token_id)
                     );
                     return Err(ValidationError::InvalidTransaction);
                 }
-                Err(
-                    crate::transaction::reward_claim::RewardClaimAuthError::NotSpendDelegate {
-                        expected,
-                        got,
-                    },
-                ) => {
+                Err(crate::transaction::reward_claim::RewardClaimAuthError::NotSpendDelegate {
+                    expected,
+                    got,
+                }) => {
                     tracing::warn!(
                         "[REWARD_CLAIM] signer is not on-chain spend delegate: from={} expected={}",
                         hex::encode(got),
@@ -2631,12 +2718,10 @@ impl<'a> StatefulTransactionValidator<'a> {
                     );
                     return Err(ValidationError::Unauthorized);
                 }
-                Err(
-                    crate::transaction::reward_claim::RewardClaimAuthError::NotTokenCreator {
-                        expected,
-                        got,
-                    },
-                ) => {
+                Err(crate::transaction::reward_claim::RewardClaimAuthError::NotTokenCreator {
+                    expected,
+                    got,
+                }) => {
                     tracing::warn!(
                         "[REWARD_CLAIM] signer is not token creator (legacy path): from={} creator={}",
                         hex::encode(got),
@@ -2667,10 +2752,32 @@ impl<'a> StatefulTransactionValidator<'a> {
         Ok(())
     }
 
+    /// Validate a Bootstrap-Council threshold approval set against the signer's
+    /// council membership. Shared by entity-registry init and treasury allocation.
+    fn validate_council_threshold(
+        &self,
+        approvals: &crate::transaction::threshold_approval::ThresholdApprovalSet,
+        preimage: &[u8; 32],
+    ) -> ValidationResult {
+        use crate::transaction::threshold_approval::validate_threshold_approvals;
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        validate_threshold_approvals(
+            approvals,
+            preimage,
+            |pk_bytes| {
+                // #2639: sled-first DID-by-pubkey (in-mem fallback).
+                blockchain
+                    .did_by_public_key(pk_bytes)
+                    .map(|did| blockchain.is_council_member(&did))
+                    .unwrap_or(false)
+            },
+            blockchain.council_threshold as usize,
+        )
+        .map_err(to_threshold_validation_error)
+    }
+
     fn validate_init_entity_registry(&self, transaction: &Transaction) -> ValidationResult {
-        use crate::transaction::threshold_approval::{
-            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
-        };
+        use crate::transaction::threshold_approval::{compute_approval_preimage, ApprovalDomain};
 
         const MIN_TREASURY_DILITHIUM_PK_LEN: usize = 1312;
         // tx_type byte for InitEntityRegistry = 38
@@ -2680,15 +2787,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .init_entity_registry_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
+        validate_no_utxo_transaction(transaction, true)?;
 
         let cbe_pk = &data.cbe_treasury.dilithium_pk;
         let nonprofit_pk = &data.nonprofit_treasury.dilithium_pk;
@@ -2745,35 +2844,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::ThresholdNotMet);
         }
 
-        validate_threshold_approvals(
-            &data.approvals,
-            &preimage,
-            |pk_bytes| {
-                // #2639: sled-first DID-by-pubkey (in-mem fallback). The old
-                // get_identity_by_public_key scanned the in-memory shadow only,
-                // empty on a store-backed node after restart — so council members
-                // were unverifiable and threshold approvals silently failed there.
-                blockchain
-                    .did_by_public_key(pk_bytes)
-                    .map(|did| blockchain.is_council_member(&did))
-                    .unwrap_or(false)
-            },
-            blockchain.council_threshold as usize,
-        )
-        .map_err(|e| match e {
-            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                ValidationError::DuplicateSigner
-            }
-            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                ValidationError::InvalidApproval
-            }
-            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                ValidationError::Unauthorized
-            }
-            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                ValidationError::ThresholdNotMet
-            }
-        })?;
+        self.validate_council_threshold(&data.approvals, &preimage)?;
 
         Ok(())
     }
@@ -2790,15 +2861,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .record_on_ramp_trade_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
+        validate_no_utxo_transaction(transaction, true)?;
         if data.cbe_amount == 0 {
             return Err(ValidationError::InvalidAmount);
         }
@@ -2858,29 +2921,14 @@ impl<'a> StatefulTransactionValidator<'a> {
             },
             oracle_threshold,
         )
-        .map_err(|e| match e {
-            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                ValidationError::DuplicateSigner
-            }
-            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                ValidationError::InvalidApproval
-            }
-            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                ValidationError::Unauthorized
-            }
-            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                ValidationError::ThresholdNotMet
-            }
-        })?;
+        .map_err(to_threshold_validation_error)?;
 
         Ok(())
     }
 
     /// Validate a TreasuryAllocation transaction.
     fn validate_treasury_allocation(&self, transaction: &Transaction) -> ValidationResult {
-        use crate::transaction::threshold_approval::{
-            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
-        };
+        use crate::transaction::threshold_approval::{compute_approval_preimage, ApprovalDomain};
 
         // tx_type byte for TreasuryAllocation = 40
         const TX_TYPE_BYTE: u8 = 40;
@@ -2889,15 +2937,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .treasury_allocation_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
-        if transaction.fee != 0 {
-            return Err(ValidationError::InvalidFee);
-        }
+        validate_no_utxo_transaction(transaction, true)?;
         if data.amount == 0 {
             return Err(ValidationError::InvalidAmount);
         }
@@ -2954,35 +2994,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             &payload_bytes,
         );
 
-        validate_threshold_approvals(
-            &data.approvals,
-            &preimage,
-            |pk_bytes| {
-                // #2639: sled-first DID-by-pubkey (in-mem fallback). The old
-                // get_identity_by_public_key scanned the in-memory shadow only,
-                // empty on a store-backed node after restart — so council members
-                // were unverifiable and threshold approvals silently failed there.
-                blockchain
-                    .did_by_public_key(pk_bytes)
-                    .map(|did| blockchain.is_council_member(&did))
-                    .unwrap_or(false)
-            },
-            blockchain.council_threshold as usize,
-        )
-        .map_err(|e| match e {
-            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                ValidationError::DuplicateSigner
-            }
-            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                ValidationError::InvalidApproval
-            }
-            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                ValidationError::Unauthorized
-            }
-            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                ValidationError::ThresholdNotMet
-            }
-        })?;
+        self.validate_council_threshold(&data.approvals, &preimage)?;
 
         Ok(())
     }
@@ -2992,12 +3004,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .create_employment_contract_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // dao_id and employee_key_id must be non-zero
         if data.dao_id == [0u8; 32] || data.employee_key_id == [0u8; 32] {
@@ -3033,12 +3040,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .process_payroll_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // contract_id must be non-zero
         if data.contract_id == [0u8; 32] {
@@ -3071,9 +3073,8 @@ impl<'a> StatefulTransactionValidator<'a> {
         // produces key_id). This avoids requiring the identity to be registered
         // on-chain — the council membership is authoritative (set at genesis).
         let signer_did = {
-            let hash = lib_crypto::hashing::hash_blake3(
-                &transaction.signature.public_key.dilithium_pk,
-            );
+            let hash =
+                lib_crypto::hashing::hash_blake3(&transaction.signature.public_key.dilithium_pk);
             format!("did:zhtp:{}", hex::encode(hash))
         };
         if !blockchain.is_council_member(&signer_did) {
@@ -3099,12 +3100,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // No UTXO inputs or outputs allowed.
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // Staker must be the transaction signer.
         if data.staker != transaction.signature.public_key.key_id {
@@ -3148,7 +3144,9 @@ impl<'a> StatefulTransactionValidator<'a> {
         let staker_addr = crate::storage::Address::new(data.staker);
         let balance: u128 = if let Some(store) = &blockchain.store {
             let storage_token = crate::storage::TokenId(sov_token_id);
-            store.get_token_balance(&storage_token, &staker_addr).unwrap_or(0)
+            store
+                .get_token_balance(&storage_token, &staker_addr)
+                .unwrap_or(0)
         } else {
             let sender_key = crate::Blockchain::wallet_key_for_sov(&data.staker);
             blockchain
@@ -3181,12 +3179,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             .dao_unstake_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
-        if !transaction.inputs.is_empty() {
-            return Err(ValidationError::InvalidInputs);
-        }
-        if !transaction.outputs.is_empty() {
-            return Err(ValidationError::InvalidOutputs);
-        }
+        validate_no_utxo_transaction(transaction, false)?;
 
         // Staker must be the transaction signer.
         if data.staker != transaction.signature.public_key.key_id {
@@ -3274,9 +3267,7 @@ impl<'a> StatefulTransactionValidator<'a> {
     fn validate_sender_identity_exists(&self, transaction: &Transaction) -> ValidationResult {
         tracing::debug!("[BREADCRUMB] validate_sender_identity_exists ENTER");
 
-        let blockchain = self
-            .blockchain
-            .ok_or(ValidationError::InvalidTransaction)?;
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
 
         // Extract the public key from the transaction signature
         let sender_public_key = transaction.signature.public_key.as_bytes();
@@ -3698,7 +3689,7 @@ pub mod utils {
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
-            TransactionType::TokenMint => {
+            TransactionType::TokenMint | TransactionType::SystemMint => {
                 transaction.version >= 2
                     && transaction.token_mint_data().is_some()
                     && transaction.inputs.is_empty()
@@ -3822,16 +3813,28 @@ pub mod utils {
                     && transaction.outputs.is_empty()
             }
             TransactionType::NftCreateCollection => {
-                matches!(transaction.payload, crate::transaction::TransactionPayload::NftCreateCollection(_))
+                matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftCreateCollection(_)
+                )
             }
             TransactionType::NftMint => {
-                matches!(transaction.payload, crate::transaction::TransactionPayload::NftMint(_))
+                matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftMint(_)
+                )
             }
             TransactionType::NftTransfer => {
-                matches!(transaction.payload, crate::transaction::TransactionPayload::NftTransfer(_))
+                matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftTransfer(_)
+                )
             }
             TransactionType::NftBurn => {
-                matches!(transaction.payload, crate::transaction::TransactionPayload::NftBurn(_))
+                matches!(
+                    transaction.payload,
+                    crate::transaction::TransactionPayload::NftBurn(_)
+                )
             }
         }
     }
@@ -3932,7 +3935,7 @@ mod tests {
                 commitment: Hash::from([7u8; 32]),
                 note: Hash::from([8u8; 32]),
                 recipient: sender_key.clone(),
-            merkle_leaf: Hash::default(),
+                merkle_leaf: Hash::default(),
             }],
             fee: 0,
             signature: test_signature(sender_key),
@@ -3967,6 +3970,7 @@ mod tests {
                     token_id,
                     to,
                     amount,
+                    approvals: Default::default(),
                 },
             ),
         }

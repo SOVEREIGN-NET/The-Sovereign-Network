@@ -106,6 +106,7 @@ fn create_sov_welcome_bonus_mint_tx(wallet_id: [u8; 32], amount: u128) -> Transa
             token_id: [0u8; 32],
             to: wallet_id,
             amount,
+            approvals: Default::default(),
         }),
     }
 }

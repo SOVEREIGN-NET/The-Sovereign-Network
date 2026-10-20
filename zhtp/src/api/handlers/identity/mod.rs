@@ -30,7 +30,9 @@ use lib_identity::{CitizenshipResult, IdentityManager, IdentityType, RecoveryPhr
 use lib_identity::economics::EconomicModel as IdentityEconomicModel;
 
 // Blockchain imports for transaction creation
-use crate::api::handlers::constants::{SOV_ATOMIC_UNITS, DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV};
+use crate::api::handlers::constants::{
+    DEV_BOOTSTRAP_BONUS, DEV_BOOTSTRAP_BONUS_SOV, SOV_ATOMIC_UNITS,
+};
 use lib_blockchain::{
     integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm},
     transaction::core::IdentityTransactionData,
@@ -386,7 +388,7 @@ impl IdentityHandler {
                 }
             }
 
-            //  Create blockchain transactions for identity + all 3 wallets
+            //  Create blockchain transactions for identity + Primary wallet
             tracing::info!(" Creating blockchain transactions for identity and wallets");
             let did_string = format!("did:zhtp:{}", citizenship_result.identity_id);
 
@@ -506,7 +508,7 @@ impl IdentityHandler {
                 }
             }
 
-            // Create and submit wallet transactions for all 3 wallets
+            // Create and submit wallet transaction for the Primary wallet
             use lib_blockchain::transaction::WalletTransactionData;
 
             // Seed commitment removed for mobile flow (client manages master seed).
@@ -535,56 +537,6 @@ impl IdentityHandler {
                 .await
             {
                 tracing::warn!("Failed to submit primary wallet to blockchain: {}", e);
-            }
-
-            // UBI Wallet
-            let ubi_wallet_tx = WalletTransactionData {
-                wallet_id: lib_blockchain::Hash::from(citizenship_result.ubi_wallet_id.0),
-                wallet_type: "UBI".to_string(),
-                wallet_name: "UBI Wallet".to_string(),
-                alias: None,
-                public_key: keypair.public_key.dilithium_pk.to_vec(),
-                kyber_public_key: vec![],
-                owner_identity_id: Some(lib_blockchain::Hash::from(
-                    citizenship_result.identity_id.0,
-                )),
-                seed_commitment: master_seed_commitment,
-                created_at: citizenship_result.dao_registration.registered_at,
-                registration_fee: 0,  // System wallets are free
-                capabilities: 0xFFFF, // Full capabilities
-                initial_balance: 0,   // UBI payments come later
-            };
-
-            if let Err(e) = self
-                .submit_wallet_to_blockchain(ubi_wallet_tx, &keypair)
-                .await
-            {
-                tracing::warn!("Failed to submit UBI wallet to blockchain: {}", e);
-            }
-
-            // Savings Wallet
-            let savings_wallet_tx = WalletTransactionData {
-                wallet_id: lib_blockchain::Hash::from(citizenship_result.savings_wallet_id.0),
-                wallet_type: "Savings".to_string(),
-                wallet_name: "Savings Wallet".to_string(),
-                alias: None,
-                public_key: keypair.public_key.dilithium_pk.to_vec(),
-                kyber_public_key: vec![],
-                owner_identity_id: Some(lib_blockchain::Hash::from(
-                    citizenship_result.identity_id.0,
-                )),
-                seed_commitment: master_seed_commitment,
-                created_at: citizenship_result.dao_registration.registered_at,
-                registration_fee: 0,  // System wallets are free
-                capabilities: 0xFFFF, // Full capabilities
-                initial_balance: 0,   // Starts empty
-            };
-
-            if let Err(e) = self
-                .submit_wallet_to_blockchain(savings_wallet_tx, &keypair)
-                .await
-            {
-                tracing::warn!("Failed to submit savings wallet to blockchain: {}", e);
             }
 
             CreateIdentityResponse {
@@ -790,7 +742,7 @@ impl IdentityHandler {
         // ========================================================================
         // CRITICAL FIX: Create dust UTXO for wallet (1 micro-SOV = 0.00000001 SOV)
         // This establishes the wallet on-chain and allows it to receive transactions
-        // Cost is minimal: 3 micro-SOV per user for 3 wallets
+        // Cost is minimal: 1 micro-SOV per user for the Primary wallet
         // ========================================================================
         let dust_amount = 1u64; // 1 micro-SOV (0.00000001 SOV)
         let wallet_id_hex = hex::encode(wallet_data.wallet_id.as_bytes());
@@ -2266,7 +2218,7 @@ impl IdentityHandler {
             let mut identity_manager = self.identity_manager.write().await;
             let mut economic_model = lib_identity::economics::EconomicModel::new();
 
-            // Register as citizen with 3 wallets
+            // Register as citizen with a single Primary wallet
             identity_manager
                 .register_external_citizen_identity(
                     did.clone(),
@@ -2282,8 +2234,6 @@ impl IdentityHandler {
 
         // Extract wallet info from citizenship result
         let primary_wallet_id = hex::encode(&citizenship_result.primary_wallet_id.0);
-        let ubi_wallet_id = hex::encode(&citizenship_result.ubi_wallet_id.0);
-        let savings_wallet_id = hex::encode(&citizenship_result.savings_wallet_id.0);
 
         // Queue on-chain identity + wallets. The client proves key ownership via
         // registration_proof (ZHTP_REGISTER:{timestamp}); the chain tx is injected
@@ -2313,8 +2263,6 @@ impl IdentityHandler {
         };
 
         let primary_wallet_id_arr = citizenship_result.primary_wallet_id.0;
-        let ubi_wallet_id_arr = citizenship_result.ubi_wallet_id.0;
-        let savings_wallet_id_arr = citizenship_result.savings_wallet_id.0;
         let blockchain_arc =
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(arc) => arc,
@@ -2370,28 +2318,15 @@ impl IdentityHandler {
                         .to_string(),
                 ));
             }
-            for (label, wid) in [
-                ("primary", primary_wallet_id.as_str()),
-                ("UBI", ubi_wallet_id.as_str()),
-                ("savings", savings_wallet_id.as_str()),
-            ] {
-                if blockchain.wallet_exists(wid) {
-                    return Err((
-                        ZhtpStatus::Conflict,
-                        format!(
-                            "{} wallet already exists on chain; cannot re-register",
-                            label
-                        ),
-                    ));
-                }
+            if blockchain.wallet_exists(primary_wallet_id.as_str()) {
+                return Err((
+                    ZhtpStatus::Conflict,
+                    format!("primary wallet already exists on chain; cannot re-register"),
+                ));
             }
 
             let mut queued_txs: Vec<Transaction> = Vec::new();
-            let wallet_id_hexes = [
-                primary_wallet_id.as_str(),
-                ubi_wallet_id.as_str(),
-                savings_wallet_id.as_str(),
-            ];
+            let wallet_id_hexes = [primary_wallet_id.as_str()];
             let abort = |bc: &mut lib_blockchain::Blockchain, queued: &[Transaction]| {
                 bc.abort_pending_client_registration(queued, &did_string, &wallet_id_hexes);
             };
@@ -2430,8 +2365,7 @@ impl IdentityHandler {
                 &identity_tx_hash[..16.min(identity_tx_hash.len())]
             );
 
-            let seed_commitment =
-                lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed");
+            let seed_commitment = lib_blockchain::types::hash::blake3_hash(b"client_wallet_seed");
             let owner_identity_id = Some(lib_blockchain::Hash::from_slice(&identity_id.0));
 
             // Client-aligned wallets (#2979): wallet public_key = the client's real
@@ -2440,63 +2374,26 @@ impl IdentityHandler {
             let client_dilithium_pk = public_key_bytes.clone();
             let client_kyber_pk = kyber_public_key.clone().unwrap_or_default();
 
-            let wallet_specs = [
-                (
-                    "primary",
-                    lib_blockchain::transaction::WalletTransactionData {
-                        wallet_id: lib_blockchain::Hash::from_slice(&primary_wallet_id_arr),
-                        wallet_type: "Primary".to_string(),
-                        wallet_name: "Primary Wallet".to_string(),
-                        alias: Some("primary".to_string()),
-                        public_key: client_dilithium_pk.clone(),
-                        kyber_public_key: client_kyber_pk.clone(),
-                        owner_identity_id,
-                        seed_commitment,
-                        created_at,
-                        registration_fee: 50,
-                        capabilities: 0xFF,
-                        initial_balance: 0,
-                    },
-                ),
-                (
-                    "UBI",
-                    lib_blockchain::transaction::WalletTransactionData {
-                        wallet_id: lib_blockchain::Hash::from_slice(&ubi_wallet_id_arr),
-                        wallet_type: "UBI".to_string(),
-                        wallet_name: "UBI Wallet".to_string(),
-                        alias: Some("ubi".to_string()),
-                        public_key: client_dilithium_pk.clone(),
-                        kyber_public_key: client_kyber_pk.clone(),
-                        owner_identity_id,
-                        seed_commitment,
-                        created_at,
-                        registration_fee: 50,
-                        capabilities: 0x01,
-                        initial_balance: 0,
-                    },
-                ),
-                (
-                    "savings",
-                    lib_blockchain::transaction::WalletTransactionData {
-                        wallet_id: lib_blockchain::Hash::from_slice(&savings_wallet_id_arr),
-                        wallet_type: "Savings".to_string(),
-                        wallet_name: "Savings Wallet".to_string(),
-                        alias: Some("savings".to_string()),
-                        public_key: client_dilithium_pk.clone(),
-                        kyber_public_key: client_kyber_pk.clone(),
-                        owner_identity_id,
-                        seed_commitment,
-                        created_at,
-                        registration_fee: 50,
-                        capabilities: 0x02,
-                        initial_balance: 0,
-                    },
-                ),
-            ];
+            let wallet_specs = [(
+                "primary",
+                lib_blockchain::transaction::WalletTransactionData {
+                    wallet_id: lib_blockchain::Hash::from_slice(&primary_wallet_id_arr),
+                    wallet_type: "Primary".to_string(),
+                    wallet_name: "Primary Wallet".to_string(),
+                    alias: Some("primary".to_string()),
+                    public_key: client_dilithium_pk.clone(),
+                    kyber_public_key: client_kyber_pk.clone(),
+                    owner_identity_id,
+                    seed_commitment,
+                    created_at,
+                    registration_fee: 50,
+                    capabilities: 0xFF,
+                    initial_balance: 0,
+                },
+            )];
 
             // Primary first so welcome mint can follow immediately after.
-            let [(primary_label, primary_data), (ubi_label, ubi_data), (savings_label, savings_data)] =
-                wallet_specs;
+            let [(primary_label, primary_data)] = wallet_specs;
 
             register_wallet_or_abort(
                 &mut blockchain,
@@ -2520,24 +2417,7 @@ impl IdentityHandler {
                 );
             }
 
-            register_wallet_or_abort(
-                &mut blockchain,
-                ubi_data,
-                ubi_label,
-                &mut queued_txs,
-                &did_string,
-                &wallet_id_hexes,
-            )?;
-            register_wallet_or_abort(
-                &mut blockchain,
-                savings_data,
-                savings_label,
-                &mut queued_txs,
-                &did_string,
-                &wallet_id_hexes,
-            )?;
-
-            tracing::info!("✅ All 3 wallet registrations queued for blockchain inclusion");
+            tracing::info!("✅ Primary wallet registration queued for blockchain inclusion");
             Ok(identity_tx_hash)
         }
         .await;
@@ -2561,14 +2441,12 @@ impl IdentityHandler {
                 node_id: hex::encode(&node_id_bytes),
                 kyber_public_key: req_data.kyber_public_key.clone(),
                 primary_wallet_id: primary_wallet_id.clone(),
-                ubi_wallet_id: ubi_wallet_id.clone(),
-                savings_wallet_id: savings_wallet_id.clone(),
                 registered_at: now,
             },
         );
 
         tracing::info!(
-            "✅ Client citizen registration queued: {} with 3 wallets pending block inclusion",
+            "✅ Client citizen registration queued: {} with Primary wallet pending block inclusion",
             &did[..32.min(did.len())]
         );
 
@@ -2615,8 +2493,6 @@ impl IdentityHandler {
             "registered_at": now,
             "pqc_enabled": req_data.kyber_public_key.is_some(),
             "primary_wallet_id": primary_wallet_id,
-            "ubi_wallet_id": ubi_wallet_id,
-            "savings_wallet_id": savings_wallet_id,
             "committed_height": committed_height,
         });
 

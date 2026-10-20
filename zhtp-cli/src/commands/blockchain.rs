@@ -104,8 +104,6 @@ fn default_blockchain_dat_path() -> PathBuf {
 fn normalize_wallet_type_for_registration(wallet_type: &str) -> Option<&'static str> {
     match wallet_type {
         "Primary" | "primary" => Some("Primary"),
-        "UBI" | "ubi" => Some("UBI"),
-        "Savings" | "savings" => Some("Savings"),
         "DAO" | "dao" => Some("DAO"),
         _ => None,
     }

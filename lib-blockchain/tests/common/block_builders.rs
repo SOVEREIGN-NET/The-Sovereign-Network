@@ -5,7 +5,9 @@
 
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::integration::zk_integration::ZkTransactionProof;
-use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput, TransactionPayload};
+use lib_blockchain::transaction::{
+    Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+};
 use lib_blockchain::types::{transaction_type::TransactionType, Hash};
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -59,8 +61,7 @@ pub fn block_at_height_with_txs(height: u64, prev_hash: Hash, txs: Vec<Transacti
 /// Build a child block from a parent reference, computing a Merkle root for txs.
 /// Used by dual-node Merkle-root consensus tests.
 pub fn child_block(parent: &Block, txs: Vec<Transaction>) -> Block {
-    let merkle_root =
-        lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&txs);
+    let merkle_root = lib_blockchain::transaction::hashing::calculate_transaction_merkle_root(&txs);
     let header = BlockHeader {
         version: 1,
         previous_hash: parent.hash().into(),

@@ -530,10 +530,6 @@ impl WalletHandler {
         let wallet_type = match wallet_type_str.to_lowercase().as_str() {
             "primary" => lib_identity::wallets::WalletType::Primary,
             "standard" => lib_identity::wallets::WalletType::Standard,
-            "ubi" | "ubidistribution" | "ubi_distribution" => {
-                lib_identity::wallets::WalletType::UBI
-            }
-            "savings" => lib_identity::wallets::WalletType::Savings,
             "business" => lib_identity::wallets::WalletType::Business,
             "stealth" | "privacy" => lib_identity::wallets::WalletType::Stealth,
             "nonprofitdao" | "nonprofit" => lib_identity::wallets::WalletType::NonProfitDAO,
@@ -1193,8 +1189,6 @@ impl WalletHandler {
             }
             let wallet_type = match wallet_data.wallet_type.to_ascii_lowercase().as_str() {
                 "primary" => lib_identity::wallets::WalletType::Primary,
-                "ubi" => lib_identity::wallets::WalletType::UBI,
-                "savings" => lib_identity::wallets::WalletType::Savings,
                 "business" => lib_identity::wallets::WalletType::Business,
                 "stealth" => lib_identity::wallets::WalletType::Stealth,
                 "dao" | "nonprofitdao" | "non_profit_dao" | "non-profit-dao" => {
@@ -1703,8 +1697,6 @@ impl WalletHandler {
             lib_identity::wallets::WalletType::Standard => {
                 format!("standard_{}", &identity_id[..12])
             }
-            lib_identity::wallets::WalletType::UBI => format!("ubi_{}", &identity_id[..12]),
-            lib_identity::wallets::WalletType::Savings => format!("savings_{}", &identity_id[..12]),
             lib_identity::wallets::WalletType::Business => {
                 format!("business_{}", &identity_id[..12])
             }

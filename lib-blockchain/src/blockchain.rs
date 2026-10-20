@@ -664,8 +664,8 @@ pub struct GatewayInfo {
 pub struct UbiRegistryEntry {
     /// Citizen's identity ID (hex string)
     pub identity_id: String,
-    /// UBI wallet ID where payments are sent
-    pub ubi_wallet_id: String,
+    /// Primary wallet ID where payments are sent
+    pub primary_wallet_id: String,
     /// Daily UBI amount (~33 SOV, atomic units u128 for 18-decimal)
     pub daily_amount: u128,
     /// Monthly UBI amount (1000 SOV, atomic units u128 for 18-decimal)
@@ -2565,10 +2565,12 @@ impl Blockchain {
         let empty_sig = tx.signature.signature.is_empty();
         let label = originator.as_str();
 
-        if tx.transaction_type == TransactionType::TokenMint {
+        if tx.transaction_type == TransactionType::TokenMint
+            || tx.transaction_type == TransactionType::SystemMint
+        {
             if tx.token_mint_data().is_none() {
                 return Err(anyhow::anyhow!(
-                    "rejecting TokenMint from originator '{:?}' with missing mint payload",
+                    "rejecting mint from originator '{:?}' with missing mint payload",
                     originator
                 ));
             }
@@ -2576,7 +2578,7 @@ impl Blockchain {
                 SystemOriginator::PouwMint | SystemOriginator::PouwReward => {
                     if !empty_sig {
                         return Err(anyhow::anyhow!(
-                            "rejecting signed PoUW TokenMint from originator '{}'",
+                            "rejecting signed PoUW mint from originator '{}'",
                             label
                         ));
                     }
@@ -2589,16 +2591,16 @@ impl Blockchain {
                 SystemOriginator::Other(unknown) => {
                     tracing::warn!(
                         originator = unknown,
-                        "rejecting TokenMint from untyped Other originator"
+                        "rejecting mint from untyped Other originator"
                     );
                     return Err(anyhow::anyhow!(
-                        "rejecting TokenMint from untrusted originator '{}'",
+                        "rejecting mint from untrusted originator '{}'",
                         unknown
                     ));
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
-                        "rejecting TokenMint from untrusted originator '{:?}'",
+                        "rejecting mint from untrusted originator '{:?}'",
                         originator
                     ));
                 }
@@ -6751,8 +6753,8 @@ impl Blockchain {
                 entry.total_received += payout;
                 entry.remainder_balance = remainder;
 
-                // Credit the UBI wallet in wallet_registry
-                let wallet_id = entry.ubi_wallet_id.clone();
+                // Credit the Primary wallet in wallet_registry
+                let wallet_id = entry.primary_wallet_id.clone();
                 if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
                     wallet.initial_balance += payout;
                     debug!(
@@ -6802,7 +6804,7 @@ impl Blockchain {
                 payout += new_remainder / 30;
             }
 
-            let wallet_id = entry.ubi_wallet_id.clone();
+            let wallet_id = entry.primary_wallet_id.clone();
             if let Some(_wallet) = self.wallet_registry.get(&wallet_id) {
                 let wallet_id_bytes = match Self::wallet_id_bytes(&wallet_id) {
                     Some(bytes) => bytes,
@@ -6840,7 +6842,7 @@ impl Blockchain {
     pub fn register_for_ubi(
         &mut self,
         identity_id: String,
-        ubi_wallet_id: String,
+        primary_wallet_id: String,
         current_block: u64,
     ) -> Result<()> {
         // Check if already registered
@@ -6856,7 +6858,7 @@ impl Blockchain {
 
         let entry = UbiRegistryEntry {
             identity_id: identity_id.clone(),
-            ubi_wallet_id: ubi_wallet_id.clone(),
+            primary_wallet_id: primary_wallet_id.clone(),
             daily_amount,
             monthly_amount,
             registered_at_block: current_block,
@@ -6932,6 +6934,7 @@ impl Blockchain {
             token_id: crate::contracts::utils::generate_lib_token_id(),
             to: recipient_key_id,
             amount,
+            approvals: Default::default(),
         };
 
         let signature = Signature {
@@ -6950,7 +6953,7 @@ impl Blockchain {
 
         let memo = format!("pouw:mint:{}:{}", hex::encode(recipient_key_id), amount).into_bytes();
 
-        let mint_tx = Transaction::new_token_mint(mint_data, signature, memo);
+        let mint_tx = Transaction::new_system_mint(0x03, mint_data, signature, memo);
         let tx_hash = mint_tx.hash();
         self.add_system_transaction(mint_tx, SystemOriginator::PouwMint)?;
         Ok(tx_hash)

@@ -1079,6 +1079,19 @@ impl Blockchain {
                                 wallet_data: wallet_data.clone(),
                             },
                         );
+
+                        // Client-style registration: the identity tx carries
+                        // `owned_wallets: vec![]`, so UBI registration is deferred to
+                        // here once the wallet (and its owner) are both committed.
+                        if let Some(owner) = wallet_data.owner_identity_id {
+                            let wallet_type = wallet_data.wallet_type.clone();
+                            self.link_wallet_to_owner(
+                                wallet_id_str.clone(),
+                                &owner,
+                                &wallet_type,
+                                block.height(),
+                            );
+                        }
                     }
 
                     // Executor mode mints initial SOV to sled in apply_block; in-memory

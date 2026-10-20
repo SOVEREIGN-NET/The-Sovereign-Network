@@ -157,12 +157,12 @@ impl WalletManager {
         all_transactions
     }
 
-    /// Auto-distribute UBI to UBI wallets
+    /// Auto-distribute UBI to Primary wallets
     pub fn auto_distribute_ubi(&mut self, amount_per_wallet: u128) -> Result<Vec<Hash>> {
         let ubi_wallets: Vec<WalletId> = self
             .wallets
             .values()
-            .filter(|wallet| wallet.wallet_type == crate::wallets::WalletType::UBI)
+            .filter(|wallet| wallet.wallet_type == crate::wallets::WalletType::Primary)
             .map(|wallet| wallet.id.clone())
             .collect();
 
@@ -194,7 +194,7 @@ impl WalletManager {
         self.calculate_total_balance();
 
         tracing::info!(
-            "Auto-distributed {} SOV to {} UBI wallets",
+            "Auto-distributed {} SOV to {} Primary wallets",
             amount_per_wallet,
             distribution_hashes.len()
         );
@@ -210,7 +210,7 @@ impl WalletManager {
         let ubi_wallets: Vec<WalletId> = self
             .wallets
             .values()
-            .filter(|wallet| wallet.wallet_type == crate::wallets::WalletType::UBI)
+            .filter(|wallet| wallet.wallet_type == crate::wallets::WalletType::Primary)
             .map(|wallet| wallet.id.clone())
             .collect();
 
@@ -516,10 +516,10 @@ mod tests {
         let owner_id = Hash([1u8; 32]);
         let mut manager = WalletManager::new(owner_id);
 
-        // Create UBI wallets
+        // Create Primary wallets
         let ubi_wallet1 = manager
             .create_wallet_for_testing(
-                crate::wallets::WalletType::UBI,
+                crate::wallets::WalletType::Primary,
                 "UBI Wallet 1".to_string(),
                 Some("ubi1".to_string()),
             )
@@ -527,7 +527,7 @@ mod tests {
 
         let ubi_wallet2 = manager
             .create_wallet_for_testing(
-                crate::wallets::WalletType::UBI,
+                crate::wallets::WalletType::Primary,
                 "UBI Wallet 2".to_string(),
                 Some("ubi2".to_string()),
             )
@@ -561,7 +561,7 @@ mod tests {
 
         let wallet2 = manager
             .create_wallet_for_testing(
-                crate::wallets::WalletType::Savings,
+                crate::wallets::WalletType::Standard,
                 "Wallet 2".to_string(),
                 None,
             )
@@ -604,7 +604,7 @@ mod tests {
 
         let _wallet2 = manager
             .create_wallet_for_testing(
-                crate::wallets::WalletType::UBI,
+                crate::wallets::WalletType::Standard,
                 "Another Healthy Wallet".to_string(),
                 None,
             )
@@ -634,7 +634,7 @@ mod tests {
 
         let wallet2 = manager
             .create_wallet_for_testing(
-                crate::wallets::WalletType::Savings,
+                crate::wallets::WalletType::Standard,
                 "Staking Wallet 2".to_string(),
                 None,
             )
@@ -682,7 +682,7 @@ mod tests {
 
         let dest1 = manager
             .create_wallet_for_testing(
-                crate::wallets::WalletType::Savings,
+                crate::wallets::WalletType::Standard,
                 "Dest 1".to_string(),
                 None,
             )

@@ -206,7 +206,7 @@ impl GenesisFundingService {
                 seed_commitment: lib_blockchain::types::hash::blake3_hash(b"genesis_wallet_seed"),
                 created_at: 1730419200, // Genesis timestamp
                 registration_fee: 0,
-                capabilities: 0xFFFFFFFF,           // Full capabilities
+                capabilities: 0xFFFFFFFF,             // Full capabilities
                 initial_balance: DEV_BOOTSTRAP_BONUS, // 5,000 SOV welcome bonus (atomic units)
             };
 

@@ -154,12 +154,8 @@ impl ReplayCheckpointSnapshot {
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let live = Self::from_store_at_height(
-            store,
-            self.checkpoint_height,
-            &sov_ids,
-            &dao_expectations,
-        );
+        let live =
+            Self::from_store_at_height(store, self.checkpoint_height, &sov_ids, &dao_expectations);
 
         compare_snapshots(label, self, &live)
     }
@@ -181,11 +177,18 @@ pub fn replay_gate_test_wallets(n: usize) -> Vec<[u8; 32]> {
         "a202020202020202020202020202020202020202020202020202020202020202",
         "a303030303030303030303030303030303030303030303030303030303030303",
     ];
-    assert!(n <= IDS.len(), "replay gate supports at most {} wallets", IDS.len());
+    assert!(
+        n <= IDS.len(),
+        "replay gate supports at most {} wallets",
+        IDS.len()
+    );
     IDS[..n]
         .iter()
         .map(|hex| {
-            let bytes: [u8; 32] = hex::decode(hex).expect("wallet hex").try_into().expect("len");
+            let bytes: [u8; 32] = hex::decode(hex)
+                .expect("wallet hex")
+                .try_into()
+                .expect("len");
             bytes
         })
         .collect()
@@ -281,20 +284,20 @@ pub fn compare_snapshots(
             "{label}: CBE DAO treasury mismatch at height {} — token_id={cbe_token} \
              address={treasury_hex} have={} need={} (tolerance={tol}); \
              legacy genesis allocation={GENESIS_TREASURY_ALLOCATION}",
-            expected.checkpoint_height,
-            actual.cbe_treasury_balance,
-            expected.cbe_treasury_balance
+            expected.checkpoint_height, actual.cbe_treasury_balance, expected.cbe_treasury_balance
         ));
     }
 
-    if !within_tolerance(expected.treasury_sov_balance, actual.treasury_sov_balance, tol) {
+    if !within_tolerance(
+        expected.treasury_sov_balance,
+        actual.treasury_sov_balance,
+        tol,
+    ) {
         let sov_token = hex::encode(generate_lib_token_id());
         return Err(format!(
             "{label}: treasury SOV mismatch at height {} — token_id={sov_token} \
              address={treasury_hex} have={} need={} (tolerance={tol})",
-            expected.checkpoint_height,
-            actual.treasury_sov_balance,
-            expected.treasury_sov_balance
+            expected.checkpoint_height, actual.treasury_sov_balance, expected.treasury_sov_balance
         ));
     }
 
@@ -326,9 +329,7 @@ pub fn load_blocks_fixture(path: &Path) -> anyhow::Result<Vec<lib_blockchain::bl
 }
 
 pub fn open_fresh_store(dir: &tempfile::TempDir) -> Arc<dyn BlockchainStore> {
-    Arc::new(
-        lib_blockchain::storage::SledStore::open(dir.path()).expect("open test sled store"),
-    )
+    Arc::new(lib_blockchain::storage::SledStore::open(dir.path()).expect("open test sled store"))
 }
 
 #[cfg(test)]
@@ -362,8 +363,7 @@ mod tests {
         compare_snapshots("tol-ok", &expected, &actual).expect("within tolerance");
 
         actual.sov_wallets[0].balance = 994;
-        compare_snapshots("tol-fail", &expected, &actual)
-            .expect_err("outside tolerance must fail");
+        compare_snapshots("tol-fail", &expected, &actual).expect_err("outside tolerance must fail");
     }
 
     #[test]

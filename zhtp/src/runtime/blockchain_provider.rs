@@ -258,8 +258,6 @@ pub struct PendingIdentityProjection {
     pub node_id: String,
     pub kyber_public_key: Option<String>,
     pub primary_wallet_id: String,
-    pub ubi_wallet_id: String,
-    pub savings_wallet_id: String,
     pub registered_at: u64,
 }
 
@@ -342,14 +340,6 @@ async fn handle_identity_registered(
                 "primary_wallet_id".to_string(),
                 serde_json::Value::String(pending.primary_wallet_id.clone()),
             );
-            obj.insert(
-                "ubi_wallet_id".to_string(),
-                serde_json::Value::String(pending.ubi_wallet_id.clone()),
-            );
-            obj.insert(
-                "savings_wallet_id".to_string(),
-                serde_json::Value::String(pending.savings_wallet_id.clone()),
-            );
         }
     }
 
@@ -378,8 +368,6 @@ async fn handle_identity_registered(
                 "owner_did": identity_data.did,
                 "wallets": {
                     "primary": pending.primary_wallet_id,
-                    "ubi": pending.ubi_wallet_id,
-                    "savings": pending.savings_wallet_id,
                 },
                 "created_at": pending.registered_at,
             });
@@ -1021,8 +1009,6 @@ mod tests {
                 node_id: "node-a".to_string(),
                 kyber_public_key: Some("kyber".to_string()),
                 primary_wallet_id: "22".repeat(32),
-                ubi_wallet_id: "33".repeat(32),
-                savings_wallet_id: "44".repeat(32),
                 registered_at: 1234,
             },
         );

@@ -104,28 +104,12 @@ impl IdentityManager {
         let mut wallet_manager =
             crate::wallets::WalletManager::from_master_seed(id.clone(), master_seed);
 
-        // Create HD wallets at fixed indices: 0=Primary, 1=UBI, 2=Savings
+        // Create HD wallets at fixed index: 0=Primary
         let (primary_wallet_id, _) = wallet_manager
             .create_hd_wallet(
                 WalletType::Primary,
                 "Primary Wallet".to_string(),
                 Some("primary".to_string()),
-            )
-            .await?;
-
-        let (ubi_wallet_id, _) = wallet_manager
-            .create_hd_wallet(
-                WalletType::UBI,
-                "UBI Wallet".to_string(),
-                Some("ubi".to_string()),
-            )
-            .await?;
-
-        let (savings_wallet_id, _) = wallet_manager
-            .create_hd_wallet(
-                WalletType::Savings,
-                "Savings Wallet".to_string(),
-                Some("savings".to_string()),
             )
             .await?;
 
@@ -165,7 +149,7 @@ impl IdentityManager {
         // Register for UBI payouts
         let ubi_registration = crate::citizenship::UbiRegistration::register_for_ubi_payouts(
             &id,
-            &ubi_wallet_id,
+            &primary_wallet_id,
             economic_model,
         )
         .await?;
@@ -226,15 +210,13 @@ impl IdentityManager {
             hex::encode(&id.0[..8])
         );
 
-        // Compile master seed phrase for secure storage (single phrase derives all wallets)
+        // Compile master seed phrase for secure storage (single phrase derives the Primary wallet)
         let wallet_seed_phrases =
             crate::citizenship::onboarding::WalletSeedPhrases { master_seed_phrase };
 
         Ok(CitizenshipResult::new(
             id.clone(),
             primary_wallet_id,
-            ubi_wallet_id,
-            savings_wallet_id,
             wallet_seed_phrases,
             dao_registration,
             ubi_registration,
@@ -533,10 +515,10 @@ impl IdentityManager {
         self.identities.remove(identity_id);
     }
 
-    /// Register an externally-created identity WITH full citizenship benefits (3 wallets)
+    /// Register an externally-created identity WITH full citizenship benefits (Primary wallet)
     ///
     /// This method registers an identity where the keys were generated on the client
-    /// device (e.g., iOS/mobile), but still creates the 3 wallets server-side for
+    /// device (e.g., iOS/mobile), but still creates the Primary wallet server-side for
     /// DAO participation. The server only stores the public key; private keys remain
     /// on the client device and are NEVER transmitted.
     ///
@@ -592,38 +574,14 @@ impl IdentityManager {
             input.extend_from_slice(&kyber_public_key);
             Hash(lib_crypto::hash_blake3(&input))
         };
-        let ubi_wallet_id = {
-            let mut input = primary_wallet_id.0.to_vec();
-            input.extend_from_slice(b"ubi");
-            Hash(lib_crypto::hash_blake3(&input))
-        };
-        let savings_wallet_id = {
-            let mut input = primary_wallet_id.0.to_vec();
-            input.extend_from_slice(b"savings");
-            Hash(lib_crypto::hash_blake3(&input))
-        };
 
-        // Register the three wallets carrying the client's real Dilithium public key.
+        // Register the single Primary wallet carrying the client's real Dilithium public key.
         identity.wallet_manager = crate::wallets::WalletManager::new(id.clone());
         identity.wallet_manager.add_client_wallet(
             primary_wallet_id.clone(),
             WalletType::Primary,
             "Primary Wallet".to_string(),
             Some("primary".to_string()),
-            public_key.dilithium_pk.to_vec(),
-        )?;
-        identity.wallet_manager.add_client_wallet(
-            ubi_wallet_id.clone(),
-            WalletType::UBI,
-            "UBI Wallet".to_string(),
-            Some("ubi".to_string()),
-            public_key.dilithium_pk.to_vec(),
-        )?;
-        identity.wallet_manager.add_client_wallet(
-            savings_wallet_id.clone(),
-            WalletType::Savings,
-            "Savings Wallet".to_string(),
-            Some("savings".to_string()),
             public_key.dilithium_pk.to_vec(),
         )?;
 
@@ -635,7 +593,7 @@ impl IdentityManager {
         // Register for UBI payouts
         let ubi_registration = crate::citizenship::UbiRegistration::register_for_ubi_payouts(
             &id,
-            &ubi_wallet_id,
+            &primary_wallet_id,
             economic_model,
         )
         .await?;
@@ -687,7 +645,7 @@ impl IdentityManager {
         self.password_manager.mark_identity_imported(&id);
 
         tracing::info!(
-            "📱 EXTERNAL CITIZEN REGISTERED: {} - Full Web4 access granted with 3 wallets",
+            "📱 EXTERNAL CITIZEN REGISTERED: {} - Full Web4 access granted with Primary wallet",
             hex::encode(&id.0[..8])
         );
 
@@ -706,8 +664,6 @@ impl IdentityManager {
         Ok(CitizenshipResult::new(
             id,
             primary_wallet_id,
-            ubi_wallet_id,
-            savings_wallet_id,
             wallet_seed_phrases,
             dao_registration,
             ubi_registration,

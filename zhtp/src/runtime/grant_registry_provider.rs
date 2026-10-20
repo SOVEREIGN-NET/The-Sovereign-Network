@@ -20,8 +20,8 @@ pub fn get_global_grant_registry() -> &'static GrantRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_access_control::{GrantAuthDescriptor, GrantAuthScheme, GrantClass, GrantRecord};
     use lib_access_control::{AccessDomain, AccessOperation};
+    use lib_access_control::{GrantAuthDescriptor, GrantAuthScheme, GrantClass, GrantRecord};
 
     #[test]
     fn global_registry_offer_claim() {

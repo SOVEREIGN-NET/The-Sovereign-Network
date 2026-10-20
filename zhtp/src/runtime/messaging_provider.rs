@@ -86,11 +86,7 @@ impl MessagingProvider {
     /// map matches the id returned at registration. Called on stream
     /// exit. The id check is what prevents a stale stream's cleanup
     /// from removing a freshly-registered live stream.
-    pub async fn unregister_subscriber(
-        &self,
-        recipient_did: &str,
-        id: SubscriberId,
-    ) {
+    pub async fn unregister_subscriber(&self, recipient_did: &str, id: SubscriberId) {
         let mut subs = self.subscribers.write().await;
         if let Some(entry) = subs.get(recipient_did) {
             if entry.id == id {

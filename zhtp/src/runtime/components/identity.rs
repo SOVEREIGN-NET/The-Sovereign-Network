@@ -386,8 +386,6 @@ fn parse_identity_type(identity_type: &str) -> lib_identity::IdentityType {
 fn parse_wallet_type(wallet_type: &str) -> lib_identity::wallets::WalletType {
     match wallet_type.to_ascii_lowercase().as_str() {
         "primary" => lib_identity::wallets::WalletType::Primary,
-        "ubi" => lib_identity::wallets::WalletType::UBI,
-        "savings" => lib_identity::wallets::WalletType::Savings,
         "business" => lib_identity::wallets::WalletType::Business,
         "stealth" => lib_identity::wallets::WalletType::Stealth,
         "dao" | "nonprofitdao" | "non_profit_dao" | "non-profit-dao" => {
@@ -503,8 +501,6 @@ fn reconstruct_identity_manager_from_blockchain_state(
 async fn rebuild_index_from_backup(
     storage: &mut lib_storage::PersistentStorageSystem,
 ) -> Result<u32> {
-    use std::io::BufReader;
-
     let backup_path = crate::node_data_dir()
         .join("backup")
         .join("identities.json");
@@ -516,10 +512,10 @@ async fn rebuild_index_from_backup(
 
     info!("📂 Reading identity backup from {:?}", backup_path);
 
-    let file = std::fs::File::open(&backup_path)
+    let backup_content = tokio::fs::read_to_string(&backup_path)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
-    let reader = BufReader::new(file);
-    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_reader(reader)
+    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&backup_content)
         .map_err(|e| anyhow::anyhow!("Failed to parse backup: {}", e))?;
 
     let mut indexed = 0u32;
@@ -547,8 +543,6 @@ async fn rebuild_index_from_backup(
 ///
 /// SAFE: Only adds missing identities, never overwrites existing ones.
 async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
-    use std::io::BufReader;
-
     if !dht_authority_mutations_enabled() {
         return Ok((0, 0));
     }
@@ -566,10 +560,10 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
 
     info!("📂 Reading identities from {:?}", backup_path);
 
-    let file = std::fs::File::open(&backup_path)
+    let backup_content = tokio::fs::read_to_string(&backup_path)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to open backup: {}", e))?;
-    let reader = BufReader::new(file);
-    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_reader(reader)
+    let backup: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&backup_content)
         .map_err(|e| anyhow::anyhow!("Failed to parse backup: {}", e))?;
 
     info!("📋 Found {} identities in backup file", backup.len());
@@ -1016,11 +1010,6 @@ async fn bootstrap_identities_from_dht(
                         let primary_wallet_id = identity_json
                             .get("primary_wallet_id")
                             .and_then(|v| v.as_str());
-                        let ubi_wallet_id =
-                            identity_json.get("ubi_wallet_id").and_then(|v| v.as_str());
-                        let savings_wallet_id = identity_json
-                            .get("savings_wallet_id")
-                            .and_then(|v| v.as_str());
 
                         // Balance lookup only by default. DHT must not invent
                         // wallet registration / funding outside opt-in migration
@@ -1067,72 +1056,6 @@ async fn bootstrap_identities_from_dht(
                                         }
                                     }
                                 }
-
-                                if let Some(wid) = ubi_wallet_id {
-                                    if !bc.wallet_exists(wid) {
-                                        let wallet_bytes = hex::decode(wid).unwrap_or_default();
-                                        if wallet_bytes.len() >= 32 {
-                                            let wallet_data =
-                                                lib_blockchain::transaction::WalletTransactionData {
-                                                    wallet_id: lib_blockchain::Hash::from_slice(
-                                                        &wallet_bytes[..32],
-                                                    ),
-                                                    wallet_type: "UBI".to_string(),
-                                                    wallet_name: "UBI Wallet".to_string(),
-                                                    alias: Some("ubi".to_string()),
-                                                    public_key: pk_bytes_for_migration.clone(),
-                                                    kyber_public_key: vec![],
-                                                    owner_identity_id: Some(
-                                                        lib_blockchain::Hash::from_slice(
-                                                            &identity_hash.0,
-                                                        ),
-                                                    ),
-                                                    seed_commitment:
-                                                        lib_blockchain::types::hash::blake3_hash(
-                                                            b"migrated_wallet",
-                                                        ),
-                                                    created_at,
-                                                    registration_fee: 0,
-                                                    capabilities: 0x01,
-                                                    initial_balance: 0,
-                                                };
-                                            let _ = bc.register_wallet(wallet_data);
-                                        }
-                                    }
-                                }
-
-                                if let Some(wid) = savings_wallet_id {
-                                    if !bc.wallet_exists(wid) {
-                                        let wallet_bytes = hex::decode(wid).unwrap_or_default();
-                                        if wallet_bytes.len() >= 32 {
-                                            let wallet_data =
-                                                lib_blockchain::transaction::WalletTransactionData {
-                                                    wallet_id: lib_blockchain::Hash::from_slice(
-                                                        &wallet_bytes[..32],
-                                                    ),
-                                                    wallet_type: "Savings".to_string(),
-                                                    wallet_name: "Savings Wallet".to_string(),
-                                                    alias: Some("savings".to_string()),
-                                                    public_key: pk_bytes_for_migration.clone(),
-                                                    kyber_public_key: vec![],
-                                                    owner_identity_id: Some(
-                                                        lib_blockchain::Hash::from_slice(
-                                                            &identity_hash.0,
-                                                        ),
-                                                    ),
-                                                    seed_commitment:
-                                                        lib_blockchain::types::hash::blake3_hash(
-                                                            b"migrated_wallet",
-                                                        ),
-                                                    created_at,
-                                                    registration_fee: 0,
-                                                    capabilities: 0x02,
-                                                    initial_balance: 0,
-                                                };
-                                            let _ = bc.register_wallet(wallet_data);
-                                        }
-                                    }
-                                }
                             }
                         }
 
@@ -1152,42 +1075,6 @@ async fn bootstrap_identities_from_dht(
                                             {
                                                 wallet.balance = wallet_data.initial_balance;
                                                 debug!("Restored primary wallet {} with balance {} from blockchain", wid, wallet_data.initial_balance);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(wid) = ubi_wallet_id {
-                                if let Ok(wallet_id) = identity.wallet_manager.add_restored_wallet(
-                                    wid,
-                                    lib_identity::wallets::WalletType::UBI,
-                                    created_at,
-                                ) {
-                                    if let Some(ref bc_arc) = blockchain_arc {
-                                        let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
-                                            if let Some(wallet) =
-                                                identity.wallet_manager.get_wallet_mut(&wallet_id)
-                                            {
-                                                wallet.balance = wallet_data.initial_balance;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(wid) = savings_wallet_id {
-                                if let Ok(wallet_id) = identity.wallet_manager.add_restored_wallet(
-                                    wid,
-                                    lib_identity::wallets::WalletType::Savings,
-                                    created_at,
-                                ) {
-                                    if let Some(ref bc_arc) = blockchain_arc {
-                                        let bc = bc_arc.read().await;
-                                        if let Some(wallet_data) = bc.wallet_transaction_data(wid) {
-                                            if let Some(wallet) =
-                                                identity.wallet_manager.get_wallet_mut(&wallet_id)
-                                            {
-                                                wallet.balance = wallet_data.initial_balance;
                                             }
                                         }
                                     }

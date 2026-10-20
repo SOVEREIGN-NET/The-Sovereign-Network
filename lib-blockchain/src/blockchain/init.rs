@@ -399,11 +399,13 @@ impl Blockchain {
             .blocks
             .iter()
             .flat_map(|block| block.transactions.iter())
-            .filter_map(|tx| tx.wallet_data().map(|w| {
-                let mut id = [0u8; 32];
-                id.copy_from_slice(w.wallet_id.as_bytes());
-                id
-            }))
+            .filter_map(|tx| {
+                tx.wallet_data().map(|w| {
+                    let mut id = [0u8; 32];
+                    id.copy_from_slice(w.wallet_id.as_bytes());
+                    id
+                })
+            })
             .collect();
 
         self.identity_registry.clear();
@@ -692,7 +694,6 @@ impl Blockchain {
                                     );
                                 }
                             }
-
                         }
 
                         if let Err(e) =
@@ -780,8 +781,7 @@ impl Blockchain {
                     .ok()
                     .flatten()
                     .is_some_and(|a| {
-                        a.id_source
-                            == crate::contracts::sovereign_asset::AssetIdSource::LaunchTx
+                        a.id_source == crate::contracts::sovereign_asset::AssetIdSource::LaunchTx
                     })
                 {
                     continue;
@@ -1443,7 +1443,9 @@ mod tests {
         store
             .append_block(&block_with(0, vec![identity_tx_register("did:zhtp:alice")]))
             .unwrap();
-        store.put_identity(&did_hash, &consensus(did_hash, 0)).unwrap();
+        store
+            .put_identity(&did_hash, &consensus(did_hash, 0))
+            .unwrap();
         store
             .put_identity_metadata(&did_hash, &metadata("did:zhtp:alice", "alice"))
             .unwrap();

@@ -337,15 +337,13 @@ impl Blockchain {
             .entry(sov_id)
             .or_insert_with(crate::contracts::TokenContract::new_sov_native);
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use crate::blockchain::Blockchain;
     use crate::storage::{
-        did_to_hash, BlockchainStore, IdentityMetadata, SledStore,
-        IDENTITY_METADATA_SCHEMA_VERSION,
+        did_to_hash, BlockchainStore, IdentityMetadata, SledStore, IDENTITY_METADATA_SCHEMA_VERSION,
     };
     use crate::transaction::IdentityTransactionData;
     use std::sync::Arc;
@@ -394,7 +392,9 @@ mod tests {
             kyber_public_key: Vec::new(),
             ..Default::default()
         };
-        store.put_identity_metadata_direct(&did_hash, &stale).unwrap();
+        store
+            .put_identity_metadata_direct(&did_hash, &stale)
+            .unwrap();
         store.set_identity_metadata_schema_version(1).unwrap();
         assert_eq!(store.identity_metadata_schema_version().unwrap(), 1);
 
@@ -437,7 +437,9 @@ mod tests {
             kyber_public_key: vec![0xCD; 1568],
             ..Default::default()
         };
-        store.put_identity_metadata_direct(&did_hash, &meta).unwrap();
+        store
+            .put_identity_metadata_direct(&did_hash, &meta)
+            .unwrap();
         store
             .set_identity_metadata_schema_version(IDENTITY_METADATA_SCHEMA_VERSION)
             .unwrap();
@@ -468,8 +470,7 @@ mod tests {
     #[test]
     fn migrate_identity_metadata_schema_does_not_decode_legacy_blobs() {
         let temp = tempfile::tempdir().unwrap();
-        let store =
-            Arc::new(SledStore::open(&temp.path().join("kyber_junk_blob")).unwrap());
+        let store = Arc::new(SledStore::open(&temp.path().join("kyber_junk_blob")).unwrap());
 
         let did = "did:zhtp:has-corrupt-blob";
         let did_hash = did_to_hash(did);
@@ -488,10 +489,8 @@ mod tests {
         // In-memory registry carries the canonical record (as block replay
         // would have produced).
         let mut bc = Blockchain::new().expect("construct blockchain");
-        bc.identity_registry.insert(
-            did.to_string(),
-            identity_data(did, vec![0xEE; 1568]),
-        );
+        bc.identity_registry
+            .insert(did.to_string(), identity_data(did, vec![0xEE; 1568]));
         bc.set_store(store.clone());
 
         // The migration must complete without ever trying to decode the

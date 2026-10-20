@@ -128,7 +128,10 @@ pub async fn update_validator_ips(own_did: Option<&str>, stun_ip: Option<Ipv4Add
                 map.insert(did.clone(), addr.clone());
             }
         }
-        info!("Updated {} validator addresses in IP overlay", updates.len());
+        info!(
+            "Updated {} validator addresses in IP overlay",
+            updates.len()
+        );
     }
 }
 
@@ -164,8 +167,7 @@ pub fn spawn_periodic_ip_update(own_did: Option<String>, interval_secs: u64) {
         let stun_ip = discover_public_ip().await;
         update_validator_ips(own_did.as_deref(), stun_ip).await;
 
-        let mut interval =
-            tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
         interval.tick().await;
         loop {
             interval.tick().await;

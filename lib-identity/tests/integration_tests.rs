@@ -4,7 +4,7 @@
 //! including citizen onboarding, credential verification, and zero-knowledge proofs.
 
 use lib_crypto::Hash;
-use lib_identity::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV, DEV_BOOTSTRAP_BONUS_SOV};
+use lib_identity::constants::{DEV_BOOTSTRAP_BONUS_SOV, SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV};
 use lib_identity::credentials::creation::CredentialFactory;
 use lib_identity::identity::activity_tracking::{ActivityTracker, ActivityType};
 use lib_identity::*;
@@ -37,8 +37,6 @@ async fn test_complete_citizen_onboarding_flow() {
     // Verify citizenship result
     assert!(!citizenship_result.identity_id.0.is_empty());
     assert!(!citizenship_result.primary_wallet_id.0.is_empty());
-    assert!(!citizenship_result.ubi_wallet_id.0.is_empty());
-    assert!(!citizenship_result.savings_wallet_id.0.is_empty());
 
     // Verify DAO registration
     assert_eq!(citizenship_result.dao_registration.voting_power, 1);
@@ -303,44 +301,34 @@ async fn test_wallet_integration() {
         .await
         .expect("Failed to create primary wallet");
 
-    let (_ubi_wallet, _seed2) = wallet_manager
+    let (_business_wallet, _seed2) = wallet_manager
         .create_wallet_with_seed_phrase(
-            WalletType::UBI,
-            "UBI Wallet".to_string(),
-            Some("ubi".to_string()),
+            WalletType::Business,
+            "Business Wallet".to_string(),
+            Some("business".to_string()),
         )
         .await
-        .expect("Failed to create UBI wallet");
-
-    let (_savings_wallet, _seed3) = wallet_manager
-        .create_wallet_with_seed_phrase(
-            WalletType::Savings,
-            "Savings Wallet".to_string(),
-            Some("savings".to_string()),
-        )
-        .await
-        .expect("Failed to create savings wallet");
+        .expect("Failed to create business wallet");
 
     // Test wallet retrieval
     assert!(wallet_manager.get_wallet(&primary_wallet).is_some());
     assert!(wallet_manager.get_wallet_by_alias("primary").is_some());
-    assert!(wallet_manager.get_wallet_by_alias("ubi").is_some());
-    assert!(wallet_manager.get_wallet_by_alias("savings").is_some());
+    assert!(wallet_manager.get_wallet_by_alias("business").is_some());
 
     // Test wallet listing
     let wallet_summaries = wallet_manager.list_wallets();
-    assert_eq!(wallet_summaries.len(), 3);
+    assert_eq!(wallet_summaries.len(), 2);
 
     // Test wallet counts
-    assert_eq!(wallet_manager.wallet_count(), 3);
-    assert_eq!(wallet_manager.active_wallet_count(), 3);
+    assert_eq!(wallet_manager.wallet_count(), 2);
+    assert_eq!(wallet_manager.active_wallet_count(), 2);
 
     // Test wallets by type
     let primary_wallets = wallet_manager.get_wallets_by_type(&WalletType::Primary);
     assert_eq!(primary_wallets.len(), 1);
 
-    let ubi_wallets = wallet_manager.get_wallets_by_type(&WalletType::UBI);
-    assert_eq!(ubi_wallets.len(), 1);
+    let business_wallets = wallet_manager.get_wallets_by_type(&WalletType::Business);
+    assert_eq!(business_wallets.len(), 1);
 
     println!("Wallet integration test passed!");
 }

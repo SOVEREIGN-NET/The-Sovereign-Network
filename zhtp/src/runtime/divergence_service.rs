@@ -68,12 +68,7 @@ pub fn spawn_divergence_detector(blockchain: Arc<RwLock<Blockchain>>) {
                 Some(snap) => {
                     // All sled I/O happens here, lock-free.
                     let divergences = divergence_detector::compare_to_sled(&snap);
-                    divergence_detector::report(
-                        &divergences,
-                        snap.sampled_count(),
-                        &cfg,
-                        &metrics,
-                    )
+                    divergence_detector::report(&divergences, snap.sampled_count(), &cfg, &metrics)
                 }
                 // No store attached yet — nothing to compare.
                 None => 0,

@@ -112,9 +112,7 @@ impl Blockchain {
             TransactionType::DomainRegistration => {
                 self.stage_domain_from_registration_memo(store, tx, height)
             }
-            TransactionType::DomainUpdate => {
-                self.stage_domain_from_update_memo(store, tx, height)
-            }
+            TransactionType::DomainUpdate => self.stage_domain_from_update_memo(store, tx, height),
             TransactionType::RegisterCredential => {
                 if let crate::transaction::TransactionPayload::RegisterCredential(ref data) =
                     tx.payload
@@ -124,9 +122,8 @@ impl Blockchain {
                 Ok(())
             }
             TransactionType::UpdateCredentialPassword => {
-                if let crate::transaction::TransactionPayload::UpdateCredentialPassword(
-                    ref data,
-                ) = tx.payload
+                if let crate::transaction::TransactionPayload::UpdateCredentialPassword(ref data) =
+                    tx.payload
                 {
                     self.stage_credential_projection(store, &data.username, height)?;
                 }
@@ -252,10 +249,8 @@ impl Blockchain {
             return Ok(());
         };
         let dao_id = entry.dao_id;
-        store.stage::<DaoRegistryProjectionTable>(
-            &dao_id,
-            &DaoRegistryProjectionRecord { entry },
-        )?;
+        store
+            .stage::<DaoRegistryProjectionTable>(&dao_id, &DaoRegistryProjectionRecord { entry })?;
         Ok(())
     }
 
@@ -546,10 +541,7 @@ impl Blockchain {
     /// Resolve the chain tip we'll backfill against, or `None` if the
     /// backfill should be skipped (no chain data, or projections already
     /// current). Centralising the preconditions keeps the caller flat.
-    fn backfill_resolve_tip(
-        &self,
-        store: &dyn BlockchainStore,
-    ) -> Result<Option<Block>> {
+    fn backfill_resolve_tip(&self, store: &dyn BlockchainStore) -> Result<Option<Block>> {
         let latest_height = match store.latest_height() {
             Ok(h) => h,
             Err(_) => return Ok(None),
@@ -566,11 +558,7 @@ impl Blockchain {
     /// Single failure-domain wrapper around the per-table backfill calls.
     /// Returning `Result<()>` from one place lets the outer rollback path
     /// stay simple.
-    fn run_backfill_staging(
-        &self,
-        store: &dyn BlockchainStore,
-        _tip: &Block,
-    ) -> Result<()> {
+    fn run_backfill_staging(&self, store: &dyn BlockchainStore, _tip: &Block) -> Result<()> {
         self.clear_projection_tables(store)?;
         self.backfill_validators(store)?;
         self.backfill_gateways(store)?;

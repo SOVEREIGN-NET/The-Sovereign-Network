@@ -176,7 +176,10 @@ impl TransactionBuilder {
     }
 
     /// Build the transaction (requires signing)
-    pub fn build(mut self, private_key: &PrivateKey) -> Result<Transaction, TransactionCreateError> {
+    pub fn build(
+        mut self,
+        private_key: &PrivateKey,
+    ) -> Result<Transaction, TransactionCreateError> {
         // Validate inputs and outputs
         if self.inputs.is_empty() && !self.transaction_type.is_identity_transaction() {
             return Err(TransactionCreateError::InvalidInputs);
@@ -278,11 +281,8 @@ impl TransactionBuilder {
             // are computed with the real amount.
             let amount = 0u64; // Placeholder — see TODO above
 
-            let leaf_hash = circuit::real::compute_leaf_commitment(
-                nullifier_seed,
-                sender_secret,
-                amount,
-            );
+            let leaf_hash =
+                circuit::real::compute_leaf_commitment(nullifier_seed, sender_secret, amount);
 
             output.merkle_leaf = crate::types::Hash::new(hash_to_bytes(leaf_hash));
 
@@ -313,75 +313,83 @@ impl TransactionBuilder {
         for (idx, input) in self.inputs.iter().enumerate() {
             let witness = self.merkle_witnesses.get(idx).and_then(|w| w.as_ref());
 
-            let zk_proof = if let Some(w) = witness {
-                // ── Real proof: bound to on-chain Merkle root ────────────
-                let merkle_root = bytes_to_hash(w.root);
-                let siblings: Vec<[u64; 4]> = w.siblings.iter().map(|s| bytes_to_hash(*s)).collect();
+            let zk_proof =
+                if let Some(w) = witness {
+                    // ── Real proof: bound to on-chain Merkle root ────────────
+                    let merkle_root = bytes_to_hash(w.root);
+                    let siblings: Vec<[u64; 4]> =
+                        w.siblings.iter().map(|s| bytes_to_hash(*s)).collect();
 
-                if siblings.len() != lib_proofs::transaction::circuit::MERKLE_DEPTH {
-                    tracing::error!(
-                        "Input {}: expected {} siblings, got {}",
-                        idx,
-                        lib_proofs::transaction::circuit::MERKLE_DEPTH,
-                        siblings.len(),
-                    );
-                    return Err(TransactionCreateError::ZkProofError);
-                }
+                    if siblings.len() != lib_proofs::transaction::circuit::MERKLE_DEPTH {
+                        tracing::error!(
+                            "Input {}: expected {} siblings, got {}",
+                            idx,
+                            lib_proofs::transaction::circuit::MERKLE_DEPTH,
+                            siblings.len(),
+                        );
+                        return Err(TransactionCreateError::ZkProofError);
+                    }
 
-                // Total output amount (the "amount" in the circuit constraint:
-                // amount + fee <= sender_balance).
-                let total_output_amount: u64 = w.sender_balance.saturating_sub(self.fee);
+                    // Total output amount (the "amount" in the circuit constraint:
+                    // amount + fee <= sender_balance).
+                    let total_output_amount: u64 = w.sender_balance.saturating_sub(self.fee);
 
-                ZkTransactionProof::prove_transaction_with_merkle(
-                    w.sender_balance,
-                    total_output_amount,
-                    self.fee,
-                    w.sender_secret,
-                    w.nullifier_seed,
-                    merkle_root,
-                    w.leaf_index,
-                    &siblings,
-                )
-                .map_err(|e| {
-                    tracing::error!(
+                    ZkTransactionProof::prove_transaction_with_merkle(
+                        w.sender_balance,
+                        total_output_amount,
+                        self.fee,
+                        w.sender_secret,
+                        w.nullifier_seed,
+                        merkle_root,
+                        w.leaf_index,
+                        &siblings,
+                    )
+                    .map_err(|e| {
+                        tracing::error!(
                         "Real ZK proof generation failed for input {}: {:?} (balance={}, fee={})",
                         idx, e, w.sender_balance, self.fee,
                     );
-                    TransactionCreateError::ZkProofError
-                })?
-            } else {
-                // ── Fallback: self-consistent dummy proof ─────────────────
-                // Used when no Merkle witness is available (backward compat).
-                let (nullifier_seed, sender_secret) =
-                    lib_proofs::transaction::circuit::derive_utxo_secrets(
-                        &[0u8; 64], // No real private key in fallback path
-                        &input.nullifier.as_bytes()[..32].try_into().unwrap_or([0u8; 32]),
-                        idx as u64,
-                    );
-                let sender_balance = self.fee + 1000;
+                        TransactionCreateError::ZkProofError
+                    })?
+                } else {
+                    // ── Fallback: self-consistent dummy proof ─────────────────
+                    // Used when no Merkle witness is available (backward compat).
+                    let (nullifier_seed, sender_secret) =
+                        lib_proofs::transaction::circuit::derive_utxo_secrets(
+                            &[0u8; 64], // No real private key in fallback path
+                            &input.nullifier.as_bytes()[..32]
+                                .try_into()
+                                .unwrap_or([0u8; 32]),
+                            idx as u64,
+                        );
+                    let sender_balance = self.fee + 1000;
 
-                ZkTransactionProof::prove_transaction(
-                    sender_balance,
-                    0,
-                    1000,
-                    self.fee,
-                    {
-                        let mut b = [0u8; 32];
-                        b[..8].copy_from_slice(&sender_secret.to_le_bytes());
-                        b
-                    },
-                    [0u8; 32],
-                    {
-                        let mut b = [0u8; 32];
-                        b[..8].copy_from_slice(&nullifier_seed.to_le_bytes());
-                        b
-                    },
-                )
-                .map_err(|e| {
-                    tracing::error!("Fallback ZK proof generation failed for input {}: {:?}", idx, e);
-                    TransactionCreateError::ZkProofError
-                })?
-            };
+                    ZkTransactionProof::prove_transaction(
+                        sender_balance,
+                        0,
+                        1000,
+                        self.fee,
+                        {
+                            let mut b = [0u8; 32];
+                            b[..8].copy_from_slice(&sender_secret.to_le_bytes());
+                            b
+                        },
+                        [0u8; 32],
+                        {
+                            let mut b = [0u8; 32];
+                            b[..8].copy_from_slice(&nullifier_seed.to_le_bytes());
+                            b
+                        },
+                    )
+                    .map_err(|e| {
+                        tracing::error!(
+                            "Fallback ZK proof generation failed for input {}: {:?}",
+                            idx,
+                            e
+                        );
+                        TransactionCreateError::ZkProofError
+                    })?
+                };
 
             let mut input_with_proof = input.clone();
             input_with_proof.zk_proof = zk_proof;
@@ -755,6 +763,9 @@ pub mod utils {
             }
             TransactionType::TokenMint => {
                 // System-controlled token mint - validation handled at consensus layer
+            }
+            TransactionType::SystemMint => {
+                // Node-emitted system mint - validation handled at consensus layer
             }
             TransactionType::TokenCreation
             | TransactionType::AssetLaunch

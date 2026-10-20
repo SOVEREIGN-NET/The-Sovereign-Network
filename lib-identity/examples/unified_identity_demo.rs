@@ -98,7 +98,7 @@ fn main() -> Result<()> {
     // PART 5: Wallet Integration
     // ============================================================================
     // Show how the WalletManager uses the master seed to deterministically
-    // generate multiple wallets (Primary, Savings, Staking, etc.)
+    // generate the Primary wallet.
 
     println!("📋 PART 5: Wallet Integration with Master Seed\n");
     println!("   WHY: All wallets recoverable from single seed phrase");
@@ -331,12 +331,10 @@ fn demonstrate_wallet_integration(identity: &ZhtpIdentity) -> Result<()> {
         "   Master Seed:         {} bytes",
         identity.wallet_master_seed.len()
     );
-    println!("                       ↳ All wallets derived from this seed");
+    println!("                       ↳ Primary wallet derived from this seed");
     println!("\n   Wallet Derivation Path Examples:");
     println!("      Primary Wallet:   m/0  (first derived wallet)");
-    println!("      Savings Wallet:   m/1  (second derived wallet)");
-    println!("      Staking Wallet:   m/2  (third derived wallet)");
-    println!("      DAO Wallet:       m/3  (fourth derived wallet)");
+    println!("      DAO Wallet:       m/1  (second derived wallet)");
 
     println!("\n   💰 Current Wallet Status:");
     println!(

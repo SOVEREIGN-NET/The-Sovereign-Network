@@ -11,8 +11,27 @@ use tracing::{debug, info, warn};
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 // Removed: create_default_storage_config - now using global storage provider
 use crate::server::https_gateway::{GatewayTlsConfig, HttpsGateway};
-use lib_network::zdns::{ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer, ZdnsConfig};
+use lib_network::zdns::{ZdnsConfig, ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
+
+/// Poll a global-provider getter at 500ms intervals until it succeeds.
+async fn wait_for_global<T, E, Fut, F>(label: &str, max_attempts: u32, mut getter: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    let mut attempts = 0u32;
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        attempts += 1;
+        if let Ok(value) = getter().await {
+            return Ok(value);
+        }
+        if attempts >= max_attempts {
+            return Err(anyhow::anyhow!("Timeout waiting for {label}"));
+        }
+    }
+}
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -94,7 +113,8 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node: false,
-            enable_zdns_transport: false, zdns_bootstrap_ips: vec![], // Disabled by default (requires root for port 53)
+            enable_zdns_transport: false,
+            zdns_bootstrap_ips: vec![], // Disabled by default (requires root for port 53)
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -132,7 +152,8 @@ impl ProtocolsComponent {
             quic_port,
             discovery_port,
             is_edge_node,
-            enable_zdns_transport: false, zdns_bootstrap_ips: vec![], // Disabled by default
+            enable_zdns_transport: false,
+            zdns_bootstrap_ips: vec![], // Disabled by default
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -162,7 +183,8 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: true, zdns_bootstrap_ips: vec![],
+            enable_zdns_transport: true,
+            zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: gateway_ip,
             // SECURITY: Default to localhost even when enabled
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -193,7 +215,8 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: false, zdns_bootstrap_ips: vec![],
+            enable_zdns_transport: false,
+            zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: std::net::Ipv4Addr::new(127, 0, 0, 1),
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -223,7 +246,8 @@ impl ProtocolsComponent {
             quic_port: 9334,
             discovery_port: 9333,
             is_edge_node: false,
-            enable_zdns_transport: true, zdns_bootstrap_ips: vec![],
+            enable_zdns_transport: true,
+            zdns_bootstrap_ips: vec![],
             zdns_gateway_ip: gateway_ip,
             zdns_bind_addr: std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
             zdns_port: 53,
@@ -272,20 +296,10 @@ impl Component for ProtocolsComponent {
             }
             Err(_) => {
                 info!("⏳ Waiting for BlockchainComponent...");
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    attempts += 1;
-                    if let Ok(shared_blockchain) =
-                        crate::runtime::blockchain_provider::get_global_blockchain().await
-                    {
-                        info!(" ✓ Global blockchain initialized");
-                        break shared_blockchain;
-                    }
-                    if attempts >= 60 {
-                        return Err(anyhow::anyhow!("Timeout waiting for BlockchainComponent"));
-                    }
-                }
+                wait_for_global("BlockchainComponent", 60, || {
+                    crate::runtime::blockchain_provider::get_global_blockchain()
+                })
+                .await?
             }
         };
 
@@ -312,17 +326,10 @@ impl Component for ProtocolsComponent {
             Ok(shared) => shared,
             Err(_) => {
                 info!("⏳ Waiting for IdentityComponent...");
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    attempts += 1;
-                    if let Ok(shared) = crate::runtime::get_global_identity_manager().await {
-                        break shared;
-                    }
-                    if attempts >= 60 {
-                        return Err(anyhow::anyhow!("Timeout waiting for IdentityComponent"));
-                    }
-                }
+                wait_for_global("IdentityComponent", 60, || {
+                    crate::runtime::get_global_identity_manager()
+                })
+                .await?
             }
         };
 
@@ -340,22 +347,10 @@ impl Component for ProtocolsComponent {
             Err(_) => {
                 // Fallback: wait for StorageComponent to initialize
                 info!("⏳ Waiting for StorageComponent to initialize storage...");
-                let mut attempts = 0;
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    attempts += 1;
-                    if let Ok(storage) =
-                        crate::runtime::storage_provider::get_global_storage().await
-                    {
-                        info!(" ✓ Storage became available after {} attempts", attempts);
-                        break storage;
-                    }
-                    if attempts >= 30 {
-                        return Err(anyhow::anyhow!(
-                            "Timeout waiting for StorageComponent to initialize storage"
-                        ));
-                    }
-                }
+                wait_for_global("StorageComponent", 30, || {
+                    crate::runtime::storage_provider::get_global_storage()
+                })
+                .await?
             }
         };
 
@@ -436,16 +431,23 @@ impl Component for ProtocolsComponent {
         // Initialize ZDNS resolver with caching, using the canonical domain registry
         info!(" Initializing ZDNS resolver with canonical domain registry...");
         let domain_registry = unified_server.get_domain_registry();
-        let name_resolver = Arc::new(lib_network::web4::NameResolver::new(domain_registry.clone()));
+        let name_resolver = Arc::new(lib_network::web4::NameResolver::new(
+            domain_registry.clone(),
+        ));
         let zdns_resolver = Arc::new(ZdnsResolver::new(name_resolver, ZdnsConfig::default()));
         *self.zdns_resolver.write().await = Some(zdns_resolver.clone());
         info!(" ✓ ZDNS resolver initialized with LRU cache (size: 10000, TTL: up to 1hr)");
 
         // Start ZDNS transport server if enabled
-        info!("ZDNS transport check: enable_zdns_transport={} gateway_ip={} bind={} port={}",
-            self.enable_zdns_transport, self.zdns_gateway_ip, self.zdns_bind_addr, self.zdns_port);
+        info!(
+            "ZDNS transport check: enable_zdns_transport={} gateway_ip={} bind={} port={}",
+            self.enable_zdns_transport, self.zdns_gateway_ip, self.zdns_bind_addr, self.zdns_port
+        );
         if self.enable_zdns_transport {
-            info!(" Starting ZDNS transport server (DNS on port {})...", self.zdns_port);
+            info!(
+                " Starting ZDNS transport server (DNS on port {})...",
+                self.zdns_port
+            );
             let mut transport_config = ZdnsServerConfig::production(self.zdns_gateway_ip)
                 .with_bind_addr(self.zdns_bind_addr);
             transport_config.port = self.zdns_port;
@@ -458,7 +460,9 @@ impl Component for ProtocolsComponent {
             // by the time this closure runs. The bootstrap_peers fallback is kept for the
             // brief window between ZDNS starting and the first STUN/DNS resolution completing.
             let bootstrap_ips = self.zdns_bootstrap_ips.clone();
-            if let Ok(blockchain_arc) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            if let Ok(blockchain_arc) =
+                crate::runtime::blockchain_provider::get_global_blockchain().await
+            {
                 let bc_ref = blockchain_arc.clone();
                 let fallback_ips = bootstrap_ips.clone();
                 transport_config.network_endpoint_provider = Some(std::sync::Arc::new(move || {
@@ -466,7 +470,8 @@ impl Component for ProtocolsComponent {
                         Ok(bc) => bc,
                         Err(_) => return fallback_ips.clone(),
                     };
-                    let ips: Vec<std::net::Ipv4Addr> = bc.active_validator_infos()
+                    let ips: Vec<std::net::Ipv4Addr> = bc
+                        .active_validator_infos()
                         .into_iter()
                         .filter_map(|v| {
                             let host = v.network_address.split(':').next()?;

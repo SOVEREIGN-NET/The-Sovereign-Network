@@ -419,7 +419,7 @@ pub enum WalletAction {
         /// Owner identity DID or hex ID
         #[arg(long)]
         owner: String,
-        /// Wallet type: Primary, UBI, Savings
+        /// Wallet type: Primary, DAO
         #[arg(long, default_value = "Primary")]
         wallet_type: String,
         /// Mint SOV welcome bonus (5000 SOV)
@@ -867,11 +867,11 @@ pub enum IdentityAction {
         #[arg(short, long)]
         keystore: Option<String>,
     },
-    /// Register identity on-chain (creates identity + wallets + SOV welcome bonus)
+    /// Register identity on-chain (creates identity + Primary wallet + SOV welcome bonus)
     ///
     /// If no local keystore exists, generates keys first. Then calls the node's
-    /// /api/v1/identity/register endpoint to register on-chain with 3 wallets
-    /// (Primary, UBI, Savings) and receive the SOV welcome bonus.
+    /// /api/v1/identity/register endpoint to register on-chain with a single
+    /// Primary wallet and receive the SOV welcome bonus.
     Register {
         /// Display name
         #[arg(short, long)]
@@ -2313,9 +2313,11 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Nft(args) => commands::nft::handle_nft_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
-        ZhtpCommand::Observer(args) => commands::observer::handle_observer_command(args.clone(), &cli)
-            .await
-            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Observer(args) => {
+            commands::observer::handle_observer_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
     }
 }
 
@@ -2653,14 +2655,9 @@ mod tests {
 
     #[test]
     fn parse_observer_status_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "status",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer status should parse");
+        let parsed =
+            ZhtpCli::try_parse_from(["zhtp-cli", "observer", "status", "--did", "did:zhtp:abc123"])
+                .expect("observer status should parse");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
                 action: ObserverAction::Status { did },
@@ -2696,14 +2693,9 @@ mod tests {
 
     #[test]
     fn parse_observer_wait_default_timeout() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "wait",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer wait should parse with default timeout");
+        let parsed =
+            ZhtpCli::try_parse_from(["zhtp-cli", "observer", "wait", "--did", "did:zhtp:abc123"])
+                .expect("observer wait should parse with default timeout");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
                 action: ObserverAction::Wait { did, timeout },
@@ -2717,14 +2709,9 @@ mod tests {
 
     #[test]
     fn parse_observer_start_command() {
-        let parsed = ZhtpCli::try_parse_from([
-            "zhtp-cli",
-            "observer",
-            "start",
-            "--did",
-            "did:zhtp:abc123",
-        ])
-        .expect("observer start should parse");
+        let parsed =
+            ZhtpCli::try_parse_from(["zhtp-cli", "observer", "start", "--did", "did:zhtp:abc123"])
+                .expect("observer start should parse");
         match parsed.command {
             ZhtpCommand::Observer(ObserverArgs {
                 action: ObserverAction::Start { did },

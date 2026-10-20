@@ -198,7 +198,6 @@ fn get_mock_body(path: &str) -> Option<String> {
 
         // Wallet endpoints (using valid 64-char hex IDs)
         "/api/v1/wallet/send" => Some(r#"{"from_identity":"0000000000000000000000000000000000000000000000000000000000000000","to_address":"0000000000000000000000000000000000000000000000000000000000000001","amount":100,"wallet_id":"primary"}"#.to_string()),
-        "/api/v1/wallet/transfer/cross-wallet" => Some(r#"{"from_wallet":"primary","to_wallet":"savings","amount":100,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
         "/api/v1/wallet/staking/stake" => Some(r#"{"wallet_id":"test_wallet","amount":1000,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
         "/api/v1/wallet/staking/unstake" => Some(r#"{"wallet_id":"test_wallet","amount":500,"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
 

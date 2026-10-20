@@ -46,9 +46,10 @@ impl UbiOperation {
 
 /// Build UBI wallet balance endpoint path
 ///
-/// Uses the wallet balance endpoint with wallet_type=ubi
+/// UBI payouts land in the Primary wallet, so the balance endpoint reads
+/// wallet_type=primary.
 pub fn build_ubi_balance_endpoint(identity_id: &str) -> String {
-    format!("/api/v1/wallet/balance/ubi/{}", identity_id)
+    format!("/api/v1/wallet/balance/primary/{}", identity_id)
 }
 
 // ============================================================================
@@ -131,7 +132,7 @@ mod tests {
     #[test]
     fn test_build_ubi_balance_endpoint() {
         let endpoint = build_ubi_balance_endpoint("did:zhtp:123");
-        assert_eq!(endpoint, "/api/v1/wallet/balance/ubi/did:zhtp:123");
+        assert_eq!(endpoint, "/api/v1/wallet/balance/primary/did:zhtp:123");
     }
 
     #[test]

@@ -752,8 +752,6 @@ async fn create_identity_direct(
 
         let identity_id_hex = hex::encode(&identity_result.identity_id.0);
         let primary_wallet_id = hex::encode(&identity_result.primary_wallet_id.0);
-        let ubi_wallet_id = hex::encode(&identity_result.ubi_wallet_id.0);
-        let savings_wallet_id = hex::encode(&identity_result.savings_wallet_id.0);
         let client_pk_hex = hex::encode(&dil_pk);
         let client_kyber_hex = hex::encode(&kyb_vec);
 
@@ -763,15 +761,11 @@ async fn create_identity_direct(
                 "identity_id": identity_id_hex,
                 "display_name": display_name,
                 "primary_wallet_id": primary_wallet_id,
-                "ubi_wallet_id": ubi_wallet_id,
-                "savings_wallet_id": savings_wallet_id,
                 "privacy_credentials": {
                     "public_key": client_pk_hex,
                     "ownership_proof": hex::encode(&client_ownership_proof)
                 },
                 "primary_wallet_pubkey": client_pk_hex,
-                "ubi_wallet_pubkey": client_pk_hex,
-                "savings_wallet_pubkey": client_pk_hex,
                 "kyber_public_key": client_kyber_hex,
                 "created_at": created_at
             }
@@ -801,8 +795,6 @@ async fn create_identity_direct(
             "citizenship_result": {
                 "identity_id": identity_result.identity_id,
                 "primary_wallet_id": primary_wallet_id,
-                "ubi_wallet_id": ubi_wallet_id,
-                "savings_wallet_id": savings_wallet_id,
                 "dao_registration": identity_result.dao_registration,
                 "ubi_registration": identity_result.ubi_registration,
                 "web4_access": identity_result.web4_access,
@@ -1599,18 +1591,6 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            ubi_wallet_id: identity_result
-                .get("citizenship_result")
-                .and_then(|cr| cr.get("ubi_wallet_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            savings_wallet_id: identity_result
-                .get("citizenship_result")
-                .and_then(|cr| cr.get("savings_wallet_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
             registered_at: created_at,
         },
     );
@@ -1625,24 +1605,6 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
             "Primary",
             "primary_wallet_id",
             "primary_wallet_pubkey",
-            created_at,
-        )?;
-        register_wallet_on_blockchain(
-            &mut blockchain_guard,
-            citizenship_result,
-            &identity_hash,
-            "UBI",
-            "ubi_wallet_id",
-            "ubi_wallet_pubkey",
-            created_at,
-        )?;
-        register_wallet_on_blockchain(
-            &mut blockchain_guard,
-            citizenship_result,
-            &identity_hash,
-            "Savings",
-            "savings_wallet_id",
-            "savings_wallet_pubkey",
             created_at,
         )?;
     }
@@ -1711,13 +1673,7 @@ fn register_wallet_on_blockchain(
             seed_commitment,
             created_at,
             registration_fee: 50,
-            capabilities: if wallet_type == "Primary" {
-                0xFF
-            } else if wallet_type == "UBI" {
-                0x01
-            } else {
-                0x02
-            },
+            capabilities: if wallet_type == "Primary" { 0xFF } else { 0x00 },
             initial_balance,
         };
 
@@ -1776,18 +1732,6 @@ async fn distribute_identity_to_dht(identity_result: &serde_json::Value) -> Resu
                         "type": "Primary",
                         "capabilities": ["send", "receive", "stake"],
                         "public_endpoint": format!("zhtp://wallet.{}.zhtp/primary", identity_id)
-                    },
-                    "ubi": {
-                        "id": citizenship_result.get("ubi_wallet_id"),
-                        "type": "UBI",
-                        "capabilities": ["receive"],
-                        "public_endpoint": format!("zhtp://wallet.{}.zhtp/ubi", identity_id)
-                    },
-                    "savings": {
-                        "id": citizenship_result.get("savings_wallet_id"),
-                        "type": "Savings",
-                        "capabilities": ["receive", "savings"],
-                        "public_endpoint": format!("zhtp://wallet.{}.zhtp/savings", identity_id)
                     }
                 },
                 "created_at": std::time::SystemTime::now()
